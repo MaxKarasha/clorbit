@@ -1,0 +1,288 @@
+/* Event console lines (ticker, drawer, window). Project names take their star's color, agents their
+ * planet's; orange is only for "waiting for you". */
+.cl-line {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: #cbd4e4;
+}
+.cl-time {
+  color: #6f7b95;
+  font-variant-numeric: tabular-nums;
+}
+.cl-glyph {
+  display: inline-block;
+  width: 1.1em;
+  text-align: center;
+  color: #8fa3c4;
+}
+.cl-line--tool .cl-glyph { color: #9fe3ff; }
+.cl-line--spawn .cl-glyph { color: #cdb8ff; }
+.cl-line--finish .cl-glyph { color: #7fe8d0; }
+.cl-line--wait .cl-glyph,
+.cl-text--wait { color: var(--c-waiting); }
+.cl-line--prompt .cl-glyph { color: #e6ebf5; }
+.cl-line--compact .cl-glyph { color: #8f9cff; }
+.cl-sep { color: #5d6884; }
+.cl-text { color: #c3cbdb; }
+.cl-proj,
+.cl-agent {
+  all: unset;
+  cursor: pointer;
+  font-weight: 600;
+  border-radius: 4px;
+  text-decoration: underline transparent;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.15s;
+}
+.cl-proj:hover,
+.cl-agent:hover {
+  text-decoration-color: currentColor;
+}
+.cl-proj:focus-visible,
+.cl-agent:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 1px;
+}
+
+/* ---------- the full console ---------- */
+.cl {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+.cl-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 2px 14px 10px;
+}
+.cl-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.cl-title__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c-working);
+  box-shadow: 0 0 8px var(--c-working);
+}
+.cl-count {
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--faint);
+  font-weight: 400;
+}
+.cl-search {
+  flex: 1 1 200px;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(8, 12, 24, 0.7);
+  color: var(--muted);
+}
+.cl-search:focus-within {
+  border-color: rgba(92, 200, 255, 0.55);
+}
+.cl-search svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+.cl-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font: 13px var(--font-ui);
+}
+.cl-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.cl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: rgba(20, 26, 46, 0.6);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cl-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.cl-btn:hover {
+  color: #fff;
+  border-color: rgba(140, 190, 255, 0.5);
+}
+.cl-btn.is-on {
+  color: #fff;
+  background: rgba(92, 200, 255, 0.14);
+  border-color: rgba(92, 200, 255, 0.5);
+}
+.cl-btn--icon {
+  padding: 6px 7px;
+}
+.cl-badge {
+  font-style: normal;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: rgba(92, 200, 255, 0.2);
+  color: #dff4ff;
+}
+.cl-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 14px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.cl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.cl-chips__label {
+  min-width: 70px;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.cl-chip {
+  --acc: #8fa3c4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: rgba(8, 12, 24, 0.5);
+  font: 12px var(--font-ui);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.cl-chip i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--acc);
+  box-shadow: 0 0 6px var(--acc);
+}
+.cl-chip b {
+  font-weight: 400;
+  color: var(--acc);
+  font-family: var(--font-mono);
+}
+.cl-chip:hover {
+  border-color: color-mix(in srgb, var(--acc) 55%, transparent);
+}
+.cl-chip[aria-pressed='true'] {
+  color: #fff;
+  border-color: var(--acc);
+  background: color-mix(in srgb, var(--acc) 18%, rgba(8, 12, 24, 0.6));
+}
+.cl-chip--tool { --acc: #9fe3ff; }
+.cl-chip--spawn { --acc: #cdb8ff; }
+.cl-chip--finish { --acc: #7fe8d0; }
+.cl-chip--wait { --acc: var(--c-waiting); }
+.cl-chip--prompt { --acc: #e6ebf5; }
+.cl-chip--compact { --acc: #8f9cff; }
+.cl-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 10px;
+  overscroll-behavior: contain;
+}
+.cl-list .cl-line {
+  display: grid;
+  grid-template-columns: 70px 18px 1fr;
+  align-items: baseline;
+  padding: 2px 6px;
+  border-radius: 6px;
+  line-height: 1.55;
+}
+.cl-list .cl-line:hover {
+  background: rgba(120, 150, 220, 0.07);
+}
+.cl-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cl-empty {
+  margin: 24px 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.cl-foot {
+  margin: 0;
+  padding: 8px 14px 10px;
+  font-size: 11.5px;
+  color: var(--faint);
+  border-top: 1px solid var(--border-soft);
+}
+
+/* ---------- the console window (#/console) ---------- */
+.cl-page {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  gap: 8px;
+  background: var(--bg);
+}
+.cl-page .sky {
+  position: fixed;
+  inset: 0;
+}
+.cl-page > .demo-strip {
+  position: relative;
+  z-index: 1;
+}
+.cl--window {
+  position: relative;
+  z-index: 1;
+  padding-top: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(10, 14, 28, 0.88), rgba(5, 8, 16, 0.86));
+  backdrop-filter: blur(14px) saturate(140%);
+}
+@media (max-width: 620px) {
+  .cl-actions .cl-btn span {
+    display: none;
+  }
+  .cl-list .cl-line {
+    grid-template-columns: 60px 16px 1fr;
+  }
+}

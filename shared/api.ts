@@ -47,6 +47,8 @@ export interface LiveSession {
   status: SessionStatus;
   statusSince: number;
   statusReason: string | null;  // e.g. 'Probably waiting for permission: Bash', 'Answer ready' (localized)
+  statusCode?: string | null;   // language-neutral reason code ('waitingPermission', 'answerReady', ...)
+  statusArg?: string | null;    // its argument, e.g. the tool name of 'waitingPermission'
   startedAt: number;
   lastActivity: number;
   tokens: Tokens;               // the whole session, subagents included
@@ -96,10 +98,19 @@ export type ClorbitEvent =
   | { kind: 'tool'; ts: number; sessionId: string; agentId: string; tool: string; label: string }
   | { kind: 'spawn'; ts: number; sessionId: string; parentId: string; agentId: string; agentType: string; description: string | null }
   | { kind: 'finish'; ts: number; sessionId: string; agentId: string; parentId: string; tokens: number }
-  | { kind: 'status'; ts: number; sessionId: string; status: SessionStatus; reason: string | null }
+  | { kind: 'status'; ts: number; sessionId: string; status: SessionStatus; reason: string | null; code?: string | null; arg?: string | null }
   | { kind: 'text'; ts: number; sessionId: string; agentId: string; text: string }
   | { kind: 'prompt'; ts: number; sessionId: string }
   | { kind: 'compact'; ts: number; sessionId: string };
+
+/** Names resolved by the server when an event is emitted, so old console lines stay meaningful
+ *  after a session or agent is gone. Additive: SSE events and /api/events/recent carry them. */
+export interface EventContext {
+  project?: string | null;    // the session's project
+  agentName?: string | null;  // type of e.agentId ('main' → null: the manager)
+  parentName?: string | null; // spawn/finish: type of e.parentId
+}
+export type RecentEvent = ClorbitEvent & EventContext;
 
 /** @deprecated Pre-rename alias of ClorbitEvent. */
 export type FleetEvent = ClorbitEvent;
@@ -204,10 +215,81 @@ export interface Insight {
   estSavingTokens?: number;
 }
 
-// Endpoints (all GET except /api/hook). Every GET accepts `lang=en|uk` (default en):
+// ---------- Settings & notifications ----------
+
+/** Events Clorbit can notify about. */
+export type NotifyEventType =
+  | 'session_waiting'   // a session waits for you: permission prompt / question
+  | 'session_done'      // the main agent finished its turn (answer ready)
+  | 'subagent_finished'
+  | 'subagent_spawned'
+  | 'compaction'
+  | 'context_high'      // context fill crossed 85%
+  | 'limit_high';       // subscription 5 h or 7 d window crossed 80%
+
+export const NOTIFY_EVENTS: NotifyEventType[] = ['session_waiting', 'session_done', 'subagent_finished', 'subagent_spawned', 'compaction', 'context_high', 'limit_high'];
+
+export type NotifyChannel = 'sound' | 'browser' | 'toast' | 'system';
+
+/** Channels per event. `system` is shown by the server itself (osascript / notify-send). */
+export interface NotifyRule {
+  sound: boolean;
+  browser: boolean;
+  /** Browser notification only while the Clorbit tab is hidden. */
+  browserHiddenOnly: boolean;
+  toast: boolean;
+  system: boolean;
+}
+
+export type SoundTheme = 'orbit' | 'minimal' | 'retro';
+export const SOUND_THEMES: SoundTheme[] = ['orbit', 'minimal', 'retro'];
+
+export interface Settings {
+  notifications: Record<NotifyEventType, NotifyRule>;
+  sound: { enabled: boolean; volume: number; theme: SoundTheme }; // volume 0..1
+  dnd: {
+    enabled: boolean;                                         // silence now (until turned off)
+    quietHours: { enabled: boolean; from: string; to: string }; // local 'HH:MM'; may cross midnight
+    mutedUntil: number | null;                                // "mute for 1 h" from a toast (epoch ms)
+  };
+  interface: { lang: 'en' | 'uk'; autoTour: boolean; reduceMotion: boolean };
+}
+
+const rule = (sound: boolean, browser: boolean, toast: boolean, browserHiddenOnly = false): NotifyRule => ({ sound, browser, browserHiddenOnly, toast, system: false });
+
+/** Defaults: waiting → sound + browser + toast; done → sound + toast + browser when the tab is hidden;
+ *  a finished subagent → a soft sound; everything else off; system notifications off. */
+export const DEFAULT_SETTINGS: Settings = {
+  notifications: {
+    session_waiting: rule(true, true, true),
+    session_done: rule(true, true, true, true),
+    subagent_finished: rule(true, false, false),
+    subagent_spawned: rule(false, false, false),
+    compaction: rule(false, false, false),
+    context_high: rule(false, false, false),
+    limit_high: rule(false, false, false),
+  },
+  sound: { enabled: true, volume: 0.6, theme: 'orbit' },
+  dnd: { enabled: false, quietHours: { enabled: false, from: '22:00', to: '08:00' }, mutedUntil: null },
+  interface: { lang: 'en', autoTour: false, reduceMotion: false },
+};
+
+/** GET /api/about — read-only facts for the Connection section of the settings panel. */
+export interface AboutInfo {
+  version: string;
+  dataDir: string;
+  hooks: { pluginEnabled: boolean; eventsReceived: boolean; lastEventAt: number | null };
+  limits: { capture: boolean; updatedAt: number | null };
+  store: { enabled: boolean; fileSummaries: number; archived: number; hookEvents: number; limits: number };
+  /** Whether the server can show system notifications on this machine. */
+  system: { available: boolean; tool: 'osascript' | 'notify-send' | null; platform: string };
+}
+
+// Endpoints (all GET except /api/hook, PUT /api/settings and POST /api/notify/test). Every GET accepts `lang=en|uk` (default en):
 //   /api/health                                 → HealthInfo (identifies a running Clorbit; used by the CLI)
 //   /api/live                                   → LiveSnapshot
-//   /api/events                                 → SSE, each message is data: ClorbitEvent
+//   /api/events                                 → SSE, each message is data: ClorbitEvent (& EventContext)
+//   /api/events/recent?limit=                   → RecentEvent[] (oldest first; the last ≤ 500 console-worthy events, in memory)
 //   /api/analytics/overview?from&to             → AnalyticsOverview
 //   /api/analytics/attribution?from&to          → AttributionReport
 //   /api/analytics/sessions?from&to&project     → SessionSummary[]
@@ -216,6 +298,10 @@ export interface Insight {
 //   /api/limits/history?from&to                 → LimitsPoint[] (from/to: 'YYYY-MM-DD' or epoch ms; default last 7 days)
 //   /api/debug/scan, /api/debug/db              → diagnostics (scan stats; SQLite row counts, size, archived files)
 //   POST /api/hook                              → accepts Claude Code hook JSON (stored in SQLite, 90-day retention)
+//   /api/settings                               → Settings (defaults merged with what was saved)
+//   PUT /api/settings                           → body: a (partial) Settings; validated, clamped, unknown keys dropped → Settings
+//   /api/about                                  → AboutInfo
+//   POST /api/notify/test                       → shows one test system notification ({ ok, error? })
 
 /** GET /api/health — cheap identity check used by `clorbit status|start|stop`. */
 export interface HealthInfo {

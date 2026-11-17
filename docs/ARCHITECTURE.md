@@ -14,9 +14,9 @@ Clorbit is two small programs that share one TypeScript contract:
 
 | Folder | What lives there |
 | --- | --- |
-| `server/` | HTTP server (`index.ts`), scanner, store, SQLite layer, live status, analytics, insights, server-side i18n. Only Node built-ins plus `tsx` to run TypeScript. |
-| `web/` | Single-page app: the canvas galaxy (`web/src/galaxy/`), analytics pages (`web/src/pages/`), the i18n runtime and dictionaries (`web/src/i18n/`), demo data (`web/src/mock/`). |
-| `shared/api.ts` | The API contract — every type the server returns and the list of endpoints. |
+| `server/` | HTTP server (`index.ts`), scanner, store, SQLite layer, live status, analytics, insights, settings (`settings.ts`), system notifications (`notifier.ts`), recent-events ring (`recent-events.ts`), server-side i18n. Only Node built-ins plus `tsx` to run TypeScript. |
+| `web/` | Single-page app: the canvas galaxy (`web/src/galaxy/`), analytics pages (`web/src/pages/`), notifications and sounds (`web/src/notify/`), the event console (`web/src/console/`), the settings panel (`web/src/components/SettingsPanel.tsx`), the i18n runtime and dictionaries (`web/src/i18n/`), demo data (`web/src/mock/`). |
+| `shared/` | `api.ts` — the API contract: every type the server returns, the list of endpoints, `DEFAULT_SETTINGS`. `settings.ts` — settings validation and quiet-hours math. `notify.ts` — the notification detector. Used by both sides. |
 | `plugin/` | The `clorbit` Claude Code plugin — the only folder Claude Code copies into its plugin cache, so everything the plugin runs lives here: `hooks/` (async event hooks and the silent autostart), `skills/clorbit/` (the `/clorbit` command), `app/` (build output, committed: `server.mjs`, `web/`, plus the hand-written `cli.mjs`). |
 | `scripts/build.mjs` | `pnpm build`: Vite builds the web app into `plugin/app/web`, esbuild bundles `server/bundle.ts` into `plugin/app/server.mjs`, and the `package.json` version is synced into the plugin manifest. |
 | `scripts/install-hooks.mjs` | Optional, dry-run-by-default helper that adds the status-line capture (and, if forced, raw hooks) to `~/.claude/settings.json`. |
@@ -66,6 +66,7 @@ The cold scan runs on a pool of worker threads (`server/scan-worker.ts`), freshe
 - **`file_summaries`** — one row per transcript: path, session/agent ids, size, mtime, byte offset, the summary as JSON, and `missing_since`. On start, all summaries of the current `SUMMARY_VERSION` are loaded into memory (a warm start takes tens of milliseconds); only files whose size or mtime changed are re-read, from their stored offset.
 - **`hook_events`** — trimmed hook payloads (top-level scalars, a shallow `tool_input` with short strings, only the size of `tool_response`; at most 4 KB), pruned after **90 days**.
 - **`limits`** — a row whenever the captured subscription percentages change (polled every 30 s).
+- **`settings`** (schema v2) — `key`, `value_json`, `updated_at`; one row (`app`) holds the whole `Settings` document. It is always read through `normalizeSettings` (`shared/settings.ts`), so unknown keys are dropped and values clamped, and a corrupt row falls back to the defaults.
 
 Writes are batched and flushed in the background; `GET /api/debug/db` shows row counts, file sizes and flush stats.
 
@@ -101,6 +102,30 @@ On the server, `server/hooks.ts` turns payloads into live events and statuses, a
 
 `hooksInstalled` in the live snapshot is true when `clorbit@*` (or the legacy `fleet-hooks@*`) is enabled in `settings.json`, or when hook events have already arrived.
 
+## Notifications
+
+One detector, two places it runs. `shared/notify.ts` (`NotifyDetector`) turns live snapshots and live events into notification events; it is pure (time comes from its inputs) and unit-tested:
+
+- the first snapshot is a baseline: nothing fires for what is already going on, and events before it are ignored;
+- only sessions with a live process notify;
+- **waiting**: a transition to `waiting`, once per wait (re-armed when the session leaves `waiting`); **answer ready**: `working → idle`;
+- **subagent finished / started**, **compaction**: from `finish` / `spawn` / `compact` events, deduplicated (hooks and transcripts report the same thing);
+- **context almost full**: fill crossing 85%, re-armed below 75%; **subscription limit**: a window crossing 80%, once per window (identified by its reset time), re-armed below 75%;
+- a snapshot older than a session's latest status event never overrides that status (no flapping between SSE and polling).
+
+Status reasons travel as language-neutral codes too (`LiveSession.statusCode/statusArg`, `status` events' `code/arg`), so both sides can say "waiting for permission for Bash" in their own words.
+
+- **Web** (`web/src/notify/`): `NotificationCenter` (mounted once at the app root) feeds the detector from what the galaxy already receives (`feed.ts`), or, on analytics pages, from its own `/api/live` poll and `/api/events` stream. `rules.ts` decides channels (`channelsFor`: per-event matrix, master sound switch, do-not-disturb, browser permission, "only when hidden", system-instead-of-browser, never in demo mode) and builds toasts (bursts merged, waits sticky until resolved). `sound.ts` synthesizes the three themes with Web Audio (oscillators, envelopes, a compressor; throttled per event type).
+- **Server** (`server/notifier.ts`): `ServerNotifications` runs the same detector over `Live`'s per-tick snapshot (emitted once the history scan is done) and live events, honors the saved settings and do-not-disturb, debounces per session and merges bursts of finished subagents. `SystemNotifier` runs `osascript -e 'display notification "…" with title "Clorbit"'` (AppleScript literals escaped) or `notify-send --app-name=Clorbit -- title body` through `execFile` with an argument array, at most 6 per minute and 1.5 s apart, and pauses for 10 minutes after repeated failures.
+
+Settings live on the server (`GET/PUT /api/settings`); the web loads them on start, applies changes optimistically and saves them debounced. Offline or in demo mode the defaults apply; demo mode never writes. The language switch is a setting too, because the server writes system notifications in the chosen language.
+
+## Event console
+
+`server/recent-events.ts` keeps the last 500 console-worthy events (tool, spawn, finish, waiting, prompt, compact) in memory. Every live event is enriched once, when it is emitted, with `EventContext` (`project`, `agentName`, `parentName`; `Live.context()`), so old lines stay meaningful after agents are gone; SSE messages carry the same fields. `GET /api/events/recent?limit=` returns them oldest first.
+
+On the web (`web/src/console/`), `model.ts` turns events into lines (pure: `toLine`, `mergeLines` dedupes history against the live stream, `filterLines`), `store.ts` holds the page's lines and colors, and `Console.tsx` renders the ticker, the drawer and the window. Colors come from the galaxy engine (`knownColor`, so a project is its star's hue and an agent its planet's) and are remembered, so finished agents keep theirs. The `#/console` window loads the history and listens to the stream itself (demo: its own seeded demo feed). A `BroadcastChannel('clorbit')` connects it to the main tab: focus requests (acknowledged; with no answer the window opens the galaxy in a tab named `clorbit-main` and asks again) and the main tab's color map.
+
 ## API contract
 
 All types are in [`shared/api.ts`](../shared/api.ts). Every GET accepts `lang=en|uk` (default `en`); human-readable server text follows it.
@@ -108,7 +133,11 @@ All types are in [`shared/api.ts`](../shared/api.ts). Every GET accepts `lang=en
 | Endpoint | Returns |
 | --- | --- |
 | `GET /api/live` | `LiveSnapshot`: live and recent sessions with agent trees, totals, limits, scan progress. |
-| `GET /api/events` | Server-sent events, one `ClorbitEvent` per message (tool, spawn, finish, status, text, prompt, compact). |
+| `GET /api/events` | Server-sent events, one `ClorbitEvent` per message (tool, spawn, finish, status, text, prompt, compact), with `EventContext` names. |
+| `GET /api/events/recent?limit=` | `RecentEvent[]`: the last ≤ 500 console events, oldest first. |
+| `GET /api/settings`, `PUT /api/settings` | `Settings`. PUT takes a (partial) settings object, validates and clamps it, drops unknown keys and returns the result; JSON only, local origins only. |
+| `GET /api/about` | `AboutInfo`: version, data dir, hooks and limits-source state, event-store counts, system-notification availability. |
+| `POST /api/notify/test` | Shows one test system notification (`{ ok, error? }`; rate-limited). |
 | `GET /api/analytics/overview?from&to` | `AnalyticsOverview`: totals, daily series, projects, models, hourly profile, heatmap. |
 | `GET /api/analytics/attribution?from&to` | `AttributionReport`: skills, plugins, MCP servers/tools, tools, subagent types, startup context. |
 | `GET /api/analytics/sessions?from&to&project` | `SessionSummary[]`. |
@@ -139,3 +168,4 @@ Adding a language means adding a dictionary folder on the web, a column in the s
 - Clorbit never writes to `~/.claude`. The only code that can is `scripts/install-hooks.mjs`, which is a dry run unless you pass `--apply`, and backs up `settings.json` first.
 - Clorbit's own data lives in `~/.clorbit` (`CLORBIT_DATA_DIR`). The one-time copy of a pre-rename `<repo>/data/fleet.db` (`migrateLegacyDb` in `server/config.ts`) only targets the default folder; an explicitly set data dir always starts empty. Transcript content is not copied wholesale: summaries hold counts, labels (tool labels such as `Read index.ts` or the first 40 characters of a Bash command), session titles, the latest assistant text (≤ 240 chars) and file paths of repeated reads. Hook payloads are trimmed as described above.
 - There is no telemetry and no network access besides the Google Fonts stylesheet in `web/index.html`.
+- The only programs the server starts are the notifier (`osascript` / `notify-send`), and only for events the user enabled under System; the text is passed as arguments, never through a shell. Writes from the web (`PUT /api/settings`, `POST /api/notify/test`) are refused for non-local `Origin`s.

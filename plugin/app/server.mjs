@@ -1,4 +1,4 @@
-// Clorbit 0.1.1 server, bundled from server/ by scripts/build.mjs. Do not edit.
+// Clorbit 0.2.0 server, bundled from server/ by scripts/build.mjs. Do not edit.
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res, err) => function __init() {
   if (err) throw err[0];
@@ -51,7 +51,15 @@ function reasonText(r, lang) {
   return "a" in r ? s.replace("{a}", String(r.a)) : s;
 }
 function localizeEvent(e, lang) {
-  return e.kind === "status" ? { ...e, reason: reasonText(e.reason, lang) } : e;
+  return e.kind === "status" ? { ...e, reason: reasonText(e.reason, lang), ...reasonCode(e.reason) } : e;
+}
+function reasonCode(r) {
+  if (!r) return { code: null, arg: null };
+  return { code: r.k, arg: "a" in r ? String(r.a) : null };
+}
+function notifyText(lang, key, params = {}) {
+  const s = NOTIFY[lang][key] ?? NOTIFY.en[key] ?? key;
+  return s.replace(/\{(\w+)\}/g, (m, k) => k in params ? String(params[k]) : m);
 }
 function normalizeStartupKey(label) {
   if (LEGACY_STARTUP[label]) return LEGACY_STARTUP[label];
@@ -110,7 +118,7 @@ function detailText(lang) {
 function errorText(lang) {
   return ERRORS[lang];
 }
-var REASONS, STARTUP, hookPluginKey, hookEventKey, OWN_SKILLS, STARTUP_LABELS, LEGACY_STARTUP, DETAIL, ERRORS;
+var REASONS, NOTIFY, STARTUP, hookPluginKey, hookEventKey, OWN_SKILLS, STARTUP_LABELS, LEGACY_STARTUP, DETAIL, ERRORS;
 var init_i18n = __esm({
   "server/i18n.ts"() {
     "use strict";
@@ -146,6 +154,42 @@ var init_i18n = __esm({
         waitingPermission: "\u0427\u0435\u043A\u0430\u0454 \u0434\u043E\u0437\u0432\u043E\u043B\u0443: {a}",
         probablyPermission: "\u0419\u043C\u043E\u0432\u0456\u0440\u043D\u043E, \u0447\u0435\u043A\u0430\u0454 \u0434\u043E\u0437\u0432\u043E\u043B\u0443: {a}",
         subagentsWorking: "\u041F\u0440\u0430\u0446\u044E\u044E\u0442\u044C \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0438: {a}"
+      }
+    };
+    NOTIFY = {
+      en: {
+        waitPermissionTool: "{p} is waiting for you: permission for {tool}",
+        waitPermission: "{p} is waiting for you: permission",
+        waitInput: "{p} is waiting for your reply",
+        waitYou: "{p} is waiting for you",
+        done: "{p}: answer ready",
+        finished: "{p}: {agent} finished",
+        finishedMany: "{p}: {n} subagents finished",
+        spawned: "{p}: {agent} started",
+        compaction: "{p}: context compacted",
+        contextHigh: "{p}: context {pct}% full",
+        limitHigh: "Subscription limit ({w}): {pct}% used",
+        w5h: "5 h",
+        w7d: "7 days",
+        subagent: "a subagent",
+        test: "Test notification: this is how Clorbit will reach you."
+      },
+      uk: {
+        waitPermissionTool: "{p} \u0447\u0435\u043A\u0430\u0454 \u043D\u0430 \u0442\u0435\u0431\u0435: \u0434\u043E\u0437\u0432\u0456\u043B \u043D\u0430 {tool}",
+        waitPermission: "{p} \u0447\u0435\u043A\u0430\u0454 \u043D\u0430 \u0442\u0435\u0431\u0435: \u0434\u043E\u0437\u0432\u0456\u043B",
+        waitInput: "{p} \u0447\u0435\u043A\u0430\u0454 \u043D\u0430 \u0442\u0432\u043E\u044E \u0432\u0456\u0434\u043F\u043E\u0432\u0456\u0434\u044C",
+        waitYou: "{p} \u0447\u0435\u043A\u0430\u0454 \u043D\u0430 \u0442\u0435\u0431\u0435",
+        done: "{p}: \u0432\u0456\u0434\u043F\u043E\u0432\u0456\u0434\u044C \u0433\u043E\u0442\u043E\u0432\u0430",
+        finished: "{p}: {agent} \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u0432 \u0440\u043E\u0431\u043E\u0442\u0443",
+        finishedMany: "{p}: \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043D\u043E \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0456\u0432 \u2014 {n}",
+        spawned: "{p}: \u0437\u0430\u043F\u0443\u0449\u0435\u043D\u043E {agent}",
+        compaction: "{p}: \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0441\u0442\u0438\u0441\u043D\u0443\u0442\u043E",
+        contextHigh: "{p}: \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0437\u0430\u043F\u043E\u0432\u043D\u0435\u043D\u043E \u043D\u0430 {pct}%",
+        limitHigh: "\u041B\u0456\u043C\u0456\u0442 \u043F\u0456\u0434\u043F\u0438\u0441\u043A\u0438 ({w}): \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E {pct}%",
+        w5h: "5 \u0433\u043E\u0434",
+        w7d: "7 \u0434\u043D\u0456\u0432",
+        subagent: "\u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442",
+        test: "\u0422\u0435\u0441\u0442\u043E\u0432\u0435 \u0441\u043F\u043E\u0432\u0456\u0449\u0435\u043D\u043D\u044F: \u0442\u0430\u043A Clorbit \u043A\u043B\u0438\u043A\u0430\u0442\u0438\u043C\u0435 \u0442\u0435\u0431\u0435."
       }
     };
     STARTUP = {
@@ -218,8 +262,8 @@ var init_i18n = __esm({
       }
     };
     ERRORS = {
-      en: { badSession: "Invalid session id", notFound: "Session not found", getOnly: "GET only", unknownRoute: "Unknown route", tooLarge: "Request too large" },
-      uk: { badSession: "\u041D\u0435\u043A\u043E\u0440\u0435\u043A\u0442\u043D\u0438\u0439 id \u0441\u0435\u0441\u0456\u0457", notFound: "\u0421\u0435\u0441\u0456\u044E \u043D\u0435 \u0437\u043D\u0430\u0439\u0434\u0435\u043D\u043E", getOnly: "\u041B\u0438\u0448\u0435 GET", unknownRoute: "\u041D\u0435\u0432\u0456\u0434\u043E\u043C\u0438\u0439 \u043C\u0430\u0440\u0448\u0440\u0443\u0442", tooLarge: "\u0417\u0430\u0432\u0435\u043B\u0438\u043A\u0438\u0439 \u0437\u0430\u043F\u0438\u0442" }
+      en: { badSession: "Invalid session id", notFound: "Session not found", getOnly: "GET only", unknownRoute: "Unknown route", tooLarge: "Request too large", forbidden: "Only a local page can change settings", jsonOnly: "Send JSON (content-type: application/json)", badJson: "Invalid JSON" },
+      uk: { badSession: "\u041D\u0435\u043A\u043E\u0440\u0435\u043A\u0442\u043D\u0438\u0439 id \u0441\u0435\u0441\u0456\u0457", notFound: "\u0421\u0435\u0441\u0456\u044E \u043D\u0435 \u0437\u043D\u0430\u0439\u0434\u0435\u043D\u043E", getOnly: "\u041B\u0438\u0448\u0435 GET", unknownRoute: "\u041D\u0435\u0432\u0456\u0434\u043E\u043C\u0438\u0439 \u043C\u0430\u0440\u0448\u0440\u0443\u0442", tooLarge: "\u0417\u0430\u0432\u0435\u043B\u0438\u043A\u0438\u0439 \u0437\u0430\u043F\u0438\u0442", forbidden: "\u0417\u043C\u0456\u043D\u044E\u0432\u0430\u0442\u0438 \u043D\u0430\u043B\u0430\u0448\u0442\u0443\u0432\u0430\u043D\u043D\u044F \u043C\u043E\u0436\u0435 \u043B\u0438\u0448\u0435 \u043B\u043E\u043A\u0430\u043B\u044C\u043D\u0430 \u0441\u0442\u043E\u0440\u0456\u043D\u043A\u0430", jsonOnly: "\u041D\u0430\u0434\u0456\u0448\u043B\u0438 JSON (content-type: application/json)", badJson: "\u041D\u0435\u043A\u043E\u0440\u0435\u043A\u0442\u043D\u0438\u0439 JSON" }
     };
   }
 });
@@ -771,8 +815,8 @@ function readSettings() {
     return { enabledPlugins: {}, env: {} };
   }
 }
-function hookPluginEnabled(settings = readSettings()) {
-  return Object.entries(settings.enabledPlugins).some(([k, on]) => on && (k.startsWith("clorbit@") || k.startsWith("fleet-hooks@")));
+function hookPluginEnabled(settings2 = readSettings()) {
+  return Object.entries(settings2.enabledPlugins).some(([k, on]) => on && (k.startsWith("clorbit@") || k.startsWith("fleet-hooks@")));
 }
 function knownPlugins() {
   const names = /* @__PURE__ */ new Set();
@@ -811,7 +855,7 @@ var init_config = __esm({
     SERVE_WEB = env("SERVE_WEB") ? env("SERVE_WEB") === "1" : BUNDLED;
     PORT = Number(env("PORT")) || 4980;
     HOST = "127.0.0.1";
-    VERSION = BUNDLED && true ? "0.1.1" : devVersion();
+    VERSION = BUNDLED && true ? "0.2.0" : devVersion();
     LEGACY_DB_FILE = path2.join(PROJECT_ROOT, "data", "fleet.db");
     settingsCache = null;
   }
@@ -892,6 +936,14 @@ var init_db = __esm({
       week_pct       REAL,
       week_resets_at INTEGER
     );
+  `),
+      // v2: user settings (notifications, sounds, do not disturb, interface), one JSON value per key.
+      (db2) => db2.exec(`
+    CREATE TABLE settings (
+      key        TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `)
     ];
     SCHEMA_VERSION = MIGRATIONS.length;
@@ -951,6 +1003,14 @@ var init_db = __esm({
             this.setMeta("schema_version", String(v + 1));
           });
         }
+      }
+      // ---------- settings ----------
+      getSetting(key) {
+        const r = this.stmt("SELECT value_json FROM settings WHERE key = ?").get(key);
+        return r ? r.value_json : null;
+      }
+      setSetting(key, valueJson, now = Date.now()) {
+        this.stmt("INSERT INTO settings(key, value_json, updated_at) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at").run(key, valueJson, now);
       }
       // ---------- file summaries ----------
       /** Loads summaries of the current SUMMARY_VERSION; rows of other versions stay in the DB untouched. */
@@ -1654,12 +1714,12 @@ function compute(store2, range, lang) {
   const attr = attribution(store2, range, lang);
   const ov = overview(store2, range);
   const grand = ov.totals.total || 1;
-  const settings = readSettings();
+  const settings2 = readSettings();
   const ctx = new Ctx(store2);
   const started = filesStartedIn(store2, range);
   const mainsStarted = started.filter((s) => s.agentId === null);
   const days = Math.max(1, ov.daily.length);
-  const pluginKey = (name) => Object.keys(settings.enabledPlugins).find((k) => k.split("@")[0] === name) ?? `${name}@\u2026`;
+  const pluginKey = (name) => Object.keys(settings2.enabledPlugins).find((k) => k.split("@")[0] === name) ?? `${name}@\u2026`;
   for (const r of attr.startupContext) {
     if (!r.key.startsWith("hook:plugin:")) continue;
     const plugin = r.key.slice("hook:plugin:".length);
@@ -1716,7 +1776,7 @@ function compute(store2, range, lang) {
   }
   const usedPlugin = (name) => attr.plugins.some((r) => r.key === name && (r.total > 0 || r.calls > 0)) || attr.skills.some((r) => (r.group === name || r.key.startsWith(name + ":")) && (r.total > 0 || r.calls > 0)) || attr.mcpServers.some((r) => (r.key.includes(`plugin:${name}:`) || mcpKey(r.key).includes(`plugin_${name}_`)) && (r.total > 0 || r.calls > 0)) || attr.tools.some((r) => r.key.startsWith(`mcp__plugin_${name}_`) && r.calls > 0);
   const filesInRange = filesActiveIn(store2, range);
-  for (const [key, on] of Object.entries(settings.enabledPlugins)) {
+  for (const [key, on] of Object.entries(settings2.enabledPlugins)) {
     if (!on) continue;
     const name = key.split("@")[0];
     if (usedPlugin(name)) continue;
@@ -1837,7 +1897,7 @@ function compute(store2, range, lang) {
       title: T.autoCompactions.title(total, compacted.length),
       detail: T.autoCompactions.detail,
       evidence: compacted.slice(0, 8).map((c) => `${c.s.title ?? ctx.project(c.s)} \u2014 ${c.n}\xD7 (${ctx.project(c.s)})`),
-      fix: T.autoCompactions.fix(settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)
+      fix: T.autoCompactions.fix(settings2.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)
     });
   }
   const skillsSorted = attr.skills.filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
@@ -3352,7 +3412,28 @@ var init_live = __esm({
           }
           this.finishedMem.set(ls.sessionId, known);
         }
-        if (this.store.scanDone) this.baseline = true;
+        if (this.store.scanDone) {
+          this.baseline = true;
+          if (this.listenerCount("snapshot")) this.emit("snapshot", this.snapshot("en"));
+        }
+      }
+      /** Project and agent names of an event, resolved now (see EventContext). */
+      context(e) {
+        const files = this.store.sessionFiles(e.sessionId);
+        const main = files.find((f) => f.agentId === null) ?? null;
+        const any = main ?? files[0] ?? null;
+        const pid = this.pids.get(e.sessionId);
+        const cwd = pid?.cwd ?? any?.cwd ?? "";
+        const project = cwd || any?.projectDir ? projectOf(cwd, any?.projectDir) : null;
+        const typeOf = (id) => {
+          if (!id || id === "main") return null;
+          const f = files.find((x) => x.agentId === id);
+          return f?.meta?.agentType ?? null;
+        };
+        const agentId = "agentId" in e ? e.agentId : void 0;
+        const agentName = e.kind === "spawn" ? e.agentType : typeOf(agentId);
+        const parentName = "parentId" in e ? typeOf(e.parentId) : null;
+        return { project, agentName, parentName };
       }
       parentOf(sessionId, toolUseId) {
         for (const s of this.store.sessionFiles(sessionId)) if (s.spawns[toolUseId]) return s.agentId ?? "main";
@@ -3361,7 +3442,14 @@ var init_live = __esm({
       /** The live snapshot with status reasons rendered in the given language. */
       snapshot(lang = "en") {
         const { v, reasons } = this.compute();
-        return { ...v, sessions: v.sessions.map((s) => ({ ...s, statusReason: reasonText(reasons.get(s.sessionId), lang) })) };
+        return {
+          ...v,
+          sessions: v.sessions.map((s) => {
+            const r = reasons.get(s.sessionId);
+            const { code, arg } = reasonCode(r);
+            return { ...s, statusReason: reasonText(r, lang), statusCode: code, statusArg: arg };
+          })
+        };
       }
       compute() {
         const now = Date.now();
@@ -3482,6 +3570,530 @@ var init_live = __esm({
         };
         this.cache = { at: now, v, reasons };
         return this.cache;
+      }
+    };
+  }
+});
+
+// server/recent-events.ts
+function consoleWorthy(e) {
+  if (e.kind === "text") return false;
+  if (e.kind === "status") return e.status === "waiting";
+  return true;
+}
+var RECENT_MAX, RecentEvents;
+var init_recent_events = __esm({
+  "server/recent-events.ts"() {
+    "use strict";
+    init_i18n();
+    RECENT_MAX = 500;
+    RecentEvents = class {
+      constructor(max = RECENT_MAX) {
+        this.max = max;
+      }
+      max;
+      buf = [];
+      push(e, ctx) {
+        if (!consoleWorthy(e)) return;
+        this.buf.push({ ...e, ...ctx });
+        if (this.buf.length > this.max) this.buf.splice(0, this.buf.length - this.max);
+      }
+      /** The newest `limit` events, oldest first, with status reasons in the given language. */
+      list(lang, limit = this.max) {
+        const n = Math.max(0, Math.min(this.max, Math.floor(limit) || 0));
+        return this.buf.slice(this.buf.length - n).map((e) => ({ ...localizeEvent(e, lang), project: e.project, agentName: e.agentName, parentName: e.parentName }));
+      }
+      get size() {
+        return this.buf.length;
+      }
+    };
+  }
+});
+
+// shared/notify.ts
+function waitKind(code) {
+  if (code === "waitingInput") return "input";
+  if (code === "waitingPermission" || code === "probablyPermission" || code === "waitingPermissionAny") return "permission";
+  return "you";
+}
+var CONTEXT_HIGH, CONTEXT_REARM, LIMIT_HIGH, LIMIT_REARM, NotifyDetector;
+var init_notify = __esm({
+  "shared/notify.ts"() {
+    "use strict";
+    CONTEXT_HIGH = 0.85;
+    CONTEXT_REARM = 0.75;
+    LIMIT_HIGH = 80;
+    LIMIT_REARM = 75;
+    NotifyDetector = class {
+      sessions = /* @__PURE__ */ new Map();
+      baseline = false;
+      limitNotified = { "5h": null, "7d": null };
+      agentTypes = /* @__PURE__ */ new Map();
+      seen = /* @__PURE__ */ new Map();
+      // dedupe keys → ts
+      get ready() {
+        return this.baseline;
+      }
+      onSnapshot(snap) {
+        const res = { events: [], resolved: [] };
+        const now = snap.now;
+        for (const s of snap.sessions) if (s.root) this.learnAgents(s.sessionId, s.root);
+        if (!this.baseline) {
+          for (const s of snap.sessions) {
+            const fill = s.contextTokens && s.contextLimit ? s.contextTokens / s.contextLimit : 0;
+            this.sessions.set(s.sessionId, {
+              status: s.status,
+              statusTs: now,
+              alive: s.alive,
+              project: s.project,
+              code: s.statusCode ?? null,
+              arg: s.statusArg ?? null,
+              waitNotified: s.status === "waiting",
+              ctxNotified: fill > CONTEXT_HIGH
+            });
+          }
+          for (const w of ["5h", "7d"]) {
+            const { pct: pct2, key } = this.limitOf(snap.limits, w);
+            if (pct2 != null && pct2 > LIMIT_HIGH) this.limitNotified[w] = key;
+          }
+          this.baseline = true;
+          return res;
+        }
+        const present = /* @__PURE__ */ new Set();
+        for (const s of snap.sessions) {
+          present.add(s.sessionId);
+          let st = this.sessions.get(s.sessionId);
+          if (!st) {
+            st = { status: "idle", statusTs: 0, alive: s.alive, project: s.project, code: null, arg: null, waitNotified: false, ctxNotified: false };
+            this.sessions.set(s.sessionId, st);
+          }
+          st.alive = s.alive;
+          st.project = s.project;
+          if (now >= st.statusTs) this.applyStatus(s.sessionId, st, s.status, now, s.statusCode ?? null, s.statusArg ?? null, res);
+          const fill = s.contextTokens && s.contextLimit ? s.contextTokens / s.contextLimit : 0;
+          if (fill > CONTEXT_HIGH && !st.ctxNotified && st.alive) {
+            st.ctxNotified = true;
+            res.events.push({ type: "context_high", ts: now, sessionId: s.sessionId, project: st.project, pct: Math.round(fill * 100) });
+          } else if (fill < CONTEXT_REARM) st.ctxNotified = false;
+        }
+        for (const [sid, st] of this.sessions) {
+          if (present.has(sid)) continue;
+          if (st.status === "waiting") res.resolved.push(sid);
+          this.sessions.delete(sid);
+        }
+        for (const w of ["5h", "7d"]) {
+          const { pct: pct2, key } = this.limitOf(snap.limits, w);
+          if (pct2 == null) continue;
+          if (pct2 > LIMIT_HIGH && this.limitNotified[w] !== key) {
+            this.limitNotified[w] = key;
+            res.events.push({ type: "limit_high", ts: now, sessionId: null, project: null, pct: Math.round(pct2), window: w });
+          } else if (pct2 < LIMIT_REARM) this.limitNotified[w] = null;
+        }
+        this.gc(now);
+        return res;
+      }
+      onEvent(e) {
+        const res = { events: [], resolved: [] };
+        if (!this.baseline) return res;
+        const st = this.sessions.get(e.sessionId);
+        if (e.kind === "spawn") this.agentTypes.set(`${e.sessionId}:${e.agentId}`, e.agentType);
+        if (!st || !st.alive) {
+          if (st && e.kind === "status") this.applyStatus(e.sessionId, st, e.status, e.ts, e.code ?? null, e.arg ?? null, res);
+          return res;
+        }
+        const base = { ts: e.ts, sessionId: e.sessionId, project: st.project };
+        switch (e.kind) {
+          case "status":
+            this.applyStatus(e.sessionId, st, e.status, e.ts, e.code ?? null, e.arg ?? null, res);
+            break;
+          case "spawn":
+            if (this.once(`spawn:${e.sessionId}:${e.agentId}`, e.ts)) res.events.push({ type: "subagent_spawned", ...base, agentType: e.agentType });
+            break;
+          case "finish":
+            if (this.once(`finish:${e.sessionId}:${e.agentId}`, e.ts)) {
+              res.events.push({ type: "subagent_finished", ...base, agentType: this.agentTypes.get(`${e.sessionId}:${e.agentId}`) ?? null });
+            }
+            break;
+          case "compact": {
+            const last = this.seen.get(`compact:${e.sessionId}`);
+            this.seen.set(`compact:${e.sessionId}`, e.ts);
+            if (last == null || Math.abs(e.ts - last) > 12e4) res.events.push({ type: "compaction", ...base });
+            break;
+          }
+        }
+        return res;
+      }
+      applyStatus(sid, st, status, ts, code, arg, res) {
+        if (ts < st.statusTs) return;
+        const prev = st.status;
+        st.statusTs = ts;
+        if (status === prev) {
+          if (code) {
+            st.code = code;
+            st.arg = arg;
+          }
+          return;
+        }
+        st.status = status;
+        st.code = code;
+        st.arg = arg;
+        if (prev === "waiting") {
+          st.waitNotified = false;
+          res.resolved.push(sid);
+        }
+        if (!st.alive) return;
+        if (status === "waiting" && !st.waitNotified) {
+          st.waitNotified = true;
+          res.events.push({ type: "session_waiting", ts, sessionId: sid, project: st.project, wait: waitKind(code), tool: arg });
+        } else if (prev === "working" && status === "idle") {
+          res.events.push({ type: "session_done", ts, sessionId: sid, project: st.project });
+        }
+      }
+      limitOf(l, w) {
+        if (!l) return { pct: null, key: "" };
+        const pct2 = w === "5h" ? l.fiveHourPct : l.sevenDayPct;
+        const at = w === "5h" ? l.fiveHourResetsAt : l.sevenDayResetsAt;
+        return { pct: pct2, key: at ? String(Math.round(at / 6e4)) : "unknown" };
+      }
+      learnAgents(sid, n) {
+        if (n.depth > 0) this.agentTypes.set(`${sid}:${n.id}`, n.type);
+        for (const c of n.children) this.learnAgents(sid, c);
+      }
+      once(key, ts) {
+        if (this.seen.has(key)) return false;
+        this.seen.set(key, ts);
+        return true;
+      }
+      gc(now) {
+        if (this.seen.size > 4e3) {
+          for (const [k, ts] of this.seen) if (now - ts > 36e5) this.seen.delete(k);
+        }
+        if (this.agentTypes.size > 4e3) this.agentTypes.clear();
+      }
+    };
+  }
+});
+
+// shared/api.ts
+var NOTIFY_EVENTS, SOUND_THEMES, rule, DEFAULT_SETTINGS;
+var init_api = __esm({
+  "shared/api.ts"() {
+    "use strict";
+    NOTIFY_EVENTS = ["session_waiting", "session_done", "subagent_finished", "subagent_spawned", "compaction", "context_high", "limit_high"];
+    SOUND_THEMES = ["orbit", "minimal", "retro"];
+    rule = (sound, browser, toast, browserHiddenOnly = false) => ({ sound, browser, browserHiddenOnly, toast, system: false });
+    DEFAULT_SETTINGS = {
+      notifications: {
+        session_waiting: rule(true, true, true),
+        session_done: rule(true, true, true, true),
+        subagent_finished: rule(true, false, false),
+        subagent_spawned: rule(false, false, false),
+        compaction: rule(false, false, false),
+        context_high: rule(false, false, false),
+        limit_high: rule(false, false, false)
+      },
+      sound: { enabled: true, volume: 0.6, theme: "orbit" },
+      dnd: { enabled: false, quietHours: { enabled: false, from: "22:00", to: "08:00" }, mutedUntil: null },
+      interface: { lang: "en", autoTour: false, reduceMotion: false }
+    };
+  }
+});
+
+// shared/settings.ts
+function cloneSettings(s) {
+  return JSON.parse(JSON.stringify(s));
+}
+function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
+  const out = cloneSettings(base);
+  if (!isObj(patch)) return out;
+  const n = patch.notifications;
+  if (isObj(n)) {
+    for (const ev of NOTIFY_EVENTS) {
+      const r = n[ev];
+      if (!isObj(r)) continue;
+      const cur = out.notifications[ev];
+      out.notifications[ev] = {
+        sound: bool(r.sound, cur.sound),
+        browser: bool(r.browser, cur.browser),
+        browserHiddenOnly: bool(r.browserHiddenOnly, cur.browserHiddenOnly),
+        toast: bool(r.toast, cur.toast),
+        system: bool(r.system, cur.system)
+      };
+    }
+  }
+  const s = patch.sound;
+  if (isObj(s)) {
+    out.sound.enabled = bool(s.enabled, out.sound.enabled);
+    if (typeof s.volume === "number" && Number.isFinite(s.volume)) out.sound.volume = Math.round(Math.min(1, Math.max(0, s.volume)) * 100) / 100;
+    if (SOUND_THEMES.includes(s.theme)) out.sound.theme = s.theme;
+  }
+  const d = patch.dnd;
+  if (isObj(d)) {
+    out.dnd.enabled = bool(d.enabled, out.dnd.enabled);
+    const q = d.quietHours;
+    if (isObj(q)) {
+      out.dnd.quietHours = { enabled: bool(q.enabled, out.dnd.quietHours.enabled), from: time(q.from, out.dnd.quietHours.from), to: time(q.to, out.dnd.quietHours.to) };
+    }
+    if (d.mutedUntil === null) out.dnd.mutedUntil = null;
+    else if (typeof d.mutedUntil === "number" && Number.isFinite(d.mutedUntil)) {
+      out.dnd.mutedUntil = d.mutedUntil <= now ? null : Math.round(Math.min(d.mutedUntil, now + MAX_MUTE_MS));
+    }
+  }
+  const i = patch.interface;
+  if (isObj(i)) {
+    if (i.lang === "en" || i.lang === "uk") out.interface.lang = i.lang;
+    out.interface.autoTour = bool(i.autoTour, out.interface.autoTour);
+    out.interface.reduceMotion = bool(i.reduceMotion, out.interface.reduceMotion);
+  }
+  return out;
+}
+function parseHHMM(s) {
+  const m = HHMM.exec(s);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+function inQuietHours(from, to, date) {
+  const a = parseHHMM(from);
+  const b = parseHHMM(to);
+  if (a === null || b === null || a === b) return false;
+  const m = date.getHours() * 60 + date.getMinutes();
+  return a < b ? m >= a && m < b : m >= a || m < b;
+}
+function isSilenced(s, now = Date.now()) {
+  if (s.dnd.enabled) return true;
+  if (s.dnd.mutedUntil && s.dnd.mutedUntil > now) return true;
+  const q = s.dnd.quietHours;
+  return q.enabled && inQuietHours(q.from, q.to, new Date(now));
+}
+var isObj, bool, HHMM, time, MAX_MUTE_MS;
+var init_settings = __esm({
+  "shared/settings.ts"() {
+    "use strict";
+    init_api();
+    isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+    bool = (v, d) => typeof v === "boolean" ? v : d;
+    HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+    time = (v, d) => typeof v === "string" && HHMM.test(v.trim()) ? v.trim() : d;
+    MAX_MUTE_MS = 7 * 24 * 36e5;
+  }
+});
+
+// server/notifier.ts
+import { execFile } from "node:child_process";
+import fs7 from "node:fs";
+import path8 from "node:path";
+function escapeAppleScript(s) {
+  return s.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+function notifierCommand(tool, title, body) {
+  const t = clean(title, 80);
+  const b = clean(body, MAX_BODY);
+  if (tool === "osascript") {
+    return { file: "osascript", args: ["-e", `display notification "${escapeAppleScript(b)}" with title "${escapeAppleScript(t)}"`] };
+  }
+  return { file: "notify-send", args: ["--app-name=Clorbit", "--", t, b] };
+}
+function executable(file) {
+  try {
+    fs7.accessSync(file, fs7.constants.X_OK);
+    return fs7.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+function detectTool(platform = process.platform, pathEnv = process.env.PATH ?? "") {
+  if (platform === "darwin") return executable("/usr/bin/osascript") ? "osascript" : null;
+  if (platform === "linux") {
+    for (const dir of pathEnv.split(path8.delimiter)) if (dir && executable(path8.join(dir, "notify-send"))) return "notify-send";
+  }
+  return null;
+}
+function notificationBody(ev, lang) {
+  const p = ev.project ?? "";
+  const agent = ev.agentType || notifyText(lang, "subagent");
+  switch (ev.type) {
+    case "session_waiting":
+      if (ev.wait === "input") return notifyText(lang, "waitInput", { p });
+      if (ev.wait === "permission") return ev.tool ? notifyText(lang, "waitPermissionTool", { p, tool: ev.tool }) : notifyText(lang, "waitPermission", { p });
+      return notifyText(lang, "waitYou", { p });
+    case "session_done":
+      return notifyText(lang, "done", { p });
+    case "subagent_finished":
+      return (ev.count ?? 1) > 1 ? notifyText(lang, "finishedMany", { p, n: ev.count }) : notifyText(lang, "finished", { p, agent });
+    case "subagent_spawned":
+      return notifyText(lang, "spawned", { p, agent });
+    case "compaction":
+      return notifyText(lang, "compaction", { p });
+    case "context_high":
+      return notifyText(lang, "contextHigh", { p, pct: ev.pct ?? 85 });
+    case "limit_high":
+      return notifyText(lang, "limitHigh", { w: notifyText(lang, ev.window === "7d" ? "w7d" : "w5h"), pct: ev.pct ?? 80 });
+  }
+}
+var MAX_BODY, clean, defaultRunner, SystemNotifier, notifyTestBody, ServerNotifications;
+var init_notifier = __esm({
+  "server/notifier.ts"() {
+    "use strict";
+    init_notify();
+    init_settings();
+    init_i18n();
+    MAX_BODY = 240;
+    clean = (s, n) => {
+      const one = s.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+      return one.length > n ? one.slice(0, n - 1) + "\u2026" : one;
+    };
+    defaultRunner = (cmd) => new Promise((resolve, reject) => {
+      execFile(cmd.file, cmd.args, { timeout: 5e3, windowsHide: true }, (err) => err ? reject(err) : resolve());
+    });
+    SystemNotifier = class {
+      constructor(tool = detectTool(), run = defaultRunner, now = Date.now, limit = { perMinute: 6, minGapMs: 1500, maxFailures: 3, pauseMs: 10 * 6e4 }) {
+        this.tool = tool;
+        this.run = run;
+        this.now = now;
+        this.limit = limit;
+      }
+      tool;
+      run;
+      now;
+      limit;
+      sent = [];
+      failures = 0;
+      pausedUntil = 0;
+      get available() {
+        return this.tool !== null;
+      }
+      /** Shows a notification unless rate-limited or backed off. Returns whether it was attempted. */
+      send(title, body) {
+        if (!this.tool) return false;
+        const now = this.now();
+        if (now < this.pausedUntil) return false;
+        this.sent = this.sent.filter((t) => now - t < 6e4);
+        if (this.sent.length >= this.limit.perMinute) return false;
+        if (this.sent.length && now - this.sent[this.sent.length - 1] < this.limit.minGapMs) return false;
+        this.sent.push(now);
+        let cmd;
+        try {
+          cmd = notifierCommand(this.tool, title, body);
+        } catch {
+          return false;
+        }
+        this.run(cmd).then(
+          () => {
+            this.failures = 0;
+          },
+          (e) => {
+            if (++this.failures >= this.limit.maxFailures) {
+              this.pausedUntil = this.now() + this.limit.pauseMs;
+              this.failures = 0;
+              console.warn(`[clorbit] system notifications keep failing (${e?.message ?? e}); pausing them for 10 minutes`);
+            }
+          }
+        );
+        return true;
+      }
+    };
+    notifyTestBody = (lang) => notifyText(lang, "test");
+    ServerNotifications = class {
+      constructor(settings2, notifier, now = Date.now, opts = { debounceMs: 8e3, burstMs: 2e3 }) {
+        this.settings = settings2;
+        this.notifier = notifier;
+        this.now = now;
+        this.opts = opts;
+      }
+      settings;
+      notifier;
+      now;
+      opts;
+      detector = new NotifyDetector();
+      last = /* @__PURE__ */ new Map();
+      burst = /* @__PURE__ */ new Map();
+      attach(src) {
+        src.on("snapshot", (s) => this.handle(this.detector.onSnapshot(s)));
+        src.on("event", (e) => this.handle(this.detector.onEvent(localizeEvent(e, "en"))));
+      }
+      handle(res) {
+        for (const ev of res.events) {
+          try {
+            this.consider(ev);
+          } catch (e) {
+            console.error("[clorbit] notification failed:", e.message);
+          }
+        }
+      }
+      consider(ev) {
+        const s = this.settings();
+        if (!s.notifications[ev.type]?.system || !this.notifier.available) return;
+        if (ev.type === "subagent_finished") {
+          const key = ev.sessionId ?? "";
+          const cur = this.burst.get(key);
+          if (cur) {
+            cur.ev.count = (cur.ev.count ?? 1) + 1;
+            return;
+          }
+          const timer = setTimeout(() => {
+            const b = this.burst.get(key);
+            this.burst.delete(key);
+            if (b) this.deliver(b.ev);
+          }, this.opts.burstMs);
+          timer.unref?.();
+          this.burst.set(key, { ev: { ...ev, count: 1 }, timer });
+          return;
+        }
+        this.deliver(ev);
+      }
+      deliver(ev) {
+        const s = this.settings();
+        const now = this.now();
+        if (isSilenced(s, now)) return;
+        const key = `${ev.type}:${ev.sessionId ?? ""}:${ev.window ?? ""}`;
+        const prev = this.last.get(key);
+        if (prev != null && now - prev < this.opts.debounceMs) return;
+        this.last.set(key, now);
+        if (this.last.size > 500) {
+          for (const [k, t] of this.last) if (now - t > 6e4) this.last.delete(k);
+        }
+        this.notifier.send("Clorbit", notificationBody(ev, s.interface.lang));
+      }
+    };
+  }
+});
+
+// server/settings.ts
+import { EventEmitter as EventEmitter3 } from "node:events";
+var KEY, SettingsStore;
+var init_settings2 = __esm({
+  "server/settings.ts"() {
+    "use strict";
+    init_api();
+    init_settings();
+    KEY = "app";
+    SettingsStore = class extends EventEmitter3 {
+      constructor(db2) {
+        super();
+        this.db = db2;
+        let saved = null;
+        try {
+          const raw = db2?.getSetting(KEY);
+          if (raw) saved = JSON.parse(raw);
+        } catch (e) {
+          console.warn("[clorbit] stored settings are unreadable, using defaults:", e.message);
+        }
+        this.current = normalizeSettings(saved, DEFAULT_SETTINGS);
+      }
+      db;
+      current;
+      get() {
+        return cloneSettings(this.current);
+      }
+      /** Merges a (partial) settings object, validates it, persists it and returns the result. */
+      update(patch, now = Date.now()) {
+        this.current = normalizeSettings(patch, this.current, now);
+        try {
+          this.db?.setSetting(KEY, JSON.stringify(this.current), now);
+        } catch (e) {
+          console.error("[clorbit] could not save settings:", e.message);
+        }
+        this.emit("change", this.get());
+        return this.get();
       }
     };
   }
@@ -3668,9 +4280,31 @@ var init_session_detail = __esm({
 
 // server/index.ts
 var index_exports = {};
-import fs7 from "node:fs";
+import fs8 from "node:fs";
 import http from "node:http";
-import path8 from "node:path";
+import path9 from "node:path";
+function about() {
+  const st = db ? (hookLog.flush(), db.stats()) : null;
+  const lim = readLimits();
+  const lastHook = hooks.recent.length ? hooks.recent[hooks.recent.length - 1].ts : null;
+  return {
+    version: VERSION,
+    dataDir: DATA_DIR,
+    hooks: { pluginEnabled: hookPluginEnabled(), eventsReceived: hooks.installed || (st?.rows.hookEvents ?? 0) > 0, lastEventAt: lastHook },
+    limits: { capture: lim.capture, updatedAt: lim.limits?.updatedAt ?? null },
+    store: { enabled: !!st, fileSummaries: st?.rows.fileSummaries ?? 0, archived: st?.rows.archived ?? 0, hookEvents: st?.rows.hookEvents ?? 0, limits: st?.rows.limits ?? 0 },
+    system: { available: systemNotifier.available, tool: systemNotifier.tool, platform: process.platform }
+  };
+}
+function localOrigin(req) {
+  const o = req.headers.origin;
+  if (!o) return true;
+  try {
+    return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(o).hostname);
+  } catch {
+    return false;
+  }
+}
 function dbHealth() {
   if (!db) return { enabled: false };
   hookLog.flush();
@@ -3689,16 +4323,16 @@ function json(res, code, body) {
   res.end(s);
 }
 function serveStatic(res, urlPath) {
-  const safe = path8.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
-  let file = path8.join(DIST_DIR, safe);
-  if (!file.startsWith(DIST_DIR) || !fs7.existsSync(file) || fs7.statSync(file).isDirectory()) file = path8.join(DIST_DIR, "index.html");
-  if (!fs7.existsSync(file)) {
+  const safe = path9.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
+  let file = path9.join(DIST_DIR, safe);
+  if (!file.startsWith(DIST_DIR) || !fs8.existsSync(file) || fs8.statSync(file).isDirectory()) file = path9.join(DIST_DIR, "index.html");
+  if (!fs8.existsSync(file)) {
     res.writeHead(404);
     res.end("dist is not built: run pnpm build");
     return;
   }
-  res.writeHead(200, { "content-type": MIME[path8.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
-  fs7.createReadStream(file).pipe(res);
+  res.writeHead(200, { "content-type": MIME[path9.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
+  fs8.createReadStream(file).pipe(res);
 }
 function readBody(req, limit = 2e6) {
   return new Promise((resolve, reject) => {
@@ -3715,7 +4349,7 @@ function readBody(req, limit = 2e6) {
     req.on("error", reject);
   });
 }
-var t0, migratedFrom, db, store, hooks, hookLog, limitsLog, live, clients, broadcast, MIME, server, PID_FILE, ownsPidFile, shutdown;
+var t0, migratedFrom, db, store, hooks, hookLog, limitsLog, live, settings, systemNotifier, clients, recent, broadcast, MIME, server, PID_FILE, ownsPidFile, shutdown;
 var init_index = __esm({
   "server/index.ts"() {
     "use strict";
@@ -3728,6 +4362,9 @@ var init_index = __esm({
     init_insights();
     init_limits_log();
     init_live();
+    init_recent_events();
+    init_notifier();
+    init_settings2();
     init_session_detail();
     init_store();
     t0 = Date.now();
@@ -3746,12 +4383,18 @@ var init_index = __esm({
     hookLog = new HookLog(db);
     limitsLog = new LimitsLog(db, () => readLimits().limits);
     live = new Live(store, hooks);
+    settings = new SettingsStore(db);
+    systemNotifier = new SystemNotifier();
+    new ServerNotifications(() => settings.get(), systemNotifier).attach(live);
     clients = /* @__PURE__ */ new Map();
+    recent = new RecentEvents();
     broadcast = (e) => {
+      const ctx = e.kind === "text" ? {} : live.context(e);
+      recent.push(e, ctx);
       const byLang = /* @__PURE__ */ new Map();
       for (const [c, lang] of clients) {
         let data = byLang.get(lang);
-        if (!data) byLang.set(lang, data = `data: ${JSON.stringify(localizeEvent(e, lang))}
+        if (!data) byLang.set(lang, data = `data: ${JSON.stringify({ ...localizeEvent(e, lang), ...ctx })}
 
 `);
         c.write(data);
@@ -3787,9 +4430,29 @@ var init_index = __esm({
           hookLog.record(j);
           return json(res, 200, { ok: true });
         }
+        if (req.method === "PUT" && p === "/api/settings") {
+          if (!localOrigin(req)) return json(res, 403, { error: err.forbidden });
+          if (!String(req.headers["content-type"] ?? "").includes("application/json")) return json(res, 415, { error: err.jsonOnly });
+          let j;
+          try {
+            j = JSON.parse(await readBody(req, 64e3));
+          } catch {
+            return json(res, 400, { error: err.badJson });
+          }
+          return json(res, 200, settings.update(j));
+        }
+        if (req.method === "POST" && p === "/api/notify/test") {
+          if (!localOrigin(req)) return json(res, 403, { error: err.forbidden });
+          if (!systemNotifier.available) return json(res, 200, { ok: false, error: "unavailable" });
+          const ok = systemNotifier.send("Clorbit", notifyTestBody(lang));
+          return json(res, 200, ok ? { ok } : { ok, error: "rate-limited" });
+        }
         if (req.method !== "GET" && req.method !== "HEAD") return json(res, 405, { error: err.getOnly });
         if (p === "/api/health") return json(res, 200, { app: "clorbit", version: VERSION, pid: process.pid, port: PORT, dataDir: DATA_DIR, uptimeMs: Date.now() - t0 });
         if (p === "/api/live") return json(res, 200, live.snapshot(lang));
+        if (p === "/api/settings") return json(res, 200, settings.get());
+        if (p === "/api/about") return json(res, 200, about());
+        if (p === "/api/events/recent") return json(res, 200, recent.list(lang, Number(url.searchParams.get("limit") ?? 500)));
         if (p === "/api/events") {
           res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
           res.write(": clorbit\n\n");
@@ -3831,7 +4494,7 @@ var init_index = __esm({
     PID_FILE = env("PID_FILE");
     ownsPidFile = () => {
       try {
-        return PID_FILE && JSON.parse(fs7.readFileSync(PID_FILE, "utf8")).pid === process.pid;
+        return PID_FILE && JSON.parse(fs8.readFileSync(PID_FILE, "utf8")).pid === process.pid;
       } catch {
         return false;
       }
@@ -3844,14 +4507,14 @@ var init_index = __esm({
     server.listen(PORT, HOST, () => {
       if (PID_FILE) {
         try {
-          fs7.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
+          fs8.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
         } catch (e) {
           console.error(`[clorbit] could not write ${PID_FILE}:`, e.message);
         }
       }
       const lock = env("START_LOCK");
       if (lock) try {
-        fs7.rmSync(lock, { force: true });
+        fs8.rmSync(lock, { force: true });
       } catch {
       }
       console.log(`[clorbit] v${VERSION} http://${HOST}:${PORT} ready in ${Date.now() - t0} ms; ${store.files.size} files in the database, ${store.missing.size} archived (loaded in ${store.stats.loadMs} ms)`);
@@ -3874,7 +4537,7 @@ var init_index = __esm({
       }
       for (const c of clients.keys()) c.end();
       if (ownsPidFile()) try {
-        fs7.unlinkSync(PID_FILE);
+        fs8.unlinkSync(PID_FILE);
       } catch {
       }
       server.close();

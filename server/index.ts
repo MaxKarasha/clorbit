@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { attribution, overview, parseRange, sessions } from './analytics';
-import { CACHE_DIR, DATA_DIR, DB_FILE, DIST_DIR, HOST, PORT, PROJECTS_DIR, SERVE_WEB, VERSION, env, knownPlugins, migrateLegacyDb } from './config';
+import type { AboutInfo } from '../shared/api.ts';
+import { CACHE_DIR, DATA_DIR, DB_FILE, DIST_DIR, HOST, PORT, PROJECTS_DIR, SERVE_WEB, VERSION, env, hookPluginEnabled, knownPlugins, migrateLegacyDb } from './config';
 import { ClorbitDb } from './db';
 import { HookLog } from './hook-log';
 import { Hooks } from './hooks';
@@ -11,6 +12,9 @@ import { errorText, localizeEvent, parseLang, type Lang, type ServerEvent } from
 import { insights } from './insights';
 import { LimitsLog, parseTsRange } from './limits-log';
 import { Live, readLimits } from './live';
+import { RecentEvents } from './recent-events';
+import { ServerNotifications, SystemNotifier, notifyTestBody } from './notifier';
+import { SettingsStore } from './settings';
 import { sessionDetail } from './session-detail';
 import { Store } from './store';
 
@@ -29,6 +33,30 @@ const hooks = new Hooks();
 const hookLog = new HookLog(db);
 const limitsLog = new LimitsLog(db, () => readLimits().limits);
 const live = new Live(store, hooks);
+const settings = new SettingsStore(db);
+const systemNotifier = new SystemNotifier();
+new ServerNotifications(() => settings.get(), systemNotifier).attach(live);
+
+function about(): AboutInfo {
+  const st = db ? (hookLog.flush(), db.stats()) : null;
+  const lim = readLimits();
+  const lastHook = hooks.recent.length ? hooks.recent[hooks.recent.length - 1].ts : null;
+  return {
+    version: VERSION,
+    dataDir: DATA_DIR,
+    hooks: { pluginEnabled: hookPluginEnabled(), eventsReceived: hooks.installed || (st?.rows.hookEvents ?? 0) > 0, lastEventAt: lastHook },
+    limits: { capture: lim.capture, updatedAt: lim.limits?.updatedAt ?? null },
+    store: { enabled: !!st, fileSummaries: st?.rows.fileSummaries ?? 0, archived: st?.rows.archived ?? 0, hookEvents: st?.rows.hookEvents ?? 0, limits: st?.rows.limits ?? 0 },
+    system: { available: systemNotifier.available, tool: systemNotifier.tool, platform: process.platform },
+  };
+}
+
+/** Writes from the UI must come from a local page: a cross-site page in the browser cannot change settings. */
+function localOrigin(req: http.IncomingMessage): boolean {
+  const o = req.headers.origin;
+  if (!o) return true;
+  try { return ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(o).hostname); } catch { return false; }
+}
 
 function dbHealth() {
   if (!db) return { enabled: false };
@@ -42,11 +70,15 @@ function dbHealth() {
 
 // SSE clients with their language; status reasons are rendered per language.
 const clients = new Map<http.ServerResponse, Lang>();
+const recent = new RecentEvents();
 const broadcast = (e: ServerEvent) => {
+  // Names are resolved once, now: the console keeps meaningful lines after agents are gone.
+  const ctx = e.kind === 'text' ? {} : live.context(e);
+  recent.push(e, ctx);
   const byLang = new Map<Lang, string>();
   for (const [c, lang] of clients) {
     let data = byLang.get(lang);
-    if (!data) byLang.set(lang, (data = `data: ${JSON.stringify(localizeEvent(e, lang))}\n\n`));
+    if (!data) byLang.set(lang, (data = `data: ${JSON.stringify({ ...localizeEvent(e, lang), ...ctx })}\n\n`));
     c.write(data);
   }
 };
@@ -97,9 +129,25 @@ const server = http.createServer(async (req, res) => {
       hookLog.record(j);
       return json(res, 200, { ok: true });
     }
+    if (req.method === 'PUT' && p === '/api/settings') {
+      if (!localOrigin(req)) return json(res, 403, { error: err.forbidden });
+      if (!String(req.headers['content-type'] ?? '').includes('application/json')) return json(res, 415, { error: err.jsonOnly });
+      let j: unknown;
+      try { j = JSON.parse(await readBody(req, 64_000)); } catch { return json(res, 400, { error: err.badJson }); }
+      return json(res, 200, settings.update(j));
+    }
+    if (req.method === 'POST' && p === '/api/notify/test') {
+      if (!localOrigin(req)) return json(res, 403, { error: err.forbidden });
+      if (!systemNotifier.available) return json(res, 200, { ok: false, error: 'unavailable' });
+      const ok = systemNotifier.send('Clorbit', notifyTestBody(lang));
+      return json(res, 200, ok ? { ok } : { ok, error: 'rate-limited' });
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: err.getOnly });
     if (p === '/api/health') return json(res, 200, { app: 'clorbit', version: VERSION, pid: process.pid, port: PORT, dataDir: DATA_DIR, uptimeMs: Date.now() - t0 });
     if (p === '/api/live') return json(res, 200, live.snapshot(lang));
+    if (p === '/api/settings') return json(res, 200, settings.get());
+    if (p === '/api/about') return json(res, 200, about());
+    if (p === '/api/events/recent') return json(res, 200, recent.list(lang, Number(url.searchParams.get('limit') ?? 500)));
     if (p === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
       res.write(': clorbit\n\n');

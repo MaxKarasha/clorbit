@@ -4,6 +4,7 @@ import { useData } from '../lib/api';
 import { fmtInt, fmtPct } from '../lib/format';
 import { href, presetLabel, RANGE_PRESETS, setQuery, useRange, useRoute } from '../lib/router';
 import LangSwitch from './LangSwitch';
+import { ProfileButton } from './SettingsPanel';
 import { DemoStrip, ServerOffline } from './ServerState';
 import Starfield from './Starfield';
 import { cx } from './ui';
@@ -107,6 +108,7 @@ export default function AnalyticsLayout({ children }: { children: ReactNode }) {
         <div className="topnav__right">
           <RangePicker />
           <LangSwitch className="segmented lang-switch" btnClass="segmented__btn" />
+          <ProfileButton />
         </div>
         {demo && <DemoStrip />}
       </nav>

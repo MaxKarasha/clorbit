@@ -26,7 +26,8 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 - **Live events:** a flash for every tool call, a comet when an agent is born, a spiral when a result returns to its parent, orange waves when a session is waiting for you.
 - **Drill-down levels:** fleet → session (agent tree, tokens, context, effort, current status) → agent (the task from its parent, what it is doing now, its latest thought, its subordinates). Click empty space to go back up.
 - **Status bar:** tokens over 24 h with a burn-rate sparkline, tokens per minute, subscription limits (optional, see below), live sessions, working subagents and cache hit rate. On narrower screens the less important metrics (cache, then speed) give way instead of overlapping.
-- An automatic **tour** cycles through the most active systems when you are not interacting.
+- An automatic **tour** cycles through the most active systems when you are not interacting (opt-in).
+- **Event console** in the bottom-left corner: tool calls, spawns, results, waits, prompts and compactions as they happen. Project names take their star's color and agent names their planet's; click either to fly there. Expand it into a docked drawer (resizable, with the last ~500 events from the server, filters by project and event kind, search, pause and "clear view"), or pop it out into its own window (`#/console`) whose clicks drive the galaxy in your main tab.
 
 ![The Clorbit galaxy: live sessions as stars, subagents as planets, finished agents in asteroid belts](docs/media/galaxy.png)
 
@@ -52,7 +53,30 @@ Examples of insights: a plugin whose SessionStart hook adds thousands of tokens 
 
 ![Startup context: what loads into every session before the first prompt](docs/media/context.png)
 
-The UI is available in **English** and **Ukrainian** (switch in the top-right corner, or add `?lang=uk` to the URL).
+The UI is available in **English** and **Ukrainian** (switch in the top-right corner or in Settings, or add `?lang=uk` to the URL).
+
+### Notifications and sounds
+
+The round profile button at the right end of the top bar (on the galaxy and on every analytics page) opens **Settings**. Everything there is saved by the local server in `~/.clorbit/clorbit.db`, so it survives reloads and applies to every tab.
+
+- **Notifications** — a matrix of events × channels:
+
+  | Event | When |
+  | --- | --- |
+  | Waiting for you | A session hits a permission prompt or asks a question (once per wait). |
+  | Answer ready | The main agent finished its turn (working → idle). |
+  | Subagent finished / started | A subagent returned its result / was spawned. A burst of finishes counts as one. |
+  | Compaction | The context was compacted. |
+  | Context almost full | A session's context crossed 85% (again only after it dropped below 75%). |
+  | Subscription limit | The 5-hour or 7-day window crossed 80% (once per window; needs the limits source below). |
+
+  Channels: **Sound**, **Browser** notification (asks for permission; can be limited to "only when the Clorbit tab is hidden"), **In-app** card in the corner (click it to fly to the session; "waiting" cards stay until the session moves on; "Mute 1 h" is one click away), and **System** — shown by the Clorbit server itself, so it works even with the tab closed (macOS: `osascript`, Linux: `notify-send` if installed). When System is on for an event, its browser notification is skipped. Defaults: waiting → sound + browser + card; answer ready → sound + card + browser while the tab is hidden; subagent finished → a soft sound; everything else off.
+- **Sounds** — synthesized in the browser with Web Audio (no audio files): three themes, *Orbit* (soft bells), *Minimal* (short ticks) and *Retro* (8-bit blips), a distinct sound per event with a preview button, a volume slider and a master switch. "Waiting for you" is the most noticeable sound of each theme. The same sound plays at most once every 1.2 s. Browsers only allow sound after you have clicked the page once.
+- **Do not disturb** — a switch and optional daily quiet hours (local time; the window may cross midnight). They silence sounds, browser and system notifications; in-app cards still appear, quietly.
+- **Interface** — language, auto tour, and **Reduce motion** (slow orbits, no twinkling, instant camera moves).
+- **Connection** — server version, data folder, hooks plugin state, subscription-limits source and event-store counts.
+
+In demo mode sounds and cards work on the invented data; browser and system notifications never fire and nothing is saved. On macOS the first system notification may ask you to allow notifications for "Script Editor" (that is what `osascript` shows up as).
 
 ## Install
 
@@ -140,9 +164,10 @@ The script only touches `statusLine.command` in `~/.claude/settings.json`, keeps
 
 ## Privacy and safety
 
-- **Localhost only.** The server binds to `127.0.0.1`; nothing is exposed to your network and nothing is sent to the internet. The only external request the web page makes is for Google Fonts.
+- **Localhost only.** The server binds to `127.0.0.1`; nothing is exposed to your network and nothing is sent to the internet. The only external request the web page makes is for Google Fonts. Settings can only be changed from a local page (other origins get 403).
+- **System notifications** are shown with `osascript` (macOS) or `notify-send` (Linux), started with an argument list (no shell), rate-limited, and only for the events you switch on.
 - **Read-only over `~/.claude`.** Clorbit never writes to `~/.claude`. The only exception is `scripts/install-hooks.mjs`, and only when you run it with `--apply` yourself.
-- **Your data stays in `~/.clorbit`.** That folder holds the SQLite database (`clorbit.db`), the server's log and pid file when it was started by the plugin or the CLI, and the optional status-line capture. Delete it at any time; it will be rebuilt from your transcripts (except history of transcripts Claude Code has already deleted).
+- **Your data stays in `~/.clorbit`.** That folder holds the SQLite database (`clorbit.db`, including your settings), the server's log and pid file when it was started by the plugin or the CLI, and the optional status-line capture. Delete it at any time; it will be rebuilt from your transcripts (except history of transcripts Claude Code has already deleted).
 - **Archived history.** Claude Code deletes transcripts older than 30 days by default. Clorbit keeps their summaries and marks them as archived, so analytics and insights still include that history. An archived session keeps its summary, agent tree, startup context and tools, but has no timeline or context chart.
 - **Demo mode** (`?demo=1`) uses invented data only — safe for screenshots and screen sharing. Clorbit never switches to it by itself: when the server is down you see an "isn't running" screen, not made-up numbers.
 

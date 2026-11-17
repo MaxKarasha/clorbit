@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { Limits, LiveSession, LiveSnapshot, SessionStatus, Tokens } from '../shared/api.ts';
 import { LEGACY_STATUSLINE_FILE, PROJECTS_DIR, SESSIONS_DIR, STATUSLINE_FILE, hookPluginEnabled } from './config';
 import type { Hooks } from './hooks';
-import { reasonText, type Lang, type Reason, type ServerEvent } from './i18n';
+import { reasonCode, reasonText, type Lang, type Reason, type ServerEvent } from './i18n';
 import { listTranscripts, type Store } from './store';
 import { buildTree, sessionStatus, subagentDone } from './tree';
 import type { FileSummary, ScanEvent } from './types';
@@ -225,7 +225,30 @@ export class Live extends EventEmitter {
       }
       this.finishedMem.set(ls.sessionId, known);
     }
-    if (this.store.scanDone) this.baseline = true;
+    if (this.store.scanDone) {
+      this.baseline = true;
+      // Server-side notifications watch the snapshot once the history is known (see notifier.ts).
+      if (this.listenerCount('snapshot')) this.emit('snapshot', this.snapshot('en'));
+    }
+  }
+
+  /** Project and agent names of an event, resolved now (see EventContext). */
+  context(e: ServerEvent): { project: string | null; agentName: string | null; parentName: string | null } {
+    const files = this.store.sessionFiles(e.sessionId);
+    const main = files.find((f) => f.agentId === null) ?? null;
+    const any = main ?? files[0] ?? null;
+    const pid = this.pids.get(e.sessionId);
+    const cwd = pid?.cwd ?? any?.cwd ?? '';
+    const project = cwd || any?.projectDir ? projectOf(cwd, any?.projectDir) : null;
+    const typeOf = (id: string | undefined): string | null => {
+      if (!id || id === 'main') return null;
+      const f = files.find((x) => x.agentId === id);
+      return f?.meta?.agentType ?? null;
+    };
+    const agentId = 'agentId' in e ? e.agentId : undefined;
+    const agentName = e.kind === 'spawn' ? e.agentType : typeOf(agentId);
+    const parentName = 'parentId' in e ? typeOf(e.parentId) : null;
+    return { project, agentName, parentName };
   }
 
   private parentOf(sessionId: string, toolUseId: string): string {
@@ -236,7 +259,14 @@ export class Live extends EventEmitter {
   /** The live snapshot with status reasons rendered in the given language. */
   snapshot(lang: Lang = 'en'): LiveSnapshot {
     const { v, reasons } = this.compute();
-    return { ...v, sessions: v.sessions.map((s) => ({ ...s, statusReason: reasonText(reasons.get(s.sessionId), lang) })) };
+    return {
+      ...v,
+      sessions: v.sessions.map((s) => {
+        const r = reasons.get(s.sessionId);
+        const { code, arg } = reasonCode(r);
+        return { ...s, statusReason: reasonText(r, lang), statusCode: code, statusArg: arg };
+      }),
+    };
   }
 
   private compute(): { v: LiveSnapshot; reasons: Map<string, Reason | null> } {

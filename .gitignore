@@ -5,3 +5,10 @@ data
 .DS_Store
 *.log
 coverage
+
+# Promo video (video/promo)
+video/promo/renders/
+video/promo/.hyperframes/
+video/promo/node_modules/
+video/promo/capture-raw/
+video/promo/snapshots/

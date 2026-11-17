@@ -73,6 +73,14 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
       week_resets_at INTEGER
     );
   `),
+  // v2: user settings (notifications, sounds, do not disturb, interface), one JSON value per key.
+  (db) => db.exec(`
+    CREATE TABLE settings (
+      key        TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `),
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -143,6 +151,17 @@ export class ClorbitDb {
         this.setMeta('schema_version', String(v + 1));
       });
     }
+  }
+
+  // ---------- settings ----------
+
+  getSetting(key: string): string | null {
+    const r = this.stmt('SELECT value_json FROM settings WHERE key = ?').get(key) as { value_json: string } | undefined;
+    return r ? r.value_json : null;
+  }
+
+  setSetting(key: string, valueJson: string, now = Date.now()) {
+    this.stmt('INSERT INTO settings(key, value_json, updated_at) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at').run(key, valueJson, now);
   }
 
   // ---------- file summaries ----------

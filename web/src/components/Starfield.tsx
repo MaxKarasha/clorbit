@@ -1,16 +1,18 @@
 import { useEffect, useRef } from 'react';
+import { useSetting } from '../lib/settings';
 
 /**
  * Quiet starry sky behind the analytics pages: three star layers with slow drift
- * and twinkle. ~24 fps, paused in a background tab, static with reduced motion.
+ * and twinkle. ~24 fps, paused in a background tab, static with reduced motion (OS or Clorbit setting).
  */
 export default function Starfield() {
   const ref = useRef<HTMLCanvasElement>(null);
+  const reduceSetting = useSetting((s) => s.interface.reduceMotion);
 
   useEffect(() => {
     const canvas = ref.current!;
     const ctx = canvas.getContext('2d')!;
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduce = reduceSetting || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let w = 0;
     let h = 0;
     let dpr = 1;
@@ -98,7 +100,7 @@ export default function Starfield() {
       window.removeEventListener('resize', resize);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, []);
+  }, [reduceSetting]);
 
   return (
     <div className="sky" aria-hidden>

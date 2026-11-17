@@ -2,6 +2,30 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — planned 0.2.0
+
+### Added
+
+- **Settings panel** behind a round profile button at the right end of the galaxy HUD and the analytics navigation: a glass slide-over (Esc / click outside closes it, focus stays inside). Settings are saved by the server in SQLite (schema v2: `settings` table) through `GET/PUT /api/settings`, validated and clamped.
+- **Notifications** for seven events — waiting for you, answer ready, subagent finished / started, compaction, context almost full (> 85%), subscription limit (> 80%) — on four channels: sound, browser notification (with an "only when the tab is hidden" option), in-app cards and **system notifications** shown by the server itself (macOS `osascript`, Linux `notify-send`), which work with the tab closed. One detector (`shared/notify.ts`) drives both the web and the server: baseline on load, once per wait, live sessions only, deduplicated across hooks and transcripts.
+- **Sounds** synthesized with Web Audio in three themes (Orbit, Minimal, Retro), a distinct sound per event with previews, volume and a master switch.
+- **Do not disturb** with optional quiet hours (may cross midnight), and "Mute 1 h" on every card.
+- **In-app cards** (toasts): stacked bottom-right, colored by event, click to fly to the session; "waiting" cards stay until the session moves on.
+- **Interface** settings: language, auto tour, and a new **Reduce motion** option (slow orbits, no twinkling, instant camera moves).
+- **Connection** summary: server version, data folder, hooks and limits-source state, event-store counts (`GET /api/about`).
+- **Event console**: the galaxy's event ticker now colors projects and agents like their stars and planets, uses a glyph per event kind and is clickable (fly to the session or the agent). It expands into a docked, resizable drawer with history, filters by project and kind, search, pause and "clear view", and pops out into its own window (`#/console`) that drives the galaxy in the main tab over `BroadcastChannel`.
+- `GET /api/events/recent` (the last 500 console events, kept in memory) and project/agent names on live events (`EventContext`), so console history stays readable after agents are gone.
+- Status reason codes in the live API (`statusCode` / `statusArg`, `code` / `arg` on status events), additive.
+- The demo now and then finishes a turn or asks for permission, so notifications can be tried on invented data.
+
+### Changed
+
+- The auto-tour switch is stored in the settings (a tour enabled in 0.1.1 is carried over once).
+
+### Fixed
+
+- The galaxy's zoom buttons disappeared while a session or agent panel was open.
+
 ## 0.1.1
 
 - Galaxy camera: drag to pan, scroll / pinch to zoom toward the cursor, on-screen zoom buttons and keyboard (`+`, `-`, `0` reset, `Esc` up a level).

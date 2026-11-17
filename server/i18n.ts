@@ -102,7 +102,58 @@ type StatusEvent = Extract<ClorbitEvent, { kind: 'status' }>;
 export type ServerEvent = Exclude<ClorbitEvent, StatusEvent> | (Omit<StatusEvent, 'reason'> & { reason: Reason | null });
 
 export function localizeEvent(e: ServerEvent, lang: Lang): ClorbitEvent {
-  return e.kind === 'status' ? { ...e, reason: reasonText(e.reason, lang) } : e;
+  return e.kind === 'status' ? { ...e, reason: reasonText(e.reason, lang), ...reasonCode(e.reason) } : e;
+}
+
+/** Language-neutral code and argument of a reason (for clients that compose their own text). */
+export function reasonCode(r: Reason | null | undefined): { code: string | null; arg: string | null } {
+  if (!r) return { code: null, arg: null };
+  return { code: r.k, arg: 'a' in r ? String(r.a) : null };
+}
+
+// ---------- system notifications ----------
+
+const NOTIFY: Record<Lang, Record<string, string>> = {
+  en: {
+    waitPermissionTool: '{p} is waiting for you: permission for {tool}',
+    waitPermission: '{p} is waiting for you: permission',
+    waitInput: '{p} is waiting for your reply',
+    waitYou: '{p} is waiting for you',
+    done: '{p}: answer ready',
+    finished: '{p}: {agent} finished',
+    finishedMany: '{p}: {n} subagents finished',
+    spawned: '{p}: {agent} started',
+    compaction: '{p}: context compacted',
+    contextHigh: '{p}: context {pct}% full',
+    limitHigh: 'Subscription limit ({w}): {pct}% used',
+    w5h: '5 h',
+    w7d: '7 days',
+    subagent: 'a subagent',
+    test: 'Test notification: this is how Clorbit will reach you.',
+  },
+  uk: {
+    waitPermissionTool: '{p} чекає на тебе: дозвіл на {tool}',
+    waitPermission: '{p} чекає на тебе: дозвіл',
+    waitInput: '{p} чекає на твою відповідь',
+    waitYou: '{p} чекає на тебе',
+    done: '{p}: відповідь готова',
+    finished: '{p}: {agent} завершив роботу',
+    finishedMany: '{p}: завершено субагентів — {n}',
+    spawned: '{p}: запущено {agent}',
+    compaction: '{p}: контекст стиснуто',
+    contextHigh: '{p}: контекст заповнено на {pct}%',
+    limitHigh: 'Ліміт підписки ({w}): використано {pct}%',
+    w5h: '5 год',
+    w7d: '7 днів',
+    subagent: 'субагент',
+    test: 'Тестове сповіщення: так Clorbit кликатиме тебе.',
+  },
+};
+
+/** Text of a notification body: `key` from the dictionary above with {name} placeholders. */
+export function notifyText(lang: Lang, key: string, params: Record<string, string | number> = {}): string {
+  const s = NOTIFY[lang][key] ?? NOTIFY.en[key] ?? key;
+  return s.replace(/\{(\w+)\}/g, (m, k: string) => (k in params ? String(params[k]) : m));
 }
 
 // ---------- startup context ----------
@@ -221,8 +272,8 @@ export function detailText(lang: Lang) {
 
 /** Generic API error messages. */
 const ERRORS = {
-  en: { badSession: 'Invalid session id', notFound: 'Session not found', getOnly: 'GET only', unknownRoute: 'Unknown route', tooLarge: 'Request too large' },
-  uk: { badSession: 'Некоректний id сесії', notFound: 'Сесію не знайдено', getOnly: 'Лише GET', unknownRoute: 'Невідомий маршрут', tooLarge: 'Завеликий запит' },
+  en: { badSession: 'Invalid session id', notFound: 'Session not found', getOnly: 'GET only', unknownRoute: 'Unknown route', tooLarge: 'Request too large', forbidden: 'Only a local page can change settings', jsonOnly: 'Send JSON (content-type: application/json)', badJson: 'Invalid JSON' },
+  uk: { badSession: 'Некоректний id сесії', notFound: 'Сесію не знайдено', getOnly: 'Лише GET', unknownRoute: 'Невідомий маршрут', tooLarge: 'Завеликий запит', forbidden: 'Змінювати налаштування може лише локальна сторінка', jsonOnly: 'Надішли JSON (content-type: application/json)', badJson: 'Некоректний JSON' },
 };
 
 export function errorText(lang: Lang) {

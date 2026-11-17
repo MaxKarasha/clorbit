@@ -29,7 +29,7 @@ const sum = (x: Tokens) => x.input + x.output + x.cacheRead + x.cacheWrite;
 const tr = (k: string | null) => (k ? t(k as MK) : null);
 
 type Wait = 'permission' | 'you';
-interface MS { s: LiveSession; next: number; titleKey: MK; wait: Wait | null; lastByMain: boolean }
+interface MS { s: LiveSession; next: number; titleKey: MK; wait: Wait | null; lastByMain: boolean; restoreAt?: number }
 
 interface Def {
   project: string;
@@ -145,9 +145,46 @@ export class MockFeed {
     s.subagentsTotal += active;
   }
 
+  // Now and then a working session finishes its turn or asks for permission, then gets back to work,
+  // so notifications (sounds, toasts) can be tried in the demo. Math.random keeps the seeded fleet intact.
+  private nextFlip = Date.now() + 12_000 + Math.random() * 8000;
+  private flips() {
+    const now = Date.now();
+    for (const m of this.list) {
+      if (m.restoreAt && now >= m.restoreAt) {
+        m.restoreAt = undefined;
+        m.wait = null;
+        m.s.status = 'working';
+        m.s.statusSince = now;
+        this.onEvent({ kind: 'prompt', ts: now, sessionId: m.s.sessionId });
+        this.onEvent({ kind: 'status', ts: now, sessionId: m.s.sessionId, status: 'working', reason: this.reason(m), code: 'gotPrompt', arg: null });
+      }
+    }
+    if (now < this.nextFlip) return;
+    this.nextFlip = now + 25_000 + Math.random() * 20_000;
+    const cand = this.list.filter((m) => m.s.alive && m.s.status === 'working' && !m.restoreAt);
+    if (!cand.length) return;
+    const m = cand[Math.floor(Math.random() * cand.length)];
+    const waiting = Math.random() < 0.5;
+    m.s.status = waiting ? 'waiting' : 'idle';
+    m.wait = waiting ? 'permission' : null;
+    m.s.statusSince = now;
+    m.restoreAt = now + 9000 + Math.random() * 7000;
+    const code = this.code(m);
+    this.onEvent({ kind: 'status', ts: now, sessionId: m.s.sessionId, status: m.s.status, reason: this.reason(m), code: code.code, arg: code.arg });
+  }
+
+  /** Language-neutral reason code, like the server's. */
+  private code(m: MS): { code: string | null; arg: string | null } {
+    if (m.s.status === 'waiting') return m.wait === 'permission' ? { code: 'waitingPermission', arg: 'Bash' } : { code: 'waitingYou', arg: null };
+    if (m.s.status === 'idle') return { code: 'answerReady', arg: null };
+    return { code: null, arg: null };
+  }
+
   private tick() {
     const r = this.r;
     const now = Date.now();
+    this.flips();
     for (const m of this.list) {
       const s = m.s;
       if (s.status !== 'working' || now < m.next) continue;
@@ -222,6 +259,9 @@ export class MockFeed {
       const s = structuredClone(m.s);
       s.title = t(m.titleKey);
       s.statusReason = this.reason(m);
+      const c = this.code(m);
+      s.statusCode = c.code;
+      s.statusArg = c.arg;
       this.localize(s.root);
       return s;
     });

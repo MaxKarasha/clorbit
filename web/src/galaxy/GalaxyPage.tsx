@@ -2,16 +2,19 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentNode, AnalyticsOverview, ClorbitEvent, LiveSession, LiveSnapshot } from '@shared/api';
 import LangSwitch from '../components/LangSwitch';
+import { ProfileButton } from '../components/SettingsPanel';
 import { DemoStrip, ServerOffline } from '../components/ServerState';
 import { locale, t, useLang, withLang, type MsgKey } from '../i18n';
 import { enterDemo, isDemo } from '../lib/demo';
 import { href } from '../lib/router';
+import { updateSettings, useSetting } from '../lib/settings';
+import { feed, focusSession, onFocusRequest, takePendingFocus, type FocusRequest } from '../notify/feed';
+import { ConsoleDrawer, popOutConsole, Ticker } from '../console/Console';
+import { consoleStore, loadRecent, setColorProvider, setColorSource, shareColors } from '../console/store';
 import { GalaxyEngine, prettyModel, short, type Focus } from './engine';
 import { MockFeed } from './mock';
-import { fmtAgo, fmtClock, fmtDur, fmtPct, fmtTok, tSum } from './format';
+import { fmtAgo, fmtDur, fmtPct, fmtTok, tSum } from './format';
 import './galaxy.css';
-
-type Tick = { id: number; ts: number; text: string; tone: 'tool' | 'spawn' | 'finish' | 'wait' | 'info' };
 
 const statusWord = (s: string) => (['working', 'waiting', 'idle', 'stopped', 'done'].includes(s) ? t(`gx.status.${s}` as MsgKey) : '');
 
@@ -30,18 +33,27 @@ export default function GalaxyPage() {
   const snapRef = useRef<LiveSnapshot | null>(null);
   const [snap, setSnap] = useState<LiveSnapshot | null>(null);
   const [focus, setFocus] = useState<Focus>({ t: 'none' });
-  const [ticks, setTicks] = useState<Tick[]>([]);
+  const [consoleOpen, setConsoleOpen] = useState(false);
   // Demo mode is fixed for the lifetime of this component: App remounts the galaxy when it changes.
   const [demo] = useState(isDemo);
   const [offline, setOffline] = useState(false);
   const [checking, setChecking] = useState(false);
   const retryRef = useRef<() => void>(() => {});
   const [legend, setLegend] = useState(false);
-  // Auto tour is opt-in and remembered per browser.
-  const [tour, setTourState] = useState(() => { try { return localStorage.getItem('clorbit.tour') === '1'; } catch { return false; } });
-  const setTour = (v: boolean) => { setTourState(v); try { localStorage.setItem('clorbit.tour', v ? '1' : '0'); } catch { /* storage unavailable */ } };
-  const tickId = useRef(0);
+  // Auto tour is opt-in; it lives in the settings (the HUD button is a quick switch).
+  const tour = useSetting((s) => s.interface.autoTour);
+  const setTour = (v: boolean) => updateSettings({ interface: { autoTour: v } });
+  const reduceMotion = useSetting((s) => s.interface.reduceMotion);
   const lang = useLang();
+
+  /** Focuses a session, or one of its live agents (a finished agent falls back to its session). */
+  function focusOn(f: FocusRequest) {
+    const eng = engineRef.current;
+    const s = snapRef.current?.sessions.find((x) => x.sessionId === f.sessionId);
+    if (!eng || !s) return;
+    if (f.agentId && f.agentId !== 'main' && findAgent(s.root, f.agentId)) eng.setFocus({ t: 'agent', sessionId: f.sessionId, agentId: f.agentId }, true);
+    else eng.setFocus({ t: 'sys', sessionId: f.sessionId }, true);
+  }
 
   useEffect(() => {
     const eng = new GalaxyEngine(canvasRef.current!, {
@@ -49,23 +61,50 @@ export default function GalaxyPage() {
       onDistant: (p) => { location.hash = href('/analytics/sessions', { project: p, range: '30d' }); },
     });
     engineRef.current = eng;
+    // The console takes its colors from the scene (and shares them with console windows).
+    consoleStore.reset();
+    setColorProvider(eng.knownColor);
+    setColorSource(eng.colorMap);
     if (import.meta.env.DEV) (window as unknown as { __galaxy?: GalaxyEngine }).__galaxy = eng;
-    return () => eng.destroy();
+    return () => { setColorProvider(null); setColorSource(null); eng.destroy(); };
   }, []);
 
   useEffect(() => { if (engineRef.current) engineRef.current.tourOn = tour; }, [tour]);
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const apply = () => { if (engineRef.current) engineRef.current.reduceMotion = reduceMotion || mq.matches; };
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, [reduceMotion]);
+
+  // Toasts and browser notifications ask to focus a session.
+  useEffect(() => onFocusRequest(focusOn), []);
+  // Toasts sit above the zoom controls and move left when a side panel is open (styles/settings.css).
+  useEffect(() => {
+    document.documentElement.dataset.gx = focus.t === 'none' ? 'on' : 'panel';
+  }, [focus.t]);
+  useEffect(() => () => { delete document.documentElement.dataset.gx; }, []);
 
   // Data: the real server or the demo feed.
   useEffect(() => {
-    const onSnap = (s: LiveSnapshot) => { snapRef.current = s; setSnap(s); engineRef.current?.sync(s); };
+    // The notification center listens to what this page receives (no second connection).
+    const detach = feed.attachSource();
+    const onSnap = (s: LiveSnapshot) => {
+      snapRef.current = s; setSnap(s); engineRef.current?.sync(s);
+      feed.snapshot(s);
+      shareColors();
+      const pending = takePendingFocus();
+      if (pending) focusOn(pending);
+    };
     const onEvent = (e: ClorbitEvent) => {
       engineRef.current?.pushEvent(e);
-      const t = describe(e, snapRef.current);
-      if (t) setTicks((prev) => [{ id: ++tickId.current, ts: e.ts, ...t }, ...prev].slice(0, 8));
+      feed.event(e);
+      consoleStore.add(e, snapRef.current);
     };
     if (demo) {
       const m = new MockFeed(onSnap, onEvent);
-      return () => m.stop();
+      return () => { m.stop(); detach(); };
     }
     let alive = true;
     let fails = 0;
@@ -117,9 +156,13 @@ export default function GalaxyPage() {
     openEvents();
     const iv2 = window.setInterval(loadDistant, 120000);
     const iv = window.setInterval(load, 3000);
-    return () => { alive = false; clearInterval(iv); clearInterval(iv2); es?.close(); };
+    return () => { alive = false; clearInterval(iv); clearInterval(iv2); es?.close(); detach(); };
   }, [demo, lang]);
 
+  const openConsole = () => {
+    setConsoleOpen(true);
+    if (!demo) void loadRecent();
+  };
   const eng = engineRef.current;
   const fSession: LiveSession | undefined = focus.t === 'none' ? undefined : snap?.sessions.find((s) => s.sessionId === focus.sessionId);
   const fAgent = focus.t === 'agent' && fSession ? findAgent(fSession.root, focus.agentId) : null;
@@ -141,6 +184,7 @@ export default function GalaxyPage() {
           <button className={`gx-btn ${tour ? 'on' : ''}`} onClick={() => setTour(!tour)} title={t('gx.nav.tourTitle')}>{t('gx.nav.tour')}</button>
           <button className="gx-btn" onClick={() => setLegend(!legend)} title={t('gx.nav.legendTitle')}>?</button>
           <LangSwitch className="gx-lang" btnClass="gx-btn" />
+          <ProfileButton className="prof--gx" />
         </nav>
         {shown && !demo && !shown.hooksInstalled && <div className="gx-pill" title={t('gx.bar.noHooksTitle')}>{t('gx.bar.noHooks')}</div>}
       </header>
@@ -175,7 +219,7 @@ export default function GalaxyPage() {
       {!offline && fSession && fAgent && <AgentPanel s={fSession} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
 
       {!offline && (
-        <div className={`gx-zoom ${focus.t !== 'none' ? 'panel' : ''}`}>
+        <div className={`gx-zoom${focus.t !== 'none' ? ' gx-zoom--panel' : ''}`}>
           <div className="gx-zoom-pad">
             <button onClick={() => engineRef.current?.zoomBy(1.3)} title={t('gx.zoom.in')} aria-label={t('gx.zoom.in')}>+</button>
             <button onClick={() => engineRef.current?.zoomBy(1 / 1.3)} title={t('gx.zoom.out')} aria-label={t('gx.zoom.out')}>−</button>
@@ -185,13 +229,11 @@ export default function GalaxyPage() {
         </div>
       )}
 
-      <div className="gx-ticker">
-        {ticks.map((t, i) => (
-          <div key={t.id} className={`gx-tick ${t.tone}`} style={{ opacity: Math.max(0.15, 1 - i * 0.12) }}>
-            <span className="gx-tick-time">{fmtClock(t.ts)}</span>{t.text}
-          </div>
-        ))}
-      </div>
+      {consoleOpen ? (
+        <ConsoleDrawer onFocus={(sid, aid) => focusSession(sid, aid)} onClose={() => setConsoleOpen(false)} onPopOut={popOutConsole} />
+      ) : (
+        <Ticker onFocus={(sid, aid) => focusSession(sid, aid)} onExpand={openConsole} onPopOut={popOutConsole} />
+      )}
 
       {legend && <Legend onClose={() => setLegend(false)} />}
     </div>
@@ -201,21 +243,6 @@ export default function GalaxyPage() {
 function quote(t: string, n: number) {
   const s = short(t.trim(), n);
   return /^[«"“]/.test(s) ? s : `«${s}»`;
-}
-
-function describe(e: ClorbitEvent, s: LiveSnapshot | null): Omit<Tick, 'id' | 'ts'> | null {
-  const sess = s?.sessions.find((x) => x.sessionId === e.sessionId);
-  const proj = sess?.project ?? e.sessionId.slice(0, 8);
-  const name = (id: string) => (id === 'main' ? t('gx.manager') : (sess && findAgent(sess.root, id)?.node.type) || t('gx.agent'));
-  switch (e.kind) {
-    case 'tool': return { text: `${proj} › ${name(e.agentId)} · ${short(e.label, 60)}`, tone: 'tool' };
-    case 'spawn': return { text: `${t('gx.tick.spawn', { proj, parent: name(e.parentId), type: e.agentType })}${e.description ? ': ' + short(e.description, 50) : ''}`, tone: 'spawn' };
-    case 'finish': return { text: t('gx.tick.finish', { proj, agent: name(e.agentId), tokens: fmtTok(e.tokens) }), tone: 'finish' };
-    case 'status': return e.status === 'waiting' ? { text: `${t('gx.tick.wait', { proj })}${e.reason ? ': ' + e.reason : ''}`, tone: 'wait' } : null;
-    case 'prompt': return { text: t('gx.tick.prompt', { proj }), tone: 'info' };
-    case 'compact': return { text: t('gx.tick.compact', { proj }), tone: 'info' };
-    default: return null;
-  }
 }
 
 /* ---------------- status bar ---------------- */

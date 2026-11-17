@@ -79,6 +79,8 @@ export class GalaxyEngine {
   private W = 0;
   private H = 0;
   private T = performance.now() / 1000;
+  /** Ambient clock for twinkles, pulses and drifting belts; crawls with reduce motion. */
+  private A = 0;
   private frameN = 0;
   private raf = 0;
   private systems = new Map<string, Sys>();
@@ -96,6 +98,8 @@ export class GalaxyEngine {
   lastUser = -99;
   /** Auto tour is opt-in (toggle in the HUD). */
   tourOn = false;
+  /** Reduce motion: orbits crawl, the camera jumps instead of flying (setting or OS preference). */
+  reduceMotion = false;
   /** User camera offset on top of the focus target: drag pans, wheel/buttons zoom. */
   private pan = { x: 0, y: 0 };
   private zoomMul = 1;
@@ -155,6 +159,19 @@ export class GalaxyEngine {
     const sys = this.systems.get(sessionId);
     return sys ? cssCol(branchCol(sys.hue, 0, 0, 0)) : '#9AA6BA';
   }
+
+  /** The color of a body on the scene, or null if it is not (or no longer) there. */
+  knownColor = (sessionId: string, agentId: string): string | null => {
+    const b = this.bodies.get(`${sessionId}:${agentId}`);
+    return b ? cssCol(b.col) : null;
+  };
+
+  /** Colors of every body on the scene, keyed 'sessionId:agentId' (shared with console windows). */
+  colorMap = (): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const [k, b] of this.bodies) out[k] = cssCol(b.col);
+    return out;
+  };
 
   setFocus(f: Focus, user = false) {
     if (user) this.lastUser = this.T;
@@ -506,6 +523,7 @@ export class GalaxyEngine {
     const now = performance.now() / 1000;
     const dt = Math.min(0.05, now - this.T);
     this.T = now;
+    this.A += dt * (this.reduceMotion ? 0.08 : 1);
     this.frameN++;
     if (this.tourOn && this.T - this.lastUser > 25 && this.T - this.lastTour > 5) { this.lastTour = this.T; this.tour(); }
     this.step(dt);
@@ -520,7 +538,7 @@ export class GalaxyEngine {
       sys.fy += (sys.ty - sys.fy) * Math.min(1, dt * 1.5);
       for (const b of [...this.walk(sys.root)]) {
         const working = b.node.status === 'working';
-        b.ang += dt * b.speed * this.timeScale * (b.ret !== null ? 3 : 1) * (working ? 1 : 0.35);
+        b.ang += dt * b.speed * this.timeScale * (b.ret !== null ? 3 : 1) * (working ? 1 : 0.35) * (this.reduceMotion ? 0.12 : 1);
         if (b.ret !== null && this.T - b.ret > 1.5 && b.parent) {
           const p = b.parent;
           p.children.splice(p.children.indexOf(b), 1);
@@ -534,21 +552,21 @@ export class GalaxyEngine {
     }
     const tg = this.camTarget();
     if (!this.camInit) { Object.assign(this.cam, tg); this.camInit = true; }
-    const f = 1 - Math.exp(-dt * 3.2);
+    const f = this.reduceMotion && !this.drag ? 1 : 1 - Math.exp(-dt * 3.2);
     this.cam.x += (tg.x - this.cam.x) * f;
     this.cam.y += (tg.y - this.cam.y) * f;
     this.cam.s *= Math.pow(tg.s / this.cam.s, f);
   }
 
   private background() {
-    const { ctx, W, H, cam, T } = this;
+    const { ctx, W, H, cam, A } = this;
     ctx.fillStyle = '#03040a';
     ctx.fillRect(0, 0, W, H);
     const neb: [number, number, string][] = [[0.22, 0.32, '#3a1d6e'], [0.74, 0.64, '#0c3d5e'], [0.52, 0.12, '#1a2a5a'], [0.08, 0.82, '#2a1450'], [0.9, 0.2, '#123a4a']];
     neb.forEach(([x, y, c], i) => {
       const sx = x * W - (cam.x - W / 2) * 0.15, sy = y * H - (cam.y - H / 2) * 0.15, r = W * 0.42;
       const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
-      g.addColorStop(0, hexA(c, 0.3 + 0.05 * Math.sin(T * 0.3 + i)));
+      g.addColorStop(0, hexA(c, 0.3 + 0.05 * Math.sin(A * 0.3 + i)));
       g.addColorStop(1, hexA(c, 0));
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, W, H);
@@ -558,7 +576,7 @@ export class GalaxyEngine {
       const k = 1 + lk * s.z * 0.25;
       const x = ((((s.x * W - (cam.x - W / 2) * s.z * 0.5) - W / 2) * k) % W + W * 1.5) % W;
       const y = ((((s.y * H - (cam.y - H / 2) * s.z * 0.5) - H / 2) * k) % H + H * 1.5) % H;
-      ctx.fillStyle = `rgba(220,230,255,${0.18 + 0.6 * s.s * (0.6 + 0.4 * Math.sin(T * 2 + s.x * 40))})`;
+      ctx.fillStyle = `rgba(220,230,255,${0.18 + 0.6 * s.s * (0.6 + 0.4 * Math.sin(A * 2 + s.x * 40))})`;
       const z = s.z * 1.5 + 0.4;
       ctx.fillRect(x, y, z, z);
     }
@@ -566,7 +584,7 @@ export class GalaxyEngine {
 
   /** Distant projects at the galaxy's edge: brightness is tokens over 30 days. */
   private drawDistant(z1: number) {
-    const { ctx, W, H, T, cam } = this;
+    const { ctx, W, H, A, cam } = this;
     this.distantHits = [];
     const live = new Set([...this.systems.values()].map((s) => s.s.project));
     const a = 1 - z1;
@@ -580,7 +598,7 @@ export class GalaxyEngine {
       const r = 1.2 + d.tw * 2.6;
       ctx.save();
       ctx.globalAlpha = a;
-      this.glow(x, y, r * 5, { h: hue, s: 70, l: 75 }, 0.35 + 0.25 * d.tw + 0.08 * Math.sin(T * 1.3 + d.ang * 7));
+      this.glow(x, y, r * 5, { h: hue, s: 70, l: 75 }, 0.35 + 0.25 * d.tw + 0.08 * Math.sin(A * 1.3 + d.ang * 7));
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(x, y, r * 0.55, 0, 7); ctx.fill();
       ctx.font = `11px ${MONO}`;
@@ -638,7 +656,7 @@ export class GalaxyEngine {
   }
 
   private drawBody(sys: Sys, b: Body, x: number, y: number, k: number, labelAlpha: number) {
-    const { ctx, T } = this;
+    const { ctx, T, A } = this;
     const c = this.colOf(b);
     const st = b.depth === 0 ? sys.s.status : b.node.status;
     const act = st === 'working' ? 1 : st === 'waiting' ? 0.8 : sys.s.alive ? 0.4 : 0.18;
@@ -646,12 +664,12 @@ export class GalaxyEngine {
     if (b.depth === 0) {
       const r0 = this.starR(sys) * k;
       const r = Math.min(r0, 30 + r0 * 0.25);
-      const pulse = st === 'working' ? 1 + 0.09 * Math.sin(T * 3 + hashStr(b.key) * 9) : st === 'waiting' ? 1 + 0.16 * Math.max(0, Math.sin(T * 5)) : 1;
+      const pulse = st === 'working' ? 1 + 0.09 * Math.sin(A * 3 + hashStr(b.key) * 9) : st === 'waiting' ? 1 + 0.16 * Math.max(0, Math.sin(A * 5)) : 1;
       this.glow(x, y, r * (2.2 + 1.4 / Math.sqrt(k)) * pulse, c, 0.9 * act + 0.06);
       if (st === 'working') {
-        ctx.save(); ctx.translate(x, y); ctx.rotate(T * 0.18 + hashStr(b.key) * 6);
+        ctx.save(); ctx.translate(x, y); ctx.rotate(A * 0.18 + hashStr(b.key) * 6);
         ctx.strokeStyle = cA(c, 0.22); ctx.lineWidth = 1;
-        for (let q = 0; q < 6; q++) { ctx.rotate(Math.PI / 3); ctx.beginPath(); ctx.moveTo(r * 0.8, 0); ctx.lineTo(r * (2.1 + 0.5 * Math.sin(T * 4 + q)), 0); ctx.stroke(); }
+        for (let q = 0; q < 6; q++) { ctx.rotate(Math.PI / 3); ctx.beginPath(); ctx.moveTo(r * 0.8, 0); ctx.lineTo(r * (2.1 + 0.5 * Math.sin(A * 4 + q)), 0); ctx.stroke(); }
         ctx.restore();
       }
       ctx.fillStyle = cA('#ffffff', 0.45 + 0.55 * act);
@@ -671,7 +689,7 @@ export class GalaxyEngine {
       const grow = b.ret !== null ? 1 - 0.7 * clamp((T - b.ret) / 1.5, 0, 1) : clamp((T - b.born) / 1.3, 0.15, 1);
       const rr = this.bodyR(b, sys) * k * grow;
       const r = Math.max(1.3, Math.min(rr, 9 + rr * 0.2));
-      const sh = st === 'working' ? 1 + 0.14 * Math.sin(T * 6 + hashStr(b.key) * 9) : 1;
+      const sh = st === 'working' ? 1 + 0.14 * Math.sin(A * 6 + hashStr(b.key) * 9) : 1;
       this.glow(x, y, Math.max(5, r * 3.4 * sh), c, 0.85 * (st === 'working' ? 1 : 0.6));
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(x, y, Math.max(0.9, r * 0.62), 0, 7); ctx.fill();
@@ -683,7 +701,7 @@ export class GalaxyEngine {
     }
     if (st === 'waiting') {
       for (let q = 0; q < 2; q++) {
-        const ph = (T * 0.6 + q * 0.5) % 1;
+        const ph = (A * 0.6 + q * 0.5) % 1;
         ctx.strokeStyle = hexA(WAIT, (1 - ph) * 0.9); ctx.lineWidth = 1.6;
         ctx.beginPath(); ctx.ellipse(x, y, R0 * (1 + ph * 4), R0 * (1 + ph * 4) * 0.6, 0, 0, 7); ctx.stroke();
       }
@@ -703,7 +721,7 @@ export class GalaxyEngine {
   }
 
   private draw() {
-    const { ctx, T } = this;
+    const { ctx, T, A } = this;
     this.background();
     const k = this.cam.s;
     const z1 = clamp((k - 1) / 3.2, 0, 1), z2 = clamp((k - 4.2) / 4.5, 0, 1);
@@ -723,10 +741,10 @@ export class GalaxyEngine {
       const sr = this.starR(sys);
       // belt of finished subagents
       for (const d of sys.belt) {
-        const ang = d.ang + T * 0.035, R = (this.beltR(sys) + d.r) * k;
+        const ang = d.ang + A * 0.035, R = (this.beltR(sys) + d.r) * k;
         const x = c[0] + Math.cos(ang) * R, y = c[1] + Math.sin(ang) * R * 0.42, s = Math.max(1.3, Math.min(2.8, d.s * k * 0.9));
         const nb = d.born > 0 ? clamp(1 - (T - d.born) / 2, 0, 1) : 0;
-        ctx.fillStyle = cA(nb > 0 ? '#E8FCFF' : { h: (sys.hue + d.hs + 360) % 360, s: 60, l: 72 }, Math.min(1, d.a * 1.5) * (sys.s.alive ? 1 : 0.55) * (0.65 + 0.35 * Math.sin(T + d.ang * 9)) + nb);
+        ctx.fillStyle = cA(nb > 0 ? '#E8FCFF' : { h: (sys.hue + d.hs + 360) % 360, s: 60, l: 72 }, Math.min(1, d.a * 1.5) * (sys.s.alive ? 1 : 0.55) * (0.65 + 0.35 * Math.sin(A + d.ang * 9)) + nb);
         ctx.fillRect(x - s / 2, y - s / 2, s, s);
       }
       const all = [...this.walk(sys.root)];
@@ -742,7 +760,7 @@ export class GalaxyEngine {
         if (!b.depth || b.node.status !== 'working' || b.ret !== null || T - b.born < 1.3) continue;
         const s0 = this.S(this.pos(b)), s1 = this.S(this.pos(b.parent!));
         for (let q = 0; q < 3; q++) {
-          const f = (T * 0.6 + q / 3 + hashStr(b.key)) % 1;
+          const f = (A * 0.6 + q / 3 + hashStr(b.key)) % 1;
           const m: P = [(s0[0] + s1[0]) / 2 + (s1[1] - s0[1]) * 0.25, (s0[1] + s1[1]) / 2 + (s0[0] - s1[0]) * 0.25];
           const x = (1 - f) * (1 - f) * s0[0] + 2 * (1 - f) * f * m[0] + f * f * s1[0];
           const y = (1 - f) * (1 - f) * s0[1] + 2 * (1 - f) * f * m[1] + f * f * s1[1];

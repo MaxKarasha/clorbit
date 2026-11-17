@@ -39,6 +39,12 @@ function persist(l: Lang) {
   }
 }
 
+/** The language was chosen in this browser (URL or a saved choice), not just the default. */
+const explicit = urlLang() != null || storedLang() != null;
+export function hasExplicitLang(): boolean {
+  return explicit;
+}
+
 let current: Lang = urlLang() ?? storedLang() ?? 'en';
 const listeners = new Set<() => void>();
 
@@ -78,6 +84,11 @@ if (typeof window !== 'undefined') {
 function subscribe(cb: () => void): () => void {
   listeners.add(cb);
   return () => void listeners.delete(cb);
+}
+
+/** Calls cb with the new language whenever it changes. */
+export function onLangChange(cb: (l: Lang) => void): () => void {
+  return subscribe(() => cb(current));
 }
 
 /** Current language; re-renders the component when it changes. */

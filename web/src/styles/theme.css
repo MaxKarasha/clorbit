@@ -133,3 +133,12 @@ button {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* "Reduce motion" in Clorbit's settings: the same, regardless of the OS preference. */
+:root[data-reduce-motion] *,
+:root[data-reduce-motion] *::before,
+:root[data-reduce-motion] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

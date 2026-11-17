@@ -4,6 +4,7 @@ import core from './core';
 import galaxy from './galaxy';
 import mock from './mock';
 import pages from './pages';
+import settings from './settings';
 
-const uk: Record<keyof typeof en, string> = { ...core, ...galaxy, ...pages, ...mock };
+const uk: Record<keyof typeof en, string> = { ...core, ...galaxy, ...pages, ...mock, ...settings };
 export default uk;

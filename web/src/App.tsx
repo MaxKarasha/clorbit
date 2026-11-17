@@ -1,10 +1,16 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import GalaxyPage from './galaxy/GalaxyPage';
 import { t, useLang } from './i18n';
 import { DataProvider } from './lib/api';
 import { useDemo } from './lib/demo';
 import { href, useRoute } from './lib/router';
 import AnalyticsLayout from './components/Layout';
+import SettingsPanel from './components/SettingsPanel';
+import { loadSettings, syncDemoMode, useSetting } from './lib/settings';
+import NotificationCenter from './notify/NotificationCenter';
+import { startMainBridge } from './console/store';
+
+const ConsolePage = lazy(() => import('./console/ConsolePage'));
 import { Empty, Loading } from './components/ui';
 import Overview from './pages/Overview';
 
@@ -68,5 +74,32 @@ export default function App() {
   useLang();
   // Entering or leaving demo mode remounts the galaxy, so no star of one data source lingers in the other.
   const demo = useDemo();
-  return <DataProvider>{parts.length === 0 ? <GalaxyPage key={demo ? 'demo' : 'live'} /> : <AnalyticsRoute />}</DataProvider>;
+  const isConsole = parts[0] === 'console';
+  useEffect(() => {
+    void loadSettings();
+  }, []);
+  // The main tab answers console windows (focus requests, colors); a console window does not.
+  useEffect(() => (isConsole ? undefined : startMainBridge()), [isConsole]);
+  useEffect(() => syncDemoMode(demo), [demo]);
+  // "Reduce motion" from the settings: CSS animations stop (see theme.css), canvases read the flag.
+  const reduce = useSetting((s) => s.interface.reduceMotion);
+  useEffect(() => {
+    if (reduce) document.documentElement.dataset.reduceMotion = '1';
+    else delete document.documentElement.dataset.reduceMotion;
+  }, [reduce]);
+  if (isConsole) {
+    // A console window: no notifications or settings here (the main tab has them).
+    return (
+      <Suspense fallback={<Loading label={t('app.openingSection')} />}>
+        <ConsolePage />
+      </Suspense>
+    );
+  }
+  return (
+    <DataProvider>
+      {parts.length === 0 ? <GalaxyPage key={demo ? 'demo' : 'live'} /> : <AnalyticsRoute />}
+      <NotificationCenter />
+      <SettingsPanel />
+    </DataProvider>
+  );
 }
