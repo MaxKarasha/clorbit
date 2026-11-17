@@ -6,9 +6,15 @@ Clorbit is a local, read-only dashboard for your [Claude Code](https://docs.clau
 
 It runs on your machine, reads the transcripts Claude Code already writes to `~/.claude`, and never sends anything anywhere.
 
-![The Clorbit galaxy: live sessions as stars, subagents as planets](docs/media/galaxy.png)
+![Clorbit demo: the galaxy of live sessions, zooming into a session and one of its subagents](docs/media/demo.gif)
 
-![Clorbit analytics: tokens by day, project and model](docs/media/analytics.png)
+```text
+/plugin marketplace add MaxKarasha/clorbit
+/plugin install clorbit@clorbit
+/clorbit
+```
+
+<sub>All screenshots use the built-in demo mode with invented data.</sub>
 
 ## Features
 
@@ -19,8 +25,12 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 - **Asteroid belts** hold finished subagents. **Distant stars** on the rim are projects from the last 30 days (click one to open its sessions).
 - **Live events:** a flash for every tool call, a comet when an agent is born, a spiral when a result returns to its parent, orange waves when a session is waiting for you.
 - **Drill-down levels:** fleet → session (agent tree, tokens, context, effort, current status) → agent (the task from its parent, what it is doing now, its latest thought, its subordinates). Click empty space to go back up.
-- **Status bar:** tokens over 24 h with a burn-rate sparkline, tokens per minute, subscription limits (optional, see below), live sessions, working subagents and cache hit rate.
+- **Status bar:** tokens over 24 h with a burn-rate sparkline, tokens per minute, subscription limits (optional, see below), live sessions, working subagents and cache hit rate. On narrower screens the less important metrics (cache, then speed) give way instead of overlapping.
 - An automatic **tour** cycles through the most active systems when you are not interacting.
+
+![The Clorbit galaxy: live sessions as stars, subagents as planets, finished agents in asteroid belts](docs/media/galaxy.png)
+
+![Zoomed into a subagent: its task, current tool, latest thought and tokens](docs/media/galaxy-agent.png)
 
 ### Analytics
 
@@ -38,56 +48,84 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 
 Examples of insights: a plugin whose SessionStart hook adds thousands of tokens to every session, enabled plugins or MCP servers that were never used, tool results over 20K tokens, files read again and again in the same session, auto-compactions, days with a low cache hit rate, noisy or failing hooks, and (with hooks installed) how long agents waited for your permission or reply.
 
+![Analytics overview: tokens per day by model, token composition](docs/media/analytics.png)
+
+![Startup context: what loads into every session before the first prompt](docs/media/context.png)
+
 The UI is available in **English** and **Ukrainian** (switch in the top-right corner, or add `?lang=uk` to the URL).
 
-## Quick start
+## Install
 
-Requirements: **Node.js 22.5+** (for the built-in `node:sqlite`) and **pnpm**. macOS and Linux are supported.
+Requirements: **Node.js 22.5+** on your `PATH` (Clorbit uses the built-in `node:sqlite`) and Claude Code. macOS and Linux are supported.
 
-```bash
-git clone https://github.com/MaxKarasha/clorbit.git
-cd clorbit
-pnpm install
-pnpm dev          # API server on :4980 + web app on :5173
-```
-
-Open <http://127.0.0.1:5173>.
-
-- `pnpm start` builds the web app and serves everything from a single server at <http://127.0.0.1:4980>.
-- `http://127.0.0.1:5173/#/?mock=1` is a demo mode with invented data — handy for showing Clorbit to someone without exposing your own projects.
-
-The first start scans your history in `~/.claude/projects` in the background (a few seconds even for gigabytes of transcripts); live sessions show up immediately. Summaries are stored in `~/.clorbit/clorbit.db`, so later starts take a fraction of a second and only read what is new.
-
-### Hooks plugin (recommended)
-
-Without hooks, Clorbit infers "waiting for permission" from the transcripts, which is a heuristic. The `clorbit` Claude Code plugin streams session and agent events to the local server so statuses are exact and waits can be measured.
+### As a Claude Code plugin (recommended)
 
 Inside Claude Code:
 
 ```text
 /plugin marketplace add MaxKarasha/clorbit
 /plugin install clorbit@clorbit
+/clorbit
 ```
 
-Or from a shell:
+`/clorbit` starts the local server if it is not running and opens the dashboard at <http://127.0.0.1:4980>. **Restart your Claude Code sessions** once after installing: hooks are picked up when a session starts. From then on:
+
+- **Autostart.** When a session starts, the plugin starts the server in the background if it is not already running. The hook is asynchronous and silent: it prints nothing into your session and does not delay it. Set `CLORBIT_AUTOSTART=0` (for example in the `env` block of `~/.claude/settings.json`) to turn it off.
+- **Exact live status.** The plugin streams session and agent events (prompts, tool calls, permission requests, subagent starts and stops) to the local server, so "working", "waiting for you" and wait times are exact instead of inferred from transcripts.
+- **Nothing to manage.** The event hooks are asynchronous too (`async: true`): Claude Code never waits for them. If Clorbit is not running, `curl` gets "connection refused" within milliseconds and exits silently. Payloads are trimmed before they are stored (no tool input/output bodies, at most 4 KB per event) and kept for 90 days.
+
+Everything the plugin runs ships prebuilt inside it (`plugin/app`): a single-file server and the web app, Node built-ins only, no `npm install` step.
+
+The `/clorbit` command takes an optional argument:
+
+| Command | What it does |
+| --- | --- |
+| `/clorbit` or `/clorbit open` | Start the server if needed and open the dashboard in your browser. |
+| `/clorbit start` | Start the server in the background. |
+| `/clorbit stop` | Stop the server that the plugin or the CLI started. |
+| `/clorbit status` | Running or not, URL, version, data folder, whether hook events arrive. |
+
+From a shell, the plugin can be managed with `claude plugin enable|disable|uninstall clorbit`. To try it without installing anything: `claude --plugin-dir ./plugin` from a clone.
+
+### Uninstall
+
+```text
+/plugin uninstall clorbit@clorbit
+/plugin marketplace remove clorbit
+```
+
+Run `/clorbit stop` first if you want the server gone right away (otherwise it stops at the next reboot). Clorbit's data stays in `~/.clorbit` (the SQLite database, the server log and pid file); delete that folder to remove it too. Clorbit never writes to `~/.claude`.
+
+### From source
 
 ```bash
-claude plugin marketplace add MaxKarasha/clorbit
-claude plugin install clorbit@clorbit
-claude plugin disable clorbit     # turn it off
-claude plugin enable clorbit      # turn it back on
-claude plugin uninstall clorbit   # remove it
+git clone https://github.com/MaxKarasha/clorbit.git
+cd clorbit
+pnpm install
+pnpm dev          # API server on :4980 + web app with hot reload on :5173
 ```
 
-Sessions pick up the change after a restart. To try it without installing: `claude --plugin-dir ./plugin`.
+Open <http://127.0.0.1:5173>. `pnpm start` builds everything and serves the app from a single server at <http://127.0.0.1:4980>. You can still install the plugin from your clone (`/plugin marketplace add ./path/to/clorbit`) to get the hooks.
 
-How it behaves:
+If the server is not running, the dashboard says so instead of showing anything: the galaxy and the analytics pages show a "Clorbit server isn't running" screen with how to start it (`/clorbit start` in Claude Code, or `pnpm dev` from source) and a Retry button. The page also checks again every few seconds and comes back on its own once the server is up.
 
-- The hooks are **asynchronous** (`async: true`): Claude Code does not wait for them, so they cannot slow your sessions down.
-- If Clorbit is not running, `curl` gets "connection refused" within milliseconds and exits silently. There is no need to add and remove hooks when you start or stop the dashboard.
-- Payloads are trimmed before they are stored (no tool input/output bodies, at most 4 KB per event) and kept for 90 days.
+**Demo mode** shows invented sessions and numbers — handy for showing Clorbit to someone without exposing your own projects. It is only ever turned on by you: the "Try the demo" button on the offline screen and on an empty galaxy, or `?demo=1` in the URL (`http://127.0.0.1:5173/#/?demo=1`, or `:4980/#/?demo=1`; `?mock=1` still works). While it is on, every screen carries a "Demo data — fictional" label with a "Show my data" button that leaves it; the mode stays on while you move between the galaxy and the analytics pages.
 
-> **Coming in v0.2:** a one-command plugin flow — slash commands to open the dashboard and autostart of the server from the plugin. Today the plugin only ships the hooks; you start the server yourself with `pnpm dev` or `pnpm start`.
+The first start scans your history in `~/.claude/projects` in the background (a few seconds even for gigabytes of transcripts); live sessions show up immediately. Summaries are stored in `~/.clorbit/clorbit.db`, so later starts take a fraction of a second and only read what is new.
+
+### Command line
+
+The plugin's `/clorbit` command is a thin wrapper around a small CLI (`plugin/app/cli.mjs`, plain Node, no dependencies). From a clone you can run it directly:
+
+```bash
+node plugin/app/cli.mjs            # same as `open`
+node plugin/app/cli.mjs start      # start in the background, wait until it answers
+node plugin/app/cli.mjs status
+node plugin/app/cli.mjs stop
+pnpm clorbit status                # the same through pnpm
+```
+
+The server runs detached with its pid file and log in `~/.clorbit` (`clorbit.pid`, `clorbit.log`). `stop` only stops a server the CLI started; a `pnpm dev` server is left alone. If the port is taken by another program, `start` and `status` say so; pick another port with `CLORBIT_PORT`.
 
 ### Subscription limits (optional)
 
@@ -104,9 +142,9 @@ The script only touches `statusLine.command` in `~/.claude/settings.json`, keeps
 
 - **Localhost only.** The server binds to `127.0.0.1`; nothing is exposed to your network and nothing is sent to the internet. The only external request the web page makes is for Google Fonts.
 - **Read-only over `~/.claude`.** Clorbit never writes to `~/.claude`. The only exception is `scripts/install-hooks.mjs`, and only when you run it with `--apply` yourself.
-- **Your data stays in `~/.clorbit`.** That folder holds the SQLite database (`clorbit.db`) and the optional status-line capture. Delete it at any time; it will be rebuilt from your transcripts (except history of transcripts Claude Code has already deleted).
+- **Your data stays in `~/.clorbit`.** That folder holds the SQLite database (`clorbit.db`), the server's log and pid file when it was started by the plugin or the CLI, and the optional status-line capture. Delete it at any time; it will be rebuilt from your transcripts (except history of transcripts Claude Code has already deleted).
 - **Archived history.** Claude Code deletes transcripts older than 30 days by default. Clorbit keeps their summaries and marks them as archived, so analytics and insights still include that history. An archived session keeps its summary, agent tree, startup context and tools, but has no timeline or context chart.
-- **Demo mode** (`?mock=1`) uses invented data only — safe for screenshots and screen sharing.
+- **Demo mode** (`?demo=1`) uses invented data only — safe for screenshots and screen sharing. Clorbit never switches to it by itself: when the server is down you see an "isn't running" screen, not made-up numbers.
 
 See [SECURITY.md](SECURITY.md) for the threat model and how to report a vulnerability.
 
@@ -116,14 +154,15 @@ All settings are environment variables. The old `FLEET_*` names are still read a
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CLORBIT_PORT` | `4980` | API server port (the dev proxy follows it). |
+| `CLORBIT_PORT` | `4980` | Server port. The dev proxy, the CLI and the plugin's hooks follow it. |
 | `CLORBIT_DATA_DIR` | `~/.clorbit` | Where `clorbit.db` lives. |
-| `CLORBIT_URL` | `http://127.0.0.1:4980` | Where the plugin's hooks send events. |
+| `CLORBIT_URL` | `http://127.0.0.1:$CLORBIT_PORT` | Where the plugin's hooks send events. |
+| `CLORBIT_AUTOSTART` | — | Set to `0` to stop the plugin from starting the server when a session starts. |
 | `CLORBIT_CLAUDE_DIR` | `~/.claude` | Claude Code's data folder to read. |
 | `CLORBIT_STATUSLINE_FILE` | `~/.clorbit/statusline.json` | Status-line capture file. |
-| `CLORBIT_SERVE_WEB` | — | Set to `1` to serve the built web app from the API server (`pnpm start` does this). |
+| `CLORBIT_SERVE_WEB` | on in the built server | Serve the web app from the API server. The built server (`plugin/app/server.mjs`) does by default; under `pnpm dev`/`pnpm server` set it to `1` after `pnpm build`. |
 
-Upgrading from a pre-release that stored its database in `<repo>/data/fleet.db`: on first start Clorbit copies it to `~/.clorbit/clorbit.db` once and logs it. A status-line capture at `~/.fleet/statusline.json` is still read if the new file does not exist.
+Upgrading from a pre-release that stored its database in `<repo>/data/fleet.db`: on first start Clorbit copies it to `~/.clorbit/clorbit.db` once and logs it. The copy only happens for the default data folder: with `CLORBIT_DATA_DIR` set, a new folder starts empty. A status-line capture at `~/.fleet/statusline.json` is still read if the new file does not exist.
 
 ## How the numbers are computed
 
@@ -146,7 +185,7 @@ Upgrading from a pre-release that stored its database in `<repo>/data/fleet.db`:
 
 ## Roadmap
 
-- v0.2: one-command plugin flow (slash commands, server autostart from the plugin).
+- `npx clorbit` for running without a clone or the plugin.
 - Cost estimates per model, using public pricing.
 - Export of analytics (CSV/JSON).
 - More insights (e.g. model choice per task type, idle subagents).
@@ -160,8 +199,10 @@ Ideas and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 pnpm dev          # server (tsx watch) + Vite dev server
 pnpm typecheck    # TypeScript, no emit
 pnpm test         # Vitest (server tests on synthetic transcripts)
-pnpm build        # production build of the web app into dist/
+pnpm build        # web app → plugin/app/web, server bundle → plugin/app/server.mjs
 ```
+
+The build output in `plugin/app` is committed, because Claude Code installs the plugin straight from the repository. The build is deterministic; CI rebuilds it and fails if `plugin/` differs from what is committed, so run `pnpm build` and commit `plugin/` together with your source changes. The version lives in `package.json`; `pnpm build` copies it into `plugin/.claude-plugin/plugin.json`.
 
 The project layout and the data flow are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The API contract between the server and the web app is [`shared/api.ts`](shared/api.ts).
 

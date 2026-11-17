@@ -21,4 +21,19 @@ export default {
   'api.unreachableStatus': 'Server unreachable ({status})',
   'api.serverError': 'Server error: {status}',
   'api.loadFailed': 'Could not load data',
+  // Server offline screen (galaxy and analytics)
+  'offline.title': "The Clorbit server isn't running",
+  'offline.text': 'Clorbit only shows real data from this computer, so there is nothing to show until the server is back.',
+  'offline.start': 'Start it',
+  'offline.inClaude': 'in Claude Code',
+  'offline.fromSource': 'from a clone of the repository',
+  'offline.auto': 'Checking again every few seconds — the page comes back on its own.',
+  'offline.retry': 'Retry',
+  'offline.checking': 'Checking…',
+  // Demo mode (explicit only)
+  'demo.try': 'Try the demo',
+  'demo.label': 'Demo data — fictional',
+  'demo.text': 'Invented sessions and numbers, not yours.',
+  'demo.exit': 'Show my data',
+  'demo.chip': 'demo',
 } satisfies Record<string, string>;

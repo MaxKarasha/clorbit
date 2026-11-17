@@ -26,14 +26,10 @@ export default {
   'range.30d': '30 days',
   'range.90d': '90 days',
 
-  // Scan banner and data-source badge
+  // Scan banner
   'scan.scanning': 'Scanning history…',
   'scan.files': 'file|files',
   'scan.note': 'Charts update on their own while the scan runs.',
-  'badge.demo': 'Demo data',
-  'badge.demoTitle': 'Enabled by the ?mock=1 parameter',
-  'badge.offline': 'Server offline · demo data',
-  'badge.offlineTitle': 'The server at 127.0.0.1:4980 is not responding. Click to retry.',
 
   // Shared UI
   'ui.loading': 'Loading data…',

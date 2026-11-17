@@ -4,6 +4,7 @@ import { useData } from '../lib/api';
 import { fmtInt, fmtPct } from '../lib/format';
 import { href, presetLabel, RANGE_PRESETS, setQuery, useRange, useRoute } from '../lib/router';
 import LangSwitch from './LangSwitch';
+import { DemoStrip, ServerOffline } from './ServerState';
 import Starfield from './Starfield';
 import { cx } from './ui';
 
@@ -76,24 +77,9 @@ function ScanBanner() {
   );
 }
 
-function MockBadge() {
-  const { mockReason, retryServer } = useData();
-  if (!mockReason) return null;
-  if (mockReason === 'forced')
-    return (
-      <span className="mock-badge" title={t('badge.demoTitle')}>
-        {t('badge.demo')}
-      </span>
-    );
-  return (
-    <button className="mock-badge mock-badge--offline" onClick={retryServer} title={t('badge.offlineTitle')}>
-      {t('badge.offline')}
-    </button>
-  );
-}
-
 export default function AnalyticsLayout({ children }: { children: ReactNode }) {
   const route = useRoute();
+  const { demo, offline, checking, retryServer } = useData();
   const active = route.path.startsWith('/session/') ? '/analytics/sessions' : route.path;
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -119,14 +105,14 @@ export default function AnalyticsLayout({ children }: { children: ReactNode }) {
           ))}
         </div>
         <div className="topnav__right">
-          <MockBadge />
           <RangePicker />
           <LangSwitch className="segmented lang-switch" btnClass="segmented__btn" />
         </div>
+        {demo && <DemoStrip />}
       </nav>
-      <ScanBanner />
+      {!offline && <ScanBanner />}
       <main className="page" key={route.path}>
-        {children}
+        {offline ? <ServerOffline onRetry={retryServer} checking={checking} /> : children}
       </main>
     </div>
   );

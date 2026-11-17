@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "clorbit",
-      "description": "Streams Claude Code session and agent events to a local Clorbit server (127.0.0.1:4980). Async hooks; does nothing when Clorbit is not running.",
+      "description": "A local dashboard for your Claude Code sessions: /clorbit opens it, the server starts on its own, and async hooks stream live session and agent events to 127.0.0.1.",
       "source": "./plugin",
       "category": "productivity"
     }

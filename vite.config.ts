@@ -10,5 +10,6 @@ export default defineConfig({
   plugins: [react()],
   resolve: { alias: { '@shared': fileURLToPath(new URL('./shared', import.meta.url)) } },
   server: { host: '127.0.0.1', port: 5173, proxy: { '/api': `http://127.0.0.1:${apiPort}` } },
-  build: { outDir: '../dist', emptyOutDir: true },
+  // The build lands inside the plugin, which is what the Claude Code plugin cache copies (see scripts/build.mjs).
+  build: { outDir: '../plugin/app/web', emptyOutDir: true },
 });

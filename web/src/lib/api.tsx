@@ -2,18 +2,16 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import type { LiveSnapshot } from '@shared/api';
 import { t, useLang, withLang } from '../i18n';
 import { mockResolve } from '../mock';
-import { useRoute } from './router';
+import { isDemo, useDemo } from './demo';
 
 /**
  * Data access.
- * - By default — the real server (`/api/...`, proxied by Vite in dev).
- * - `?mock=1` in the hash or the URL — demo data only.
- * - If the server is unreachable (network, 502/503/504, HTML instead of JSON) — demo data
- *   automatically, with a badge in the navigation.
+ * - By default — the real server (`/api/...`, proxied by Vite in dev). Nothing is ever substituted:
+ *   if the server is unreachable (network, 502/503/504, HTML instead of JSON), requests fail and
+ *   the layout shows the "server isn't running" screen, retrying until the server is back.
+ * - Demo data only by explicit choice: `?demo=1` (alias `?mock=1`), see lib/demo.ts.
  * Every request carries `lang=<ui language>` so server-generated text matches the UI.
  */
-
-export type MockReason = 'forced' | 'offline' | null;
 
 let offline = false;
 const listeners = new Set<() => void>();
@@ -23,12 +21,8 @@ function setOffline(v: boolean) {
   listeners.forEach((l) => l());
 }
 
-export function isMockForced(): boolean {
-  const hashQ = new URLSearchParams(window.location.hash.split('?')[1] ?? '');
-  const searchQ = new URLSearchParams(window.location.search);
-  const v = hashQ.get('mock') ?? searchQ.get('mock');
-  return v != null && v !== '0';
-}
+/** How often the app checks whether an unreachable server is back. */
+export const OFFLINE_RETRY_MS = 4000;
 
 class HttpError extends Error {
   constructor(
@@ -67,46 +61,53 @@ async function fetchJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   return (await res.json()) as T;
 }
 
-/** Returns data from the server or from the demo set. */
+/** Returns data from the server, or from the demo set when demo mode is on. */
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<{ data: T; mock: boolean }> {
-  if (isMockForced() || offline) {
+  if (isDemo()) {
     await new Promise((r) => setTimeout(r, 180 + Math.random() * 220));
     return { data: mockResolve(path) as T, mock: true };
   }
   try {
     const data = await fetchJson<T>(path, signal);
+    setOffline(false);
     return { data, mock: false };
   } catch (e) {
-    if (e instanceof Unreachable) {
-      setOffline(true);
-      return { data: mockResolve(path) as T, mock: true };
-    }
+    if (e instanceof Unreachable) setOffline(true);
     throw e;
   }
 }
 
-// ---------- Context: scan state and data version ----------
+// ---------- Context: scan state, data version, server reachability ----------
 
 interface DataState {
   live: LiveSnapshot | null;
-  version: number; // grows when the server has read another part of the history
-  mockReason: MockReason;
+  version: number; // grows when the server has read another part of the history (or came back)
+  demo: boolean;
+  /** The server is unreachable (never true in demo mode). */
+  offline: boolean;
+  /** A manual retry is in flight. */
+  checking: boolean;
   retryServer: () => void;
 }
 
-const DataCtx = createContext<DataState>({ live: null, version: 0, mockReason: null, retryServer: () => {} });
+const DataCtx = createContext<DataState>({ live: null, version: 0, demo: false, offline: false, checking: false, retryServer: () => {} });
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  const route = useRoute();
-  const forced = route.query.get('mock') != null && route.query.get('mock') !== '0' ? true : isMockForced();
-  const [live, setLive] = useState<LiveSnapshot | null>(null);
+  const demo = useDemo();
+  const [live, setLive] = useState<{ demo: boolean; snap: LiveSnapshot } | null>(null);
   const [version, setVersion] = useState(0);
   const [isOffline, setIsOffline] = useState(offline);
+  const [checking, setChecking] = useState(false);
+  const [nonce, setNonce] = useState(0);
   const lastBump = useRef({ at: Date.now(), done: true, files: 0 });
   const lang = useLang();
 
   useEffect(() => {
-    const l = () => setIsOffline(offline);
+    const l = () => {
+      setIsOffline(offline);
+      // Back online: let every page reload its data, quietly.
+      if (!offline) setVersion((v) => v + 1);
+    };
     listeners.add(l);
     return () => void listeners.delete(l);
   }, []);
@@ -118,7 +119,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       try {
         const { data } = await apiGet<LiveSnapshot>('/api/live');
         if (stop) return;
-        setLive(data);
+        setLive({ demo, snap: data });
         const s = data.scan;
         const prev = lastBump.current;
         const now = Date.now();
@@ -131,7 +132,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
         timer = window.setTimeout(tick, s.done ? 15000 : 2500);
       } catch {
-        if (!stop) timer = window.setTimeout(tick, 10000);
+        // Unreachable: retry every few seconds; the first success clears the offline state.
+        if (!stop) timer = window.setTimeout(tick, offline ? OFFLINE_RETRY_MS : 10000);
+      } finally {
+        if (!stop) setChecking(false);
       }
     };
     tick();
@@ -139,15 +143,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
       stop = true;
       window.clearTimeout(timer);
     };
-  }, [forced, isOffline, lang]);
+  }, [demo, lang, nonce]);
 
   const retryServer = () => {
-    setOffline(false);
-    setVersion((v) => v + 1);
+    setChecking(true);
+    setNonce((n) => n + 1);
   };
 
-  const mockReason: MockReason = forced ? 'forced' : isOffline ? 'offline' : null;
-  return <DataCtx.Provider value={{ live, version, mockReason, retryServer }}>{children}</DataCtx.Provider>;
+  const value: DataState = {
+    live: live && live.demo === demo ? live.snap : null,
+    version,
+    demo,
+    offline: !demo && isOffline,
+    checking,
+    retryServer,
+  };
+  return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }
 
 export function useData(): DataState {
@@ -165,7 +176,7 @@ export interface ApiState<T> {
 }
 
 export function useApi<T>(path: string | null): ApiState<T> {
-  const { version, mockReason } = useData();
+  const { version, demo } = useData();
   const lang = useLang();
   const [state, setState] = useState<{ data: T | null; error: string | null; loading: boolean; key: string | null }>({
     data: null,
@@ -186,7 +197,7 @@ export function useApi<T>(path: string | null): ApiState<T> {
         setState((s) => ({ ...s, error: e.message || t('api.loadFailed'), loading: false }));
       });
     return () => ctrl.abort();
-  }, [path, version, mockReason, nonce, lang]);
+  }, [path, version, demo, nonce, lang]);
 
   // Previous data stays on screen while new data loads (changing the range does not flicker).
   return {

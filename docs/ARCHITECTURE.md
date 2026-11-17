@@ -17,8 +17,22 @@ Clorbit is two small programs that share one TypeScript contract:
 | `server/` | HTTP server (`index.ts`), scanner, store, SQLite layer, live status, analytics, insights, server-side i18n. Only Node built-ins plus `tsx` to run TypeScript. |
 | `web/` | Single-page app: the canvas galaxy (`web/src/galaxy/`), analytics pages (`web/src/pages/`), the i18n runtime and dictionaries (`web/src/i18n/`), demo data (`web/src/mock/`). |
 | `shared/api.ts` | The API contract — every type the server returns and the list of endpoints. |
-| `plugin/` | The `clorbit` Claude Code plugin: async hooks that POST events to the local server. |
+| `plugin/` | The `clorbit` Claude Code plugin — the only folder Claude Code copies into its plugin cache, so everything the plugin runs lives here: `hooks/` (async event hooks and the silent autostart), `skills/clorbit/` (the `/clorbit` command), `app/` (build output, committed: `server.mjs`, `web/`, plus the hand-written `cli.mjs`). |
+| `scripts/build.mjs` | `pnpm build`: Vite builds the web app into `plugin/app/web`, esbuild bundles `server/bundle.ts` into `plugin/app/server.mjs`, and the `package.json` version is synced into the plugin manifest. |
 | `scripts/install-hooks.mjs` | Optional, dry-run-by-default helper that adds the status-line capture (and, if forced, raw hooks) to `~/.claude/settings.json`. |
+
+## Plugin, CLI and the bundled server
+
+```
+SessionStart hook ── node plugin/app/cli.mjs ensure ──► (not running?) spawn detached
+/clorbit [cmd]    ── node plugin/app/cli.mjs <cmd>  ──►   node plugin/app/server.mjs
+                                                           ├─ main thread: HTTP server, serves ./web
+                                                           └─ worker threads: the same file, scanner role
+```
+
+- `server/bundle.ts` is the bundle's entry point: the main thread imports `server/index.ts`, worker threads import `server/scan-worker.ts`. The scan pool starts its workers from the bundle file itself, so the bundle stays one file. Build-time constants (`__CLORBIT_BUNDLED__`, `__CLORBIT_VERSION__`) switch the web folder to `./web` next to the bundle and serve it by default.
+- `cli.mjs` starts the server with `CLORBIT_PID_FILE` and `CLORBIT_START_LOCK`. The server writes the pid file only after it owns the port and removes the start lock, so sessions that start at the same time never spawn two servers or leave a stale pid. `GET /api/health` identifies a running Clorbit (version, pid, data dir); `stop` only signals a pid that `/api/health` confirms.
+- The autostart hook and the event hooks are `async: true` and print nothing, so they never add text to a session's context or delay it. In `claude -p` runs Claude Code kills async hooks at teardown, which is why the server is spawned fully detached.
 
 ## Data sources
 
@@ -113,9 +127,15 @@ Dates are local `YYYY-MM-DD`, timestamps are epoch milliseconds.
 
 Adding a language means adding a dictionary folder on the web, a column in the server dictionaries, and the language code to `Lang`.
 
+## Data source in the web app: live, offline, demo
+
+- **Live** is the only default. The galaxy polls `/api/live` every 3 s and listens to `/api/events`; analytics pages go through `apiGet`/`useApi` in `web/src/lib/api.tsx`, and `DataProvider` polls `/api/live` for the scan state.
+- **Offline.** A network error, a 502/503/504 from the dev proxy, or HTML instead of JSON marks the server as unreachable. Nothing is substituted: the galaxy replaces its HUD numbers and panels with a full-screen "server isn't running" state, and the analytics layout renders the same state (`web/src/components/ServerState.tsx`) instead of the page. Both retry every few seconds (and on Retry); the first successful response clears the state, reloads page data and reopens the event stream, without a reload.
+- **Demo** is explicit only: `demo=1` (alias `mock=1`; `mock=scan` adds a running history scan) in the hash query or the page URL, set by the "Try the demo" buttons on the offline screen and on an empty galaxy. `web/src/lib/demo.ts` reads and toggles it; the param is sticky in `href()` (`web/src/lib/router.ts`), so it survives navigation. In demo mode `apiGet` answers from `web/src/mock/` and the galaxy runs `MockFeed` (`web/src/galaxy/mock.ts`); every screen shows a "Demo data — fictional" strip with "Show my data", which removes the param. The galaxy is remounted when the mode changes, so no star from one source lingers in the other.
+
 ## Privacy model
 
 - The server binds to `127.0.0.1` only and has no authentication — anything on your machine can read it, nothing outside can.
 - Clorbit never writes to `~/.claude`. The only code that can is `scripts/install-hooks.mjs`, which is a dry run unless you pass `--apply`, and backs up `settings.json` first.
-- Clorbit's own data lives in `~/.clorbit` (`CLORBIT_DATA_DIR`). Transcript content is not copied wholesale: summaries hold counts, labels (tool labels such as `Read index.ts` or the first 40 characters of a Bash command), session titles, the latest assistant text (≤ 240 chars) and file paths of repeated reads. Hook payloads are trimmed as described above.
+- Clorbit's own data lives in `~/.clorbit` (`CLORBIT_DATA_DIR`). The one-time copy of a pre-rename `<repo>/data/fleet.db` (`migrateLegacyDb` in `server/config.ts`) only targets the default folder; an explicitly set data dir always starts empty. Transcript content is not copied wholesale: summaries hold counts, labels (tool labels such as `Read index.ts` or the first 40 characters of a Bash command), session titles, the latest assistant text (≤ 240 chars) and file paths of repeated reads. Hook payloads are trimmed as described above.
 - There is no telemetry and no network access besides the Google Fonts stylesheet in `web/index.html`.

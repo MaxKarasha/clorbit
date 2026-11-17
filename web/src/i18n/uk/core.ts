@@ -23,4 +23,19 @@ export default {
   'api.unreachableStatus': 'Сервер недоступний ({status})',
   'api.serverError': 'Помилка сервера: {status}',
   'api.loadFailed': 'Не вдалося завантажити дані',
+  // Server offline screen (galaxy and analytics)
+  'offline.title': 'Сервер Clorbit не запущено',
+  'offline.text': 'Clorbit показує лише справжні дані з цього комп’ютера, тож поки сервер не працює, показувати нічого.',
+  'offline.start': 'Запусти його',
+  'offline.inClaude': 'у Claude Code',
+  'offline.fromSource': 'з клону репозиторію',
+  'offline.auto': 'Перевіряю знову кожні кілька секунд — сторінка оновиться сама.',
+  'offline.retry': 'Спробувати знову',
+  'offline.checking': 'Перевіряю…',
+  // Demo mode (explicit only)
+  'demo.try': 'Спробувати демо',
+  'demo.label': 'Демо-дані — вигадані',
+  'demo.text': 'Вигадані сесії й числа, не твої.',
+  'demo.exit': 'Показати мої дані',
+  'demo.chip': 'демо',
 } satisfies Record<keyof typeof en, string>;

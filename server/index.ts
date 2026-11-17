@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { attribution, overview, parseRange, sessions } from './analytics';
-import { CACHE_DIR, DB_FILE, DIST_DIR, HOST, PORT, PROJECTS_DIR, env, knownPlugins, migrateLegacyDb } from './config';
+import { CACHE_DIR, DATA_DIR, DB_FILE, DIST_DIR, HOST, PORT, PROJECTS_DIR, SERVE_WEB, VERSION, env, knownPlugins, migrateLegacyDb } from './config';
 import { ClorbitDb } from './db';
 import { HookLog } from './hook-log';
 import { Hooks } from './hooks';
@@ -98,6 +98,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: err.getOnly });
+    if (p === '/api/health') return json(res, 200, { app: 'clorbit', version: VERSION, pid: process.pid, port: PORT, dataDir: DATA_DIR, uptimeMs: Date.now() - t0 });
     if (p === '/api/live') return json(res, 200, live.snapshot(lang));
     if (p === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
@@ -122,7 +123,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/debug/scan') return json(res, 200, { ...store.stats, files: store.files.size, archived: store.missing.size, hooksRecent: hooks.recent.slice(-20), uptimeMs: Date.now() - t0, db: dbHealth() });
     if (p === '/api/debug/db') return json(res, 200, dbHealth());
     if (p.startsWith('/api/')) return json(res, 404, { error: err.unknownRoute });
-    if (env('SERVE_WEB') === '1') return serveStatic(res, p);
+    if (SERVE_WEB) return serveStatic(res, p);
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('Clorbit API. To serve the web app from here: pnpm start (or CLORBIT_SERVE_WEB=1 after pnpm build).');
   } catch (e) {
@@ -132,8 +133,26 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// The CLI (plugin/app/cli.mjs) passes CLORBIT_PID_FILE: the file is written only once the port is ours,
+// so two sessions racing to autostart never leave a stale pid behind.
+const PID_FILE = env('PID_FILE');
+const ownsPidFile = () => { try { return PID_FILE && JSON.parse(fs.readFileSync(PID_FILE, 'utf8')).pid === process.pid; } catch { return false; } };
+
+server.on('error', (e: NodeJS.ErrnoException) => {
+  if (e.code === 'EADDRINUSE') console.error(`[clorbit] port ${PORT} on ${HOST} is already in use. Stop the other process or pick another port with CLORBIT_PORT.`);
+  else console.error('[clorbit] server error', e);
+  process.exit(1);
+});
+
 server.listen(PORT, HOST, () => {
-  console.log(`[clorbit] http://${HOST}:${PORT} ready in ${Date.now() - t0} ms; ${store.files.size} files in the database, ${store.missing.size} archived (loaded in ${store.stats.loadMs} ms)`);
+  if (PID_FILE) {
+    try { fs.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: new Date().toISOString() }) + '\n'); } catch (e) {
+      console.error(`[clorbit] could not write ${PID_FILE}:`, (e as Error).message);
+    }
+  }
+  const lock = env('START_LOCK');
+  if (lock) try { fs.rmSync(lock, { force: true }); } catch { /* the CLI cleans up stale locks */ }
+  console.log(`[clorbit] v${VERSION} http://${HOST}:${PORT} ready in ${Date.now() - t0} ms; ${store.files.size} files in the database, ${store.missing.size} archived (loaded in ${store.stats.loadMs} ms)`);
   live.start();
   hookLog.start();
   limitsLog.start();
@@ -148,6 +167,7 @@ const shutdown = () => {
   limitsLog.stop();
   try { hookLog.stop(); store.saveNow(); db?.close(); } catch { /* ignore on shutdown */ }
   for (const c of clients.keys()) c.end();
+  if (ownsPidFile()) try { fs.unlinkSync(PID_FILE!); } catch { /* already gone */ }
   server.close();
   process.exit(0);
 };

@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import GalaxyPage from './galaxy/GalaxyPage';
 import { t, useLang } from './i18n';
 import { DataProvider } from './lib/api';
+import { useDemo } from './lib/demo';
 import { href, useRoute } from './lib/router';
 import AnalyticsLayout from './components/Layout';
 import { Empty, Loading } from './components/ui';
@@ -65,5 +66,7 @@ export default function App() {
   const { parts } = useRoute();
   // Subscribing here re-renders the whole tree when the language changes.
   useLang();
-  return <DataProvider>{parts.length === 0 ? <GalaxyPage /> : <AnalyticsRoute />}</DataProvider>;
+  // Entering or leaving demo mode remounts the galaxy, so no star of one data source lingers in the other.
+  const demo = useDemo();
+  return <DataProvider>{parts.length === 0 ? <GalaxyPage key={demo ? 'demo' : 'live'} /> : <AnalyticsRoute />}</DataProvider>;
 }

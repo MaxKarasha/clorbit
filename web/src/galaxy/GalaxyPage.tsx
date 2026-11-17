@@ -1,8 +1,11 @@
 // Home page: the galaxy of sessions and agents + HUD (status bar, panels, event ticker).
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AgentNode, AnalyticsOverview, ClorbitEvent, LiveSession, LiveSnapshot } from '@shared/api';
 import LangSwitch from '../components/LangSwitch';
+import { DemoStrip, ServerOffline } from '../components/ServerState';
 import { locale, t, useLang, withLang, type MsgKey } from '../i18n';
+import { enterDemo, isDemo } from '../lib/demo';
+import { href } from '../lib/router';
 import { GalaxyEngine, prettyModel, short, type Focus } from './engine';
 import { MockFeed } from './mock';
 import { fmtAgo, fmtClock, fmtDur, fmtPct, fmtTok, tSum } from './format';
@@ -11,10 +14,6 @@ import './galaxy.css';
 type Tick = { id: number; ts: number; text: string; tone: 'tool' | 'spawn' | 'finish' | 'wait' | 'info' };
 
 const statusWord = (s: string) => (['working', 'waiting', 'idle', 'stopped', 'done'].includes(s) ? t(`gx.status.${s}` as MsgKey) : '');
-
-function useMock() {
-  return useMemo(() => /[?&]mock=1/.test(location.hash) || /[?&]mock=1/.test(location.search), []);
-}
 
 function findAgent(root: AgentNode, id: string): { node: AgentNode; chain: AgentNode[] } | null {
   if (root.id === id) return { node: root, chain: [root] };
@@ -32,8 +31,11 @@ export default function GalaxyPage() {
   const [snap, setSnap] = useState<LiveSnapshot | null>(null);
   const [focus, setFocus] = useState<Focus>({ t: 'none' });
   const [ticks, setTicks] = useState<Tick[]>([]);
-  const [demo, setDemo] = useState(useMock());
+  // Demo mode is fixed for the lifetime of this component: App remounts the galaxy when it changes.
+  const [demo] = useState(isDemo);
   const [offline, setOffline] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const retryRef = useRef<() => void>(() => {});
   const [legend, setLegend] = useState(false);
   const [tour, setTour] = useState(true);
   const tickId = useRef(0);
@@ -42,7 +44,7 @@ export default function GalaxyPage() {
   useEffect(() => {
     const eng = new GalaxyEngine(canvasRef.current!, {
       onFocus: setFocus,
-      onDistant: (p) => { location.hash = `#/analytics/sessions?project=${encodeURIComponent(p)}&range=30d`; },
+      onDistant: (p) => { location.hash = href('/analytics/sessions', { project: p, range: '30d' }); },
     });
     engineRef.current = eng;
     if (import.meta.env.DEV) (window as unknown as { __galaxy?: GalaxyEngine }).__galaxy = eng;
@@ -65,23 +67,13 @@ export default function GalaxyPage() {
     }
     let alive = true;
     let fails = 0;
-    const load = async () => {
-      try {
-        const r = await fetch(withLang('/api/live', lang));
-        if (!r.ok) throw new Error(String(r.status));
-        const s = (await r.json()) as LiveSnapshot;
-        if (!alive) return;
-        fails = 0;
-        setOffline(false);
-        onSnap(s);
-      } catch {
-        if (++fails >= 2 && alive) {
-          setOffline(true);
-          if (!snapRef.current) setDemo(true);
-        }
-      }
+    let down = false;
+    let es: EventSource | null = null;
+    const openEvents = () => {
+      es?.close();
+      es = new EventSource(withLang('/api/events', lang));
+      es.onmessage = (m) => { try { onEvent(JSON.parse(m.data) as ClorbitEvent); } catch { /* skip service messages */ } };
     };
-    load();
     const loadDistant = async () => {
       try {
         const d = (n: number) => { const x = new Date(Date.now() - n * 86400e3); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
@@ -91,12 +83,39 @@ export default function GalaxyPage() {
         engineRef.current?.setDistant(o.projects.map((p) => ({ name: p.label, total: p.total, sessions: p.sessions })));
       } catch { /* distant stars are optional */ }
     };
+    // No demo substitution: when the server is unreachable the page says so and keeps polling.
+    const load = async () => {
+      try {
+        const r = await fetch(withLang('/api/live', lang));
+        if (!r.ok) throw new Error(String(r.status));
+        const s = (await r.json()) as LiveSnapshot;
+        if (!alive) return;
+        fails = 0;
+        if (down) {
+          // Back online, silently: an EventSource that got an error response does not reconnect by itself.
+          down = false;
+          if (!es || es.readyState === EventSource.CLOSED) openEvents();
+          loadDistant();
+        }
+        setOffline(false);
+        onSnap(s);
+      } catch {
+        // Before the first snapshot one failure is enough; afterwards ignore a single blip (e.g. a dev restart).
+        if (alive && (++fails >= 2 || !snapRef.current)) {
+          down = true;
+          setOffline(true);
+        }
+      } finally {
+        if (alive) setChecking(false);
+      }
+    };
+    retryRef.current = () => { setChecking(true); load(); };
+    load();
     loadDistant();
+    openEvents();
     const iv2 = window.setInterval(loadDistant, 120000);
     const iv = window.setInterval(load, 3000);
-    const es = new EventSource(withLang('/api/events', lang));
-    es.onmessage = (m) => { try { onEvent(JSON.parse(m.data) as ClorbitEvent); } catch { /* skip service messages */ } };
-    return () => { alive = false; clearInterval(iv); clearInterval(iv2); es.close(); };
+    return () => { alive = false; clearInterval(iv); clearInterval(iv2); es?.close(); };
   }, [demo, lang]);
 
   const eng = engineRef.current;
@@ -104,18 +123,26 @@ export default function GalaxyPage() {
   const fAgent = focus.t === 'agent' && fSession ? findAgent(fSession.root, focus.agentId) : null;
   const go = (f: Focus) => engineRef.current?.setFocus(f, true);
 
+  // Numbers are shown only while they are current: never stale ones under the offline screen.
+  const shown = offline ? null : snap;
+
   return (
-    <div className="gx">
+    <div className={`gx${demo ? ' gx--demo' : ''}`}>
       <canvas ref={canvasRef} className="gx-canvas" />
-      {snap && <StatusBar snap={snap} demo={demo} />}
-      <nav className="gx-nav">
-        <a className="gx-btn" href="#/analytics/overview">{t('gx.nav.analytics')}</a>
-        <a className="gx-btn" href="#/analytics/context">{t('gx.nav.context')}</a>
-        <a className="gx-btn" href="#/insights">{t('gx.nav.insights')}</a>
-        <button className={`gx-btn ${tour ? 'on' : ''}`} onClick={() => setTour(!tour)} title={t('gx.nav.tourTitle')}>{t('gx.nav.tour')}</button>
-        <button className="gx-btn" onClick={() => setLegend(!legend)} title={t('gx.nav.legendTitle')}>?</button>
-        <LangSwitch className="gx-lang" btnClass="gx-btn" />
-      </nav>
+      <header className="gx-status">
+        <div className="gx-brand"><span className="gx-logo" />Clorbit</div>
+        <div className={`gx-metrics${shown && !shown.limits ? ' gx-metrics--hint' : ''}`}>{shown && <StatusMetrics snap={shown} />}</div>
+        <nav className="gx-nav">
+          <a className="gx-btn" href={href('/analytics/overview')}>{t('gx.nav.analytics')}</a>
+          <a className="gx-btn" href={href('/analytics/context')}>{t('gx.nav.context')}</a>
+          <a className="gx-btn" href={href('/insights')}>{t('gx.nav.insights')}</a>
+          <button className={`gx-btn ${tour ? 'on' : ''}`} onClick={() => setTour(!tour)} title={t('gx.nav.tourTitle')}>{t('gx.nav.tour')}</button>
+          <button className="gx-btn" onClick={() => setLegend(!legend)} title={t('gx.nav.legendTitle')}>?</button>
+          <LangSwitch className="gx-lang" btnClass="gx-btn" />
+        </nav>
+        {shown && !demo && !shown.hooksInstalled && <div className="gx-pill" title={t('gx.bar.noHooksTitle')}>{t('gx.bar.noHooks')}</div>}
+      </header>
+      {demo && <DemoStrip className="gx-demo" />}
 
       <div className="gx-crumbs">
         <button onClick={() => go({ t: 'none' })}>{t('gx.crumbs.fleet')}</button>
@@ -126,20 +153,24 @@ export default function GalaxyPage() {
         {focus.t !== 'none' && <em>{t('gx.crumbs.hint')}</em>}
       </div>
 
-      {snap && !snap.scan.done && !demo && (
-        <div className="gx-banner">{t('gx.scanning', { done: snap.scan.filesDone, total: snap.scan.filesTotal })}</div>
+      {shown && !shown.scan.done && !demo && (
+        <div className="gx-banner">{t('gx.scanning', { done: shown.scan.filesDone, total: shown.scan.filesTotal })}</div>
       )}
-      {demo && <div className="gx-banner demo">{offline ? t('gx.demo.offline') : t('gx.demo.forced')} <a href="#/">{t('gx.demo.real')}</a></div>}
-      {snap && snap.sessions.length === 0 && !demo && (
+      {shown && shown.sessions.length === 0 && !demo && (
         <div className="gx-empty">
           <h2>{t('gx.empty.title')}</h2>
           <p>{t('gx.empty.text', { cmd: '`claude`' }).split('`').map((part, i) => (i % 2 ? <code key={i}>{part}</code> : part))}</p>
-          <a className="gx-btn" href="#/?mock=1" onClick={() => setDemo(true)}>{t('gx.empty.demo')}</a>
+          <button type="button" className="gx-btn" onClick={enterDemo}>{t('demo.try')}</button>
+        </div>
+      )}
+      {offline && (
+        <div className="gx-offline">
+          <ServerOffline onRetry={() => retryRef.current()} checking={checking} />
         </div>
       )}
 
-      {fSession && focus.t === 'sys' && <SessionPanel s={fSession} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
-      {fSession && fAgent && <AgentPanel s={fSession} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
+      {!offline && fSession && focus.t === 'sys' && <SessionPanel s={fSession} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
+      {!offline && fSession && fAgent && <AgentPanel s={fSession} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
 
       <div className="gx-ticker">
         {ticks.map((t, i) => (
@@ -204,19 +235,19 @@ function Ring({ pct, label, sub }: { pct: number | null; label: string; sub: str
   );
 }
 
-function StatusBar({ snap, demo }: { snap: LiveSnapshot; demo: boolean }) {
+/** The metrics of the HUD bar, in priority order; lower-priority ones give way on narrow screens (galaxy.css). */
+function StatusMetrics({ snap }: { snap: LiveSnapshot }) {
   const tt = snap.totals;
   const L = snap.limits;
   const resets = (ts: number | null) => (ts ? t('gx.bar.resets', { at: new Date(ts).toLocaleString(locale(), { weekday: 'short', hour: '2-digit', minute: '2-digit' }) }) : '');
   return (
-    <header className="gx-status">
-      <div className="gx-brand"><span className="gx-logo" />Clorbit</div>
-      <div className="gx-metric wide">
+    <>
+      <div className="gx-metric tokens">
         <label>{t('gx.bar.tokens24h')}</label>
         <div className="gx-row"><strong>{fmtTok(tSum(tt.tokens24h))}</strong><Spark data={tt.burnSeries} /></div>
         <span>{t('gx.bar.todayOut', { today: fmtTok(tSum(tt.tokensToday)), out: fmtTok(tt.tokens24h.output) })}</span>
       </div>
-      <div className="gx-metric">
+      <div className="gx-metric speed">
         <label>{t('gx.bar.speed')}</label>
         <strong>{fmtTok(tt.burnPerMin)}<em>{t('gx.bar.perMin')}</em></strong>
         <span>{t('gx.bar.last10')}</span>
@@ -232,23 +263,22 @@ function StatusBar({ snap, demo }: { snap: LiveSnapshot; demo: boolean }) {
           <span className="gx-hint" title={t('gx.bar.noSourceTitle')}>{t('gx.bar.noSource')} · <a href="https://github.com/MaxKarasha/clorbit#subscription-limits-optional" target="_blank" rel="noreferrer">{t('gx.bar.howTo')}</a></span>
         )}
       </div>
-      <div className="gx-metric">
+      <div className="gx-metric sessions">
         <label>{t('gx.bar.sessions')}</label>
         <strong>{tt.activeSessions}<em>{t('gx.bar.live')}</em></strong>
         <span><i className="dot work" />{t('gx.bar.working', { n: tt.workingSessions })} {tt.waitingSessions > 0 && <b className="wait"><i className="dot wait" />{t('gx.bar.waiting', { n: tt.waitingSessions })}</b>}</span>
       </div>
-      <div className="gx-metric">
+      <div className="gx-metric subagents">
         <label>{t('gx.bar.subagents')}</label>
         <strong>{tt.workingSubagents}<em>{t('gx.bar.now')}</em></strong>
         <span>{t('gx.bar.finished24h', { n: tt.finishedSubagents24h })}</span>
       </div>
-      <div className="gx-metric">
+      <div className="gx-metric cache">
         <label>{t('gx.bar.cache')}</label>
         <strong>{fmtPct(tt.cacheHitRate24h)}</strong>
         <span>{t('gx.bar.projects24h', { n: tt.projects24h })}</span>
       </div>
-      {!demo && !snap.hooksInstalled && <div className="gx-pill" title={t('gx.bar.noHooksTitle')}>{t('gx.bar.noHooks')}</div>}
-    </header>
+    </>
   );
 }
 
@@ -310,8 +340,8 @@ function SessionPanel({ s, eng, onAgent }: { s: LiveSession; eng: GalaxyEngine |
       <h4>{t('gx.panel.hierarchy')}</h4>
       <div className="gx-tree"><Tree s={s} node={s.root} eng={eng} onAgent={onAgent} /></div>
       <div className="gx-actions">
-        <a className="gx-btn primary" href={`#/session/${encodeURIComponent(s.sessionId)}`}>{t('gx.panel.details')}</a>
-        <a className="gx-btn" href={`#/analytics/sessions?project=${encodeURIComponent(s.project)}`}>{t('gx.panel.allSessions', { project: s.project })}</a>
+        <a className="gx-btn primary" href={href(`/session/${encodeURIComponent(s.sessionId)}`)}>{t('gx.panel.details')}</a>
+        <a className="gx-btn" href={href('/analytics/sessions', { project: s.project })}>{t('gx.panel.allSessions', { project: s.project })}</a>
       </div>
     </aside>
   );
@@ -344,8 +374,8 @@ function AgentPanel({ s, a, parent, eng, onAgent }: { s: LiveSession; a: AgentNo
       <TokBars t={a.tokens} />
       {a.children.length > 0 && (<><h4>{t('gx.panel.children')}</h4><div className="gx-tree">{a.children.map((c) => <Tree key={c.id} s={s} node={c} eng={eng} onAgent={onAgent} />)}</div></>)}
       <div className="gx-actions">
-        <a className="gx-btn primary" href={`#/session/${encodeURIComponent(s.sessionId)}`}>{t('gx.panel.timeline')}</a>
-        <a className="gx-btn" href="#/analytics/subagents">{t('gx.panel.subagentAnalytics')}</a>
+        <a className="gx-btn primary" href={href(`/session/${encodeURIComponent(s.sessionId)}`)}>{t('gx.panel.timeline')}</a>
+        <a className="gx-btn" href={href('/analytics/subagents')}>{t('gx.panel.subagentAnalytics')}</a>
       </div>
     </aside>
   );

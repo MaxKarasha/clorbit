@@ -16,7 +16,7 @@ pnpm install
 pnpm dev          # API server on :4980 + Vite on :5173
 ```
 
-Use `http://127.0.0.1:5173/#/?mock=1` to work on the UI with demo data. To run a second instance next to your everyday one, use another port and data dir:
+Use `http://127.0.0.1:5173/#/?demo=1` to work on the UI with demo data (`?mock=scan` adds a history scan in progress). To run a second instance next to your everyday one, use another port and data dir (an explicit data dir always starts empty):
 
 ```bash
 CLORBIT_PORT=4991 CLORBIT_DATA_DIR=/tmp/clorbit-dev pnpm dev
@@ -32,7 +32,9 @@ pnpm test
 pnpm build
 ```
 
-CI runs the same commands on Ubuntu and macOS.
+CI runs the same commands on Ubuntu and macOS, then checks that the committed build output in `plugin/` matches a fresh `pnpm build`. If you change anything under `server/`, `web/` or `shared/`, run `pnpm build` and commit `plugin/app` with it: Claude Code installs the plugin straight from the repository, so the built files are part of the source tree.
+
+To try the plugin from your clone without installing it: `claude --plugin-dir ./plugin`. Use `CLORBIT_PORT` and `CLORBIT_DATA_DIR` to keep a test server away from your everyday one; the CLI, the autostart hook and the event hooks all follow them.
 
 ## Guidelines
 

@@ -9,7 +9,14 @@ export function env(name: string): string | undefined {
   return process.env[`CLORBIT_${name}`] || process.env[`FLEET_${name}`] || undefined;
 }
 
-export const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Set by scripts/build.mjs when the server is bundled into plugin/app/server.mjs.
+declare const __CLORBIT_BUNDLED__: boolean | undefined;
+declare const __CLORBIT_VERSION__: string | undefined;
+/** True when running from the single-file bundle (plugin/app/server.mjs), false under tsx. */
+export const BUNDLED = typeof __CLORBIT_BUNDLED__ !== 'undefined' && __CLORBIT_BUNDLED__;
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+/** Repository root in development; the plugin folder when bundled (unused there except for the legacy DB path). */
+export const PROJECT_ROOT = path.resolve(HERE, '..');
 export const CLAUDE_DIR = env('CLAUDE_DIR') || path.join(os.homedir(), '.claude');
 export const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 export const SESSIONS_DIR = path.join(CLAUDE_DIR, 'sessions');
@@ -21,20 +28,38 @@ export const STATUSLINE_FILE = env('STATUSLINE_FILE') || path.join(HOME_DATA_DIR
 export const LEGACY_STATUSLINE_FILE = path.join(os.homedir(), '.fleet', 'statusline.json');
 // The data dir holds clorbit.db (SQLite). CLORBIT_CACHE_DIR points at the legacy JSON cache, imported once.
 export const DATA_DIR = env('DATA_DIR') || HOME_DATA_DIR;
+/** True when CLORBIT_DATA_DIR (or FLEET_DATA_DIR) points somewhere explicitly, i.e. not the default ~/.clorbit. */
+export const DATA_DIR_EXPLICIT = !!env('DATA_DIR');
 export const DB_FILE = path.join(DATA_DIR, 'clorbit.db');
 export const CACHE_DIR = env('CACHE_DIR') || path.join(DATA_DIR, 'cache');
-export const DIST_DIR = path.join(PROJECT_ROOT, 'dist');
+/** The built web app: next to the bundle (plugin/app/web), or where `pnpm build` puts it in development. */
+export const DIST_DIR = BUNDLED ? path.join(HERE, 'web') : path.join(PROJECT_ROOT, 'plugin', 'app', 'web');
+/** Serve the web app from the API server: on by default in the bundle, opt-in (CLORBIT_SERVE_WEB=1) in development. */
+export const SERVE_WEB = env('SERVE_WEB') ? env('SERVE_WEB') === '1' : BUNDLED;
 export const PORT = Number(env('PORT')) || 4980;
 export const HOST = '127.0.0.1';
+/** Version from package.json (injected at build time; read from package.json under tsx). */
+export const VERSION: string = BUNDLED && typeof __CLORBIT_VERSION__ === 'string' ? __CLORBIT_VERSION__ : devVersion();
+
+function devVersion(): string {
+  try { return JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8')).version ?? 'dev'; } catch { return 'dev'; }
+}
+
 /** Database location of pre-rename builds (`<repo>/data/fleet.db`). */
 export const LEGACY_DB_FILE = path.join(PROJECT_ROOT, 'data', 'fleet.db');
 
 /**
  * One-time migration: if the data dir has no clorbit.db yet but the pre-rename
  * `<repo>/data/fleet.db` exists, copy it over (with its WAL, so nothing is lost).
+ * Only for the default data dir (~/.clorbit): a data dir set explicitly via
+ * CLORBIT_DATA_DIR/FLEET_DATA_DIR is a deliberate fresh location (tests, demos,
+ * a second instance) and must not inherit the repository's old database.
  * Returns the source path when a copy happened.
  */
-export function migrateLegacyDb(dbFile = DB_FILE, legacy = LEGACY_DB_FILE): string | null {
+export function migrateLegacyDb(
+  { dbFile = DB_FILE, legacy = LEGACY_DB_FILE, explicitDataDir = DATA_DIR_EXPLICIT }: { dbFile?: string; legacy?: string; explicitDataDir?: boolean } = {},
+): string | null {
+  if (explicitDataDir) return null;
   try {
     if (fs.existsSync(dbFile) || !fs.existsSync(legacy)) return null;
     fs.mkdirSync(path.dirname(dbFile), { recursive: true });

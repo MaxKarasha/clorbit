@@ -22,6 +22,13 @@
     "tokens"
   ],
   "type": "module",
+  "bin": {
+    "clorbit": "plugin/app/cli.mjs"
+  },
+  "files": [
+    "plugin/",
+    "CHANGELOG.md"
+  ],
   "engines": {
     "node": ">=22.5"
   },
@@ -29,14 +36,11 @@
   "scripts": {
     "dev": "concurrently -k -n server,web -c cyan,magenta \"tsx watch server/index.ts\" \"vite\"",
     "server": "tsx server/index.ts",
-    "build": "vite build",
-    "start": "vite build && CLORBIT_SERVE_WEB=1 tsx server/index.ts",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/build.mjs && node plugin/app/server.mjs",
+    "clorbit": "node plugin/app/cli.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
@@ -44,6 +48,9 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
     "concurrently": "^10.0.7",
+    "esbuild": "0.28.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",

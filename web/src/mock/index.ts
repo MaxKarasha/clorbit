@@ -1,4 +1,5 @@
 import type { Range } from '@shared/api';
+import { demoValue } from '../lib/demo';
 import { mockAttribution, mockInsights, mockLive, mockOverview, mockSessionDetail, mockSessions } from './fixtures';
 
 function today(): string {
@@ -17,10 +18,8 @@ export function mockResolve(path: string): unknown {
   const [p, qs = ''] = path.split('?');
   const q = new URLSearchParams(qs);
   const range = rangeOf(q);
-  if (p === '/api/live') {
-    const hashMock = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('mock');
-    return mockLive(hashMock === 'scan');
-  }
+  // `?mock=scan` (or `?demo=scan`): demo mode with a history scan in progress.
+  if (p === '/api/live') return mockLive(demoValue() === 'scan');
   if (p === '/api/analytics/overview') return mockOverview(range);
   if (p === '/api/analytics/attribution') return mockAttribution(range);
   if (p === '/api/analytics/sessions') return mockSessions(range, q.get('project'));

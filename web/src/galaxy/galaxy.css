@@ -26,24 +26,30 @@
   border: 1px solid var(--line);
   backdrop-filter: blur(14px) saturate(140%);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  z-index: 3;
-  padding-right: 440px; /* room for the nav, including the language switch */
+  z-index: 4;
 }
-.gx-brand { display: flex; align-items: center; gap: 9px; padding: 0 14px 0 6px; font-weight: 700; letter-spacing: 0.02em; font-size: 16px; border-right: 1px solid var(--line); }
+.gx-brand { flex: none; display: flex; align-items: center; gap: 9px; padding: 0 14px 0 6px; font-weight: 700; letter-spacing: 0.02em; font-size: 16px; border-right: 1px solid var(--line); }
 .gx-brand small { font-family: var(--mono); font-weight: 400; font-size: 11.5px; color: var(--mut); text-transform: uppercase; letter-spacing: 0.2em; margin-top: 3px; white-space: nowrap; }
 .gx-logo { width: 18px; height: 18px; border-radius: 50%; background: radial-gradient(circle at 40% 40%, #fff 0 18%, #8fd8ff 30%, rgba(120, 90, 255, 0.0) 70%); box-shadow: 0 0 14px #6fc9ff, 0 0 2px #fff; position: relative; }
 .gx-logo::after { content: ''; position: absolute; inset: -5px -9px; border: 1px solid rgba(160, 200, 255, 0.55); border-radius: 50%; transform: rotate(-18deg) scaleY(0.38); }
-.gx-metric { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 2px 14px; border-right: 1px solid var(--line); min-width: 0; }
-.gx-metric:last-of-type { border-right: 0; }
-.gx-metric label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--mut); }
+/*
+ * Metrics take the space between the brand and the nav. They never overlap: secondary lines
+ * ellipsize, and whole metrics give way by priority as the container narrows (see the
+ * container queries below): cache first, then speed, then reset times, then subagents.
+ */
+.gx-metrics { flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; container: gx-metrics / inline-size; overflow: hidden; }
+.gx-metric { flex: 0 1 auto; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 2px 14px; border-right: 1px solid var(--line); min-width: 0; overflow: hidden; }
+.gx-metric label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gx-metric strong { font-family: var(--mono); font-size: 19px; font-weight: 600; white-space: nowrap; text-shadow: 0 0 18px rgba(130, 200, 255, 0.35); }
 .gx-metric strong em { font-style: normal; font-size: 12px; color: var(--mut); font-weight: 400; margin-left: 2px; }
-.gx-metric > span { font-family: var(--mono); font-size: 11.5px; color: var(--mut); white-space: nowrap; }
+.gx-metric > span { font-family: var(--mono); font-size: 11.5px; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gx-metric .wait { color: var(--wait); font-weight: 500; margin-left: 6px; }
 .gx-row { display: flex; align-items: center; gap: 10px; }
 .gx-spark { display: block; }
 .gx-ring { display: flex; align-items: center; gap: 6px; }
-.gx-ring > div { display: flex; flex-direction: column; font-family: var(--mono); }
+.gx-ring { min-width: 0; }
+.gx-ring > div { display: flex; flex-direction: column; min-width: 0; font-family: var(--mono); white-space: nowrap; }
+.gx-ring > div > * { overflow: hidden; text-overflow: ellipsis; }
 .gx-ring b { font-size: 12px; font-weight: 500; }
 .gx-ring span { font-size: 11px; color: var(--mut); }
 .gx-ring-t { font-family: var(--mono); font-size: 11.5px; fill: #e6ebf5; font-weight: 600; }
@@ -54,7 +60,8 @@
 .dot.work { background: var(--work); box-shadow: 0 0 6px var(--work); }
 .dot.wait { background: var(--wait); box-shadow: 0 0 6px var(--wait); }
 
-.gx-nav { position: absolute; top: 24px; right: 26px; display: flex; gap: 6px; z-index: 4; }
+/* The nav is part of the bar's flow, so metrics can never slide under it. */
+.gx-nav { flex: none; align-self: center; display: flex; align-items: center; gap: 6px; margin-left: auto; padding-left: 10px; }
 .gx-btn {
   font: 500 12.5px Inter, system-ui, sans-serif; color: var(--txt); cursor: pointer;
   background: rgba(20, 26, 46, 0.7); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px;
@@ -71,8 +78,15 @@
 .gx-crumb-agent { display: inline-flex; gap: 6px; align-items: center; }
 
 .gx-banner { position: absolute; top: 100px; left: 50%; transform: translateX(-50%); z-index: 3; font-size: 12.5px; padding: 8px 14px; border-radius: 999px; background: rgba(20, 30, 60, 0.75); border: 1px solid var(--line); backdrop-filter: blur(10px); }
-.gx-banner.demo { background: rgba(60, 40, 10, 0.6); border-color: rgba(255, 177, 92, 0.35); }
-.gx-banner a { margin-left: 8px; color: #ffd29a; text-decoration: underline; }
+
+/* Demo mode: a strip under the bar on every galaxy screen. */
+.gx-demo { position: absolute; top: 100px; left: 14px; z-index: 3; max-width: calc(100% - 420px); backdrop-filter: blur(10px); background: linear-gradient(90deg, rgba(70, 44, 10, 0.88), rgba(40, 26, 8, 0.78)); }
+.gx--demo .gx-crumbs { top: 156px; }
+
+/* Server offline: an honest full-screen state instead of numbers. */
+.gx-offline { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; padding: 110px 16px 24px; overflow-y: auto; background: radial-gradient(60% 60% at 50% 50%, rgba(3, 4, 10, 0.55), rgba(3, 4, 10, 0.9)); backdrop-filter: blur(6px); }
+.gx-offline .offline { margin: 0; background: rgba(7, 10, 18, 0.86); }
+.gx-empty .gx-btn { margin-top: 6px; }
 
 .gx-empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; max-width: 440px; z-index: 2; }
 .gx-empty h2 { font-weight: 600; font-size: 26px; margin: 0 0 8px; }
@@ -137,16 +151,31 @@
 .gx-tick.wait { color: var(--wait); }
 @keyframes gx-tick { from { transform: translateY(8px); opacity: 0; } }
 
-.gx-legend { position: absolute; right: 26px; top: 76px; width: 380px; z-index: 5; padding: 16px 18px; border-radius: 14px; background: rgba(8, 12, 24, 0.92); border: 1px solid var(--line); backdrop-filter: blur(14px); font-size: 12.5px; line-height: 1.55; }
+.gx-legend { position: absolute; right: 26px; top: 100px; width: 380px; z-index: 5; padding: 16px 18px; border-radius: 14px; background: rgba(8, 12, 24, 0.92); border: 1px solid var(--line); backdrop-filter: blur(14px); font-size: 12.5px; line-height: 1.55; }
 .gx-legend h4 { margin: 0 0 8px; }
 .gx-legend ul { margin: 0 0 8px; padding-left: 18px; color: #c3cde0; }
 .gx-legend small { color: var(--mut); }
 
-@media (max-width: 1280px) {
-  .gx-status { padding-right: 390px; }
-  .gx-metric { padding: 2px 9px; }
-  .gx-metric strong { font-size: 16px; }
-  .gx-nav .gx-btn { padding: 7px 9px; font-size: 12px; }
+/*
+ * Progressive disclosure by the width left for metrics (the container, not the window).
+ * Thresholds come from the natural widths of the metrics in EN and UK (UK is wider), with
+ * subscription rings, or with the much narrower "no source" hint (.gx-metrics--hint).
+ */
+@container gx-metrics (max-width: 1250px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.cache { display: none; } }
+@container gx-metrics (max-width: 1110px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.speed { display: none; } }
+@container gx-metrics (max-width: 980px) { .gx-ring > div > span { display: none; } }
+@container gx-metrics (max-width: 830px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.tokens > span { display: none; } }
+@container gx-metrics (max-width: 740px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.subagents { display: none; } }
+@container gx-metrics (max-width: 560px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.sessions > span { display: none; } }
+@container gx-metrics (max-width: 1130px) { .gx-metrics--hint .gx-metric.cache { display: none; } }
+@container gx-metrics (max-width: 980px) { .gx-metrics--hint .gx-metric.speed { display: none; } }
+@container gx-metrics (max-width: 830px) { .gx-metrics--hint .gx-metric.tokens > span { display: none; } }
+@container gx-metrics (max-width: 740px) { .gx-metrics--hint .gx-metric.subagents { display: none; } }
+@container gx-metrics (max-width: 560px) { .gx-metrics--hint .gx-metric.sessions > span { display: none; } }
+@media (max-width: 1600px) {
+  .gx-metric { padding: 2px 11px; }
+  .gx-nav { gap: 5px; }
+  .gx-nav .gx-btn { padding: 8px 10px; }
 }
 
 /* Language switch inside the HUD nav */

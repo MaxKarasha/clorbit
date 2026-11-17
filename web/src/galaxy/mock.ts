@@ -1,4 +1,4 @@
-// Galaxy demo mode (?mock=1 or when the server is unreachable): invented sessions that live and emit events.
+// Galaxy demo mode (explicit only: ?demo=1 / ?mock=1 or "Try the demo"): invented sessions that live and emit events.
 // Prose (task descriptions, latest thoughts, titles, status reasons) is stored as dictionary keys and
 // translated on every snapshot/event, so switching the UI language updates the demo within one tick.
 import type { AgentNode, ClorbitEvent, LiveSession, LiveSnapshot, Tokens } from '@shared/api';

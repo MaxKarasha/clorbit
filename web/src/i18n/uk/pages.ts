@@ -28,14 +28,10 @@ export default {
   'range.30d': '30 днів',
   'range.90d': '90 днів',
 
-  // Scan banner and data-source badge
+  // Scan banner
   'scan.scanning': 'Сканую історію…',
   'scan.files': 'файл|файли|файлів',
   'scan.note': 'Графіки оновлюються самі, поки йде сканування.',
-  'badge.demo': 'Демо-дані',
-  'badge.demoTitle': 'Увімкнено параметром ?mock=1',
-  'badge.offline': 'Сервер недоступний · демо-дані',
-  'badge.offlineTitle': 'Сервер на 127.0.0.1:4980 не відповідає. Натисни, щоб спробувати знову.',
 
   // Shared UI
   'ui.loading': 'Завантажую дані…',

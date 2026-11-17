@@ -205,6 +205,7 @@ export interface Insight {
 }
 
 // Endpoints (all GET except /api/hook). Every GET accepts `lang=en|uk` (default en):
+//   /api/health                                 → HealthInfo (identifies a running Clorbit; used by the CLI)
 //   /api/live                                   → LiveSnapshot
 //   /api/events                                 → SSE, each message is data: ClorbitEvent
 //   /api/analytics/overview?from&to             → AnalyticsOverview
@@ -215,3 +216,13 @@ export interface Insight {
 //   /api/limits/history?from&to                 → LimitsPoint[] (from/to: 'YYYY-MM-DD' or epoch ms; default last 7 days)
 //   /api/debug/scan, /api/debug/db              → diagnostics (scan stats; SQLite row counts, size, archived files)
 //   POST /api/hook                              → accepts Claude Code hook JSON (stored in SQLite, 90-day retention)
+
+/** GET /api/health — cheap identity check used by `clorbit status|start|stop`. */
+export interface HealthInfo {
+  app: 'clorbit';
+  version: string;
+  pid: number;
+  port: number;
+  dataDir: string;
+  uptimeMs: number;
+}

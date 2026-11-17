@@ -241,22 +241,160 @@
   }
 }
 
-.mock-badge {
-  font: 500 11.5px var(--font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 5px 9px;
-  border-radius: 8px;
-  border: 1px dashed rgba(167, 139, 250, 0.5);
-  color: #cbb9ff;
-  background: rgba(167, 139, 250, 0.08);
-  white-space: nowrap;
+/* ---------- Data source: demo label and the offline screen ---------- */
+.demo-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 10px 8px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 177, 92, 0.55);
+  background: linear-gradient(90deg, rgba(255, 177, 92, 0.2), rgba(255, 177, 92, 0.08));
+  box-shadow: 0 0 24px rgba(255, 177, 92, 0.16);
+  color: #ffe2bf;
+  font-size: 13px;
+  line-height: 1.35;
 }
-.mock-badge--offline {
+.demo-strip strong {
+  color: #fff1de;
+  font-weight: 600;
+}
+.demo-strip__tag {
+  font: 600 11.5px var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: #1a1206;
+  background: var(--c-waiting);
+}
+.demo-strip__text {
+  color: #f3c99a;
+}
+.demo-strip__exit {
+  margin-left: auto;
+  padding: 6px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 210, 160, 0.6);
+  background: rgba(20, 14, 6, 0.55);
+  color: #fff1de;
+  font: 500 13px var(--font-ui);
+  white-space: nowrap;
   cursor: pointer;
-  border-color: rgba(255, 177, 92, 0.55);
-  color: var(--c-waiting);
-  background: rgba(255, 177, 92, 0.07);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.demo-strip__exit:hover {
+  border-color: #ffd29a;
+  box-shadow: 0 0 18px rgba(255, 177, 92, 0.35);
+}
+/* In the analytics nav the strip is its own full-width row, so it stays visible while scrolling. */
+.topnav .demo-strip {
+  order: 4;
+  flex-basis: 100%;
+}
+
+.offline {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: min(560px, 100%);
+  margin: 48px auto;
+  padding: 36px 32px 28px;
+  border-radius: var(--radius);
+  text-align: center;
+}
+.offline__orb {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 1px dashed rgba(120, 150, 220, 0.4);
+  position: relative;
+}
+.offline__orb::after {
+  content: '';
+  position: absolute;
+  inset: 21px;
+  border-radius: 50%;
+  background: var(--c-idle);
+  opacity: 0.6;
+}
+.offline__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.offline__text {
+  margin: 0;
+  max-width: 460px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.offline__how {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 4px;
+  text-align: left;
+}
+.offline__how-label {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.offline__cmd {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(120, 150, 220, 0.06);
+}
+.offline__cmd code {
+  font: 500 14px var(--font-mono);
+  color: #9fe3ff;
+}
+.offline__cmd span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.offline__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.offline__retry {
+  background: rgba(92, 200, 255, 0.16);
+  border-color: rgba(92, 200, 255, 0.55);
+}
+.offline__retry:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+.offline__auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 0;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.offline__pulse {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c-idle);
+  animation: pulse 1.6s ease-out infinite;
 }
 
 /* ---------- Scan banner ---------- */
@@ -493,14 +631,24 @@
 }
 .kpi__foot {
   display: flex;
+  flex-wrap: wrap; /* the hero's "per day" note drops under its sparkline in narrow columns */
   align-items: center;
-  gap: 12px;
+  gap: 6px 12px;
   min-height: 22px;
+}
+.kpi {
+  min-width: 0;
 }
 .kpi__note {
   font-size: 12px;
   white-space: nowrap;
   color: var(--muted);
+}
+/* Captions under a value may be longer than the column (e.g. "Cache share"): wrap instead of being clipped. */
+.kpi > .kpi__note {
+  white-space: normal;
+  text-wrap: balance;
+  line-height: 1.4;
 }
 .kpi--warn .kpi__value {
   color: var(--c-waiting);

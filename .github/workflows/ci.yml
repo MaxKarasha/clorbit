@@ -27,3 +27,9 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      # The built plugin (plugin/app, plugin.json version) is committed, because the plugin cache
+      # only gets what is in the repository. The build is deterministic, so it must match.
+      - name: Committed build is up to date
+        run: |
+          git status --porcelain -- plugin
+          test -z "$(git status --porcelain -- plugin)" || { echo "::error::plugin/ differs from a fresh build: run pnpm build and commit plugin/"; git diff --stat -- plugin; exit 1; }

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
+import { BUNDLED } from './config';
 import { scanFile, identify } from './scanner';
 import type { ClorbitDb, StoredSummary } from './db';
 import type { FileSummary, ScanEvent, ScanOptions } from './types';
@@ -52,7 +53,8 @@ class Pool {
   private seq = 0;
   constructor(n: number) {
     for (let i = 0; i < n; i++) {
-      const w = new Worker(new URL('./scan-worker.ts', import.meta.url));
+      // In the single-file bundle the worker is the bundle itself (server/bundle.ts picks the role by thread).
+      const w = new Worker(BUNDLED ? new URL(import.meta.url) : new URL('./scan-worker.ts', import.meta.url));
       const slot = { w, busy: false };
       w.on('message', (m: any) => {
         const cb = this.cbs.get(m.id);

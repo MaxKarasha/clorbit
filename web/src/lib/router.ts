@@ -45,7 +45,7 @@ export function useRoute(): Route {
 }
 
 /** Params that carry over between screens: range and demo mode. */
-const STICKY = ['range', 'from', 'to', 'mock'];
+const STICKY = ['range', 'from', 'to', 'demo', 'mock'];
 
 /**
  * Builds a link that keeps the current route's range and demo mode.
