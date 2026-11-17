@@ -700,6 +700,13 @@ th.nmx__ev {
 :root[data-gx][data-console] .toasts {
   bottom: calc(var(--console-h, 45vh) + 26px);
 }
+/* With the settings slide-over open: beside it and above its backdrop, not hidden under it. */
+@media (min-width: 721px) {
+  :root:has(.setp-layer) .toasts {
+    z-index: 61;
+    right: calc(min(480px, 100vw - 24px) + 30px);
+  }
+}
 .toast {
   --acc: var(--c-working);
   position: relative;

@@ -29,6 +29,7 @@ function findAgent(root: AgentNode, id: string): { node: AgentNode; chain: Agent
 }
 
 export default function GalaxyPage() {
+  const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GalaxyEngine | null>(null);
   const snapRef = useRef<LiveSnapshot | null>(null);
@@ -61,6 +62,13 @@ export default function GalaxyPage() {
     const eng = new GalaxyEngine(canvasRef.current!, {
       onFocus: setFocus,
       onDistant: (p) => { location.hash = href('/analytics/sessions', { project: p, range: '30d' }); },
+      hud: () => {
+        const root = rootRef.current;
+        if (!root) return [];
+        const hard = [...root.querySelectorAll('.gx-status, .gx-crumbs, .gx-demo')].map((el) => ({ el }));
+        const soft = [...root.querySelectorAll('.gx-ticker__bar, .gx-tick .cl-line, .gx-zoom-pad, .gx-zoom-hint')].map((el) => ({ el, soft: true }));
+        return [...hard, ...soft];
+      },
     });
     engineRef.current = eng;
     // The console takes its colors from the scene (and shares them with console windows).
@@ -177,7 +185,7 @@ export default function GalaxyPage() {
   const shown = offline ? null : snap;
 
   return (
-    <div className={`gx${demo ? ' gx--demo' : ''}`}>
+    <div ref={rootRef} className={`gx${demo ? ' gx--demo' : ''}`}>
       <canvas ref={canvasRef} className="gx-canvas" />
       <header className="gx-status">
         <div className="gx-brand"><span className="gx-logo" />Clorbit</div>
@@ -191,7 +199,6 @@ export default function GalaxyPage() {
           <LangSwitch className="gx-lang" btnClass="gx-btn" />
           <ProfileButton className="prof--gx" />
         </nav>
-        {shown && !demo && !shown.hooksInstalled && <div className="gx-pill" title={t('gx.bar.noHooksTitle')}>{t('gx.bar.noHooks')}</div>}
       </header>
       {demo && <DemoStrip className="gx-demo" />}
 
@@ -203,6 +210,7 @@ export default function GalaxyPage() {
           <span key={n.id} className="gx-crumb-agent"><span>▸</span><button onClick={() => go({ t: 'agent', sessionId: fSession!.sessionId, agentId: n.id })} style={{ color: eng?.colorOf(fSession!.sessionId, n.id) }}>{n.type}</button></span>
         ))}
         {focus.t !== 'none' && <em>{t('gx.crumbs.hint')}</em>}
+        {shown && !demo && !shown.hooksInstalled && <span className="gx-pill" title={t('gx.bar.noHooksTitle')}>{t('gx.bar.noHooks')}</span>}
       </div>
 
       {shown && !shown.scan.done && !demo && (

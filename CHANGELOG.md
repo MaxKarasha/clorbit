@@ -2,6 +2,18 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.2.2
+
+### Fixed
+
+- The "hooks not installed" pill no longer covers the side panel; it now sits in the breadcrumb row, which has its own backdrop and never runs under panels.
+- Galaxy labels avoid the HUD (status bar, breadcrumbs, demo strip, event ticker, zoom controls) instead of drawing underneath it.
+- In-app cards stay visible while the settings panel is open.
+
+### Docs
+
+- New README media: a smoother hero GIF (plus a sharper WebP), a gallery of eight screenshots, a bright social-preview image, and a link to the one-minute promo video.
+
 ## 0.2.1
 
 ### Fixed

@@ -94,6 +94,11 @@ export function branchCol(sysHue: number, depth: number, branchSlot: number, slo
 export interface EngineCallbacks {
   onFocus(f: Focus): void;
   onDistant?(project: string): void;
+  /**
+   * HUD elements over the canvas. Name labels never go under a hard one (status bar, breadcrumbs, demo strip) and
+   * avoid soft ones (ticker lines, zoom controls) unless a must-show label has nowhere else to go.
+   */
+  hud?(): { el: Element; soft?: boolean }[];
 }
 
 /** Distant stars: projects of the last 30 days without live sessions. */
@@ -1015,6 +1020,17 @@ export class GalaxyEngine {
     const hit = (a: R, b: R) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
     const bodies = cands.map((c) => ({ key: c.key, r: { x: c.bx - c.ox, y: c.by - c.oy, w: c.ox * 2, h: c.oy * 2 } }));
     const rects: R[] = [];
+    // Areas covered by the HUD (canvas coordinates, small margin): hard ones take no label at all, soft ones only a
+    // must-show label that has no free side.
+    const keepOut: R[] = [];
+    const avoid: R[] = [];
+    if (this.cb.hud) {
+      const cr = this.canvas.getBoundingClientRect();
+      for (const { el, soft } of this.cb.hud()) {
+        const r = el.getBoundingClientRect();
+        if (r.width && r.height) (soft ? avoid : keepOut).push({ x: r.left - cr.left - 8, y: r.top - cr.top - 6, w: r.width + 16, h: r.height + 12 });
+      }
+    }
     const ease = Math.min(1, this.dt * 7);
     cands.sort((a, b) => b.prio - a.prio || a.key.localeCompare(b.key));
     ctx.save();
@@ -1029,11 +1045,12 @@ export class GalaxyEngine {
         const y = pos === 0 ? c.by + c.br - 4 : pos === 1 ? c.by - c.br - h + 2 : c.by - h / 2;
         return { x: x - w / 2 - 4, y, w: w + 8, h };
       };
-      const free = (r: R) => !rects.some((o) => hit(r, o)) && !bodies.some((b) => b.key !== c.key && hit(r, b.r));
+      const covered = (r: R) => keepOut.some((o) => hit(r, o));
+      const free = (r: R) => !covered(r) && !avoid.some((o) => hit(r, o)) && !rects.some((o) => hit(r, o)) && !bodies.some((b) => b.key !== c.key && hit(r, b.r));
       const order = c.ent.labelPos != null ? [c.ent.labelPos, 0, 1, 2, 3] : [0, 1, 2, 3];
       let pos = -1;
       if (c.want && c.alpha > 0.02) for (const p of order) if (free(at(p))) { pos = p; break; }
-      if (pos < 0 && c.want && c.must && c.alpha > 0.02) pos = c.ent.labelPos ?? 0;
+      if (pos < 0 && c.want && c.must && c.alpha > 0.02 && !covered(at(c.ent.labelPos ?? 0))) pos = c.ent.labelPos ?? 0;
       const vis = pos >= 0;
       if (vis) {
         rects.push(at(pos));

@@ -6,7 +6,9 @@ Clorbit is a local, read-only dashboard for your [Claude Code](https://docs.clau
 
 It runs on your machine, reads the transcripts Claude Code already writes to `~/.claude`, and never sends anything anywhere.
 
-![Clorbit demo: the galaxy of live sessions, zooming into a session and one of its subagents](docs/media/demo.gif)
+![Clorbit demo: the galaxy of live sessions, zooming into a session, following one of its subagents, and a "waiting for you" card](docs/media/demo.gif)
+
+▶ [Watch the 1-minute tour (Ukrainian voiceover)](https://github.com/MaxKarasha/clorbit/releases/download/v0.2.1/clorbit-promo-uk.mp4)
 
 ```text
 /plugin marketplace add MaxKarasha/clorbit
@@ -14,9 +16,28 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 /clorbit
 ```
 
-<sub>All screenshots use the built-in demo mode with invented data.</sub>
+<sub>All screenshots and the animation use the built-in demo mode with invented data. A sharper copy of the animation: [demo.webp](docs/media/demo.webp).</sub>
 
 ## Features
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><a href="docs/media/galaxy.png"><img src="docs/media/galaxy.png" alt="The galaxy: live sessions as stars, subagents as planets, a star cluster for automated runs"></a><br><sub><b>Galaxy.</b> Sessions are stars, subagents planets; flashes for tool calls, comets for new agents.</sub></td>
+    <td width="50%" valign="top"><a href="docs/media/galaxy-agent.png"><img src="docs/media/galaxy-agent.png" alt="Zoomed into a subagent: its task, current tool, latest thought and tokens"></a><br><sub><b>Agent.</b> The task from its parent, what it is doing now, its latest thought and subordinates.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><a href="docs/media/cluster.png"><img src="docs/media/cluster.png" alt="The nightly-ci star cluster with its session list"></a><br><sub><b>Star cluster.</b> A project's idle and automated sessions folded into one nebula, with their list.</sub></td>
+    <td width="50%" valign="top"><a href="docs/media/console.png"><img src="docs/media/console.png" alt="The event console drawer: colored tool calls, spawns and results with filters"></a><br><sub><b>Event console.</b> Tool calls, spawns, results and waits as they happen, with filters and search.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><a href="docs/media/notifications.png"><img src="docs/media/notifications.png" alt="Settings with the notifications matrix and a waiting-for-you card"></a><br><sub><b>Notifications.</b> Events × channels (sound, browser, in-app, system) and a "waiting for you" card.</sub></td>
+    <td width="50%" valign="top"><a href="docs/media/analytics.png"><img src="docs/media/analytics.png" alt="Analytics overview: tokens per day by model, token composition"></a><br><sub><b>Analytics.</b> Where the tokens go: per day, by model and project.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><a href="docs/media/context.png"><img src="docs/media/context.png" alt="Startup context: what loads into every session before the first prompt"></a><br><sub><b>Startup context.</b> What loads into every session before the first prompt.</sub></td>
+    <td width="50%" valign="top"><a href="docs/media/insights.png"><img src="docs/media/insights.png" alt="Insights: advice with evidence and a ready-made fix"></a><br><sub><b>Insights.</b> Advice with evidence and a concrete fix to copy.</sub></td>
+  </tr>
+</table>
 
 ### The galaxy (home page)
 
@@ -29,10 +50,6 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 - **Status bar:** tokens over 24 h with a burn-rate sparkline, tokens per minute, subscription limits (optional, see below), live sessions, working subagents and cache hit rate. On narrower screens the less important metrics (cache, then speed) give way instead of overlapping.
 - An automatic **tour** cycles through the most active systems when you are not interacting (opt-in).
 - **Event console** in the bottom-left corner: tool calls, spawns, results, waits, prompts and compactions as they happen. Project names take their star's color and agent names their planet's; click either to fly there. Expand it into a docked drawer (resizable, with the last ~500 events from the server, filters by project and event kind, search, pause and "clear view"), or pop it out into its own window (`#/console`) whose clicks drive the galaxy in your main tab.
-
-![The Clorbit galaxy: live sessions as stars, subagents as planets, finished agents in asteroid belts](docs/media/galaxy.png)
-
-![Zoomed into a subagent: its task, current tool, latest thought and tokens](docs/media/galaxy-agent.png)
 
 ### Analytics
 
@@ -49,10 +66,6 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 | Insights | Rules that turn the numbers into advice: each insight has evidence and a concrete fix (often a config snippet to copy). |
 
 Examples of insights: a plugin whose SessionStart hook adds thousands of tokens to every session, enabled plugins or MCP servers that were never used, tool results over 20K tokens, files read again and again in the same session, auto-compactions, days with a low cache hit rate, noisy or failing hooks, and (with hooks installed) how long agents waited for your permission or reply.
-
-![Analytics overview: tokens per day by model, token composition](docs/media/analytics.png)
-
-![Startup context: what loads into every session before the first prompt](docs/media/context.png)
 
 The UI is available in **English** and **Ukrainian** (switch in the top-right corner or in Settings, or add `?lang=uk` to the URL).
 
@@ -80,6 +93,8 @@ The round profile button at the right end of the top bar (on the galaxy and on e
 In demo mode sounds and cards work on the invented data; browser and system notifications never fire and nothing is saved. On macOS the first system notification may ask you to allow notifications for "Script Editor" (that is what `osascript` shows up as).
 
 ## Install
+
+Latest release: [v0.2.1](https://github.com/MaxKarasha/clorbit/releases/tag/v0.2.1).
 
 Requirements: **Node.js 22.5+** on your `PATH` (Clorbit uses the built-in `node:sqlite`) and Claude Code. macOS and Linux are supported.
 

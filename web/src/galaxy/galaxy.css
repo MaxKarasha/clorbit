@@ -65,7 +65,8 @@
 .gx-ring-t { font-family: var(--mono); font-size: 11.5px; fill: #e6ebf5; font-weight: 600; }
 .gx-hint { font-size: 12px !important; }
 .gx-hint a { color: #9fd4ff !important; text-decoration: underline dotted !important; }
-.gx-pill { position: absolute; right: 8px; top: calc(100% + 8px); font-family: var(--mono); font-size: 11.5px; color: var(--mut); border: 1px dashed var(--line); border-radius: 999px; padding: 4px 9px; white-space: nowrap; background: rgba(8, 12, 24, 0.7); cursor: help; }
+/* "Hooks not installed": the last item of the breadcrumb row, so it never covers the side panel. */
+.gx-pill { margin-left: 10px; font-family: var(--mono); font-size: 11.5px; color: var(--mut); border: 1px dashed var(--line); border-radius: 999px; padding: 3px 9px; white-space: nowrap; background: rgba(8, 12, 24, 0.7); cursor: help; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
 .dot.work { background: var(--work); box-shadow: 0 0 6px var(--work); }
 .dot.wait { background: var(--wait); box-shadow: 0 0 6px var(--wait); }
@@ -81,7 +82,8 @@
 .gx-btn.on { background: rgba(70, 120, 255, 0.28); border-color: rgba(140, 190, 255, 0.6); }
 .gx-btn.primary { background: linear-gradient(135deg, color-mix(in srgb, var(--acc, #5cc8ff) 45%, transparent), rgba(20, 26, 46, 0.7)); border-color: color-mix(in srgb, var(--acc, #5cc8ff) 60%, transparent); }
 
-.gx-crumbs { position: absolute; top: 100px; left: 28px; display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; color: var(--mut); z-index: 3; }
+/* Breadcrumbs sit on a soft backdrop and stop short of the side panel; the engine keeps name labels out of this band. */
+.gx-crumbs { position: absolute; top: 106px; left: 20px; max-width: calc(100% - 420px); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 3px 6px; border-radius: 10px; background: rgba(5, 8, 16, 0.5); backdrop-filter: blur(8px); font-family: var(--mono); font-size: 12px; color: var(--mut); z-index: 3; }
 .gx-crumbs button { all: unset; cursor: pointer; color: #cfd9ec; padding: 3px 6px; border-radius: 6px; }
 .gx-crumbs button:hover { background: rgba(120, 150, 220, 0.14); }
 .gx-crumbs em { font-style: normal; font-size: 11.5px; opacity: 0.6; margin-left: 10px; }
