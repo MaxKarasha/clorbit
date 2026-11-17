@@ -34,7 +34,17 @@ describe('normalizeSettings', () => {
     expect(s.notifications.session_waiting).toEqual({ ...DEFAULT_SETTINGS.notifications.session_waiting, sound: false });
     expect(s.notifications.session_waiting).not.toHaveProperty('hack');
     expect(s.sound).toEqual({ enabled: true, volume: 0.33, theme: 'orbit' });
-    expect(s.interface).toEqual({ lang: 'en', autoTour: true, reduceMotion: false });
+    expect(s.interface).toEqual({ lang: 'en', autoTour: true, reduceMotion: false, showAutomated: false });
+  });
+
+  it('showAutomated: off by default, boolean only, kept from the base', () => {
+    expect(DEFAULT_SETTINGS.interface.showAutomated).toBe(false);
+    expect(normalizeSettings({ interface: { showAutomated: true } }).interface.showAutomated).toBe(true);
+    expect(normalizeSettings({ interface: { showAutomated: 'yes' } }).interface.showAutomated).toBe(false);
+    const on = normalizeSettings({ interface: { showAutomated: true } });
+    expect(normalizeSettings({ interface: { showAutomated: 1 } }, on).interface.showAutomated).toBe(true);
+    // A settings row saved by 0.2.0 (no such key) gets the default.
+    expect(normalizeSettings({ interface: { lang: 'uk', autoTour: false, reduceMotion: false } }).interface).toEqual({ lang: 'uk', autoTour: false, reduceMotion: false, showAutomated: false });
   });
 
   it('clamps numbers and validates times', () => {

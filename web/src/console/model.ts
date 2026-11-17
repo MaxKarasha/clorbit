@@ -22,6 +22,8 @@ export interface ConsoleLine {
   /** Tool label, task description, or waiting reason. */
   text: string;
   tokens?: number;
+  /** The session is an automated run (claude -p, SDK, CI): grouped unless automated sessions are shown. */
+  automated?: boolean;
 }
 
 function findNode(n: AgentNode, id: string): AgentNode | null {
@@ -43,7 +45,8 @@ export function toLine(e: RecentEvent, snap: LiveSnapshot | null): ConsoleLine |
     if (given !== undefined && given !== null) return given;
     return (sess && findNode(sess.root, id)?.type) || null;
   };
-  const base = { ts: e.ts, sessionId: e.sessionId, project };
+  const automated = e.automated ?? sess?.kind === 'automated';
+  const base = { ts: e.ts, sessionId: e.sessionId, project, ...(automated ? { automated: true } : {}) };
   let line: Omit<ConsoleLine, 'key'>;
   switch (e.kind) {
     case 'tool':
@@ -111,4 +114,37 @@ export function projectsOf(lines: ConsoleLine[]): { project: string; sessionId: 
   const out = new Map<string, string>();
   for (let i = lines.length - 1; i >= 0; i--) if (!out.has(lines[i].project)) out.set(lines[i].project, lines[i].sessionId);
   return [...out].map(([project, sessionId]) => ({ project, sessionId }));
+}
+
+/** A display item: a line, or a collapsible group of one project's automated events. */
+export type ConsoleItem =
+  | { t: 'line'; line: ConsoleLine }
+  | { t: 'group'; key: string; project: string; sessionId: string; count: number; lastTs: number; open: boolean; lines: ConsoleLine[] };
+
+/**
+ * Folds the automated lines of each project into one group row, placed where its newest line is (so an
+ * active pipeline's row stays at the bottom). An open group lists its lines right after the row.
+ * With `group` off every line stays as it is.
+ */
+export function groupAutomated(lines: ConsoleLine[], open: ReadonlySet<string>, group = true): ConsoleItem[] {
+  if (!group) return lines.map((line) => ({ t: 'line', line }));
+  const byProject = new Map<string, ConsoleLine[]>();
+  for (const l of lines) {
+    if (!l.automated) continue;
+    const arr = byProject.get(l.project);
+    if (arr) arr.push(l);
+    else byProject.set(l.project, [l]);
+  }
+  const lastOf = new Map<string, string>();
+  for (const [p, arr] of byProject) lastOf.set(arr[arr.length - 1].key, p);
+  const out: ConsoleItem[] = [];
+  for (const l of lines) {
+    if (!l.automated) { out.push({ t: 'line', line: l }); continue; }
+    const p = lastOf.get(l.key);
+    if (p === undefined) continue;
+    const arr = byProject.get(p)!;
+    const key = `auto:${p}`;
+    out.push({ t: 'group', key, project: p, sessionId: arr[arr.length - 1].sessionId, count: arr.length, lastTs: l.ts, open: open.has(key), lines: arr });
+  }
+  return out;
 }

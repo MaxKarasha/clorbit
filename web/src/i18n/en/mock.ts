@@ -19,6 +19,8 @@ export default {
   'mock.title.design.1': 'Add a Combobox component with keyboard support',
   'mock.title.design.2': 'Audit color tokens for contrast',
   'mock.title.cli.1': 'Add a --json flag to the status command',
+  'mock.title.ci.nightly': 'Nightly checks, run #{n}',
+  'mock.title.ci.triage': 'Triage a failing build, run #{n}',
   'mock.title.dotfiles.1': 'Cut zsh startup time',
   'mock.title.any.1': 'Review PR: GraphQL mutations',
   'mock.title.any.2': 'Update dependencies and check the build',

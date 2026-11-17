@@ -236,3 +236,22 @@ describe('subagent parent links', () => {
     expect(live.active).toBe(1);
   });
 });
+
+describe('automation signals', () => {
+  const id = { sessionId: 's', agentId: null, projectDir: 'p' };
+  const user = (extra: object) => JSON.stringify({ type: 'user', timestamp: '2026-11-10T12:00:00Z', message: { role: 'user', content: 'go' }, ...extra });
+  it('records the first entrypoint and the first prompt origin', () => {
+    const s = scanText('/x.jsonl', id, [
+      JSON.stringify({ type: 'attachment', entrypoint: 'sdk-cli', timestamp: '2026-11-10T11:59:59Z', attachment: { type: 'hook_success' } }),
+      user({ entrypoint: 'sdk-cli', promptSource: 'sdk', turnOrigin: 'sdk' }),
+      user({ entrypoint: 'cli', turnOrigin: 'human' }),
+    ].join('\n'), { knownPlugins: [] });
+    expect(s.entrypoint).toBe('sdk-cli');
+    expect(s.promptOrigin).toBe('sdk');
+  });
+  it('an interactive transcript', () => {
+    const s = scanText('/x.jsonl', id, user({ entrypoint: 'cli', promptSource: 'typed', origin: { kind: 'human' } }), { knownPlugins: [] });
+    expect(s).toMatchObject({ entrypoint: 'cli', promptOrigin: 'typed' });
+    expect(scanText('/y.jsonl', id, user({}), { knownPlugins: [] })).toMatchObject({ entrypoint: null, promptOrigin: '' });
+  });
+});

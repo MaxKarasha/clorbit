@@ -122,4 +122,20 @@ describe('NotifyDetector', () => {
     expect(waitKind('waitingYou')).toBe('you');
     expect(waitKind(null)).toBe('you');
   });
+
+  it('automated sessions never notify unless included', () => {
+    let include = false;
+    const d = new NotifyDetector(() => include);
+    const auto = (status: SessionStatus) => sess('ci', status, { kind: 'automated' });
+    d.onSnapshot(snap(1000, [auto('working'), sess('a', 'working')]));
+    const r = d.onSnapshot(snap(2000, [auto('waiting'), sess('a', 'idle')]));
+    expect(r.events.map((e) => [e.type, e.sessionId])).toEqual([['session_done', 'a']]);
+    expect(d.onEvent({ kind: 'spawn', ts: 2100, sessionId: 'ci', parentId: 'main', agentId: 'x', agentType: 'Explore', description: null }).events).toEqual([]);
+    expect(d.onEvent({ kind: 'compact', ts: 2200, sessionId: 'ci' }).events).toEqual([]);
+    // The setting is read on every decision.
+    include = true;
+    d.onSnapshot(snap(3000, [auto('working'), sess('a', 'idle')]));
+    expect(types(d.onSnapshot(snap(4000, [auto('idle'), sess('a', 'idle')])))).toEqual(['session_done']);
+    expect(types(d.onEvent({ kind: 'compact', ts: 4100, sessionId: 'ci' }))).toEqual(['compaction']);
+  });
 });

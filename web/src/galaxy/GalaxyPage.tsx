@@ -4,15 +4,16 @@ import type { AgentNode, AnalyticsOverview, ClorbitEvent, LiveSession, LiveSnaps
 import LangSwitch from '../components/LangSwitch';
 import { ProfileButton } from '../components/SettingsPanel';
 import { DemoStrip, ServerOffline } from '../components/ServerState';
-import { locale, t, useLang, withLang, type MsgKey } from '../i18n';
+import { locale, t, tp, useLang, withLang, type MsgKey } from '../i18n';
 import { enterDemo, isDemo } from '../lib/demo';
 import { href } from '../lib/router';
 import { updateSettings, useSetting } from '../lib/settings';
 import { feed, focusSession, onFocusRequest, takePendingFocus, type FocusRequest } from '../notify/feed';
 import { ConsoleDrawer, popOutConsole, Ticker } from '../console/Console';
-import { consoleStore, loadRecent, setColorProvider, setColorSource, shareColors } from '../console/store';
+import { consoleStore, loadRecent, projectColor, setColorProvider, setColorSource, shareColors } from '../console/store';
 import { GalaxyEngine, prettyModel, short, type Focus } from './engine';
 import { MockFeed } from './mock';
+import type { ClusterInfo } from './plan';
 import { fmtAgo, fmtDur, fmtPct, fmtTok, tSum } from './format';
 import './galaxy.css';
 
@@ -44,6 +45,7 @@ export default function GalaxyPage() {
   const tour = useSetting((s) => s.interface.autoTour);
   const setTour = (v: boolean) => updateSettings({ interface: { autoTour: v } });
   const reduceMotion = useSetting((s) => s.interface.reduceMotion);
+  const showAutomated = useSetting((s) => s.interface.showAutomated);
   const lang = useLang();
 
   /** Focuses a session, or one of its live agents (a finished agent falls back to its session). */
@@ -51,8 +53,8 @@ export default function GalaxyPage() {
     const eng = engineRef.current;
     const s = snapRef.current?.sessions.find((x) => x.sessionId === f.sessionId);
     if (!eng || !s) return;
-    if (f.agentId && f.agentId !== 'main' && findAgent(s.root, f.agentId)) eng.setFocus({ t: 'agent', sessionId: f.sessionId, agentId: f.agentId }, true);
-    else eng.setFocus({ t: 'sys', sessionId: f.sessionId }, true);
+    // A session folded into a cluster is taken out of it as a star first.
+    eng.reveal(f.sessionId, f.agentId && f.agentId !== 'main' && findAgent(s.root, f.agentId) ? f.agentId : undefined);
   }
 
   useEffect(() => {
@@ -70,6 +72,7 @@ export default function GalaxyPage() {
   }, []);
 
   useEffect(() => { if (engineRef.current) engineRef.current.tourOn = tour; }, [tour]);
+  useEffect(() => { engineRef.current?.setShowAutomated(showAutomated); }, [showAutomated]);
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
     const apply = () => { if (engineRef.current) engineRef.current.reduceMotion = reduceMotion || mq.matches; };
@@ -164,7 +167,9 @@ export default function GalaxyPage() {
     if (!demo) void loadRecent();
   };
   const eng = engineRef.current;
-  const fSession: LiveSession | undefined = focus.t === 'none' ? undefined : snap?.sessions.find((s) => s.sessionId === focus.sessionId);
+  const fSession: LiveSession | undefined = focus.t === 'sys' || focus.t === 'agent' ? snap?.sessions.find((s) => s.sessionId === focus.sessionId) : undefined;
+  // Read on every render (snapshots re-render the page), so the list follows the cluster.
+  const fCluster: ClusterInfo | null = focus.t === 'cluster' ? eng?.cluster(focus.project) ?? null : null;
   const fAgent = focus.t === 'agent' && fSession ? findAgent(fSession.root, focus.agentId) : null;
   const go = (f: Focus) => engineRef.current?.setFocus(f, true);
 
@@ -193,6 +198,7 @@ export default function GalaxyPage() {
       <div className="gx-crumbs">
         <button onClick={() => go({ t: 'none' })}>{t('gx.crumbs.fleet')}</button>
         {fSession && (<><span>▸</span><button onClick={() => go({ t: 'sys', sessionId: fSession.sessionId })}>{fSession.project}</button></>)}
+        {fCluster && (<><span>▸</span><button onClick={() => go({ t: 'cluster', project: fCluster.project })}>{t('gx.crumbs.cluster', { project: fCluster.project })}</button></>)}
         {fAgent && fAgent.chain.slice(1).map((n) => (
           <span key={n.id} className="gx-crumb-agent"><span>▸</span><button onClick={() => go({ t: 'agent', sessionId: fSession!.sessionId, agentId: n.id })} style={{ color: eng?.colorOf(fSession!.sessionId, n.id) }}>{n.type}</button></span>
         ))}
@@ -216,6 +222,7 @@ export default function GalaxyPage() {
       )}
 
       {!offline && fSession && focus.t === 'sys' && <SessionPanel s={fSession} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
+      {!offline && fCluster && <ClusterPanel c={fCluster} onReveal={(id) => engineRef.current?.reveal(id)} />}
       {!offline && fSession && fAgent && <AgentPanel s={fSession} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
 
       {!offline && (
@@ -358,7 +365,7 @@ function SessionPanel({ s, eng, onAgent }: { s: LiveSession; eng: GalaxyEngine |
         <span className={`gx-status-chip ${s.status}`}>{statusWord(s.status)}</span>
         <h3>{s.project}</h3>
         <p>{s.title ?? s.name ?? s.sessionId.slice(0, 8)}</p>
-        <div className="gx-meta">{prettyModel(s.model)}{s.effort && <> · {t('gx.panel.effort')} <b>{s.effort}</b></>}{s.gitBranch && <> · {s.gitBranch}</>}</div>
+        <div className="gx-meta">{prettyModel(s.model)}{s.effort && <> · {t('gx.panel.effort')} <b>{s.effort}</b></>}{s.gitBranch && <> · {s.gitBranch}</>}{s.kind === 'automated' && <> · <span className="gx-kind">{t('gx.panel.automatedRun')}</span></>}</div>
       </div>
       {s.statusReason && <div className={`gx-reason ${s.status}`}>{s.statusReason}</div>}
       {s.root.lastText && <blockquote className="gx-quote">{quote(s.root.lastText, 220)}</blockquote>}
@@ -421,7 +428,69 @@ function AgentPanel({ s, a, parent, eng, onAgent }: { s: LiveSession; a: AgentNo
   );
 }
 
-const LEGEND_ITEMS: MsgKey[] = ['gx.legend.star', 'gx.legend.planets', 'gx.legend.belt', 'gx.legend.events', 'gx.legend.waves', 'gx.legend.dim'];
+const LEGEND_ITEMS: MsgKey[] = ['gx.legend.star', 'gx.legend.planets', 'gx.legend.belt', 'gx.legend.events', 'gx.legend.waves', 'gx.legend.dim', 'gx.legend.cluster'];
+
+/** Rows shown in a cluster's list; the rest is one click away on the sessions page. */
+const CLUSTER_ROWS = 150;
+
+function ClusterPanel({ c, onReveal }: { c: ClusterInfo; onReveal: (sessionId: string) => void }) {
+  const col = projectColor(c.project);
+  const rows = c.sessions.slice(0, CLUSTER_ROWS);
+  const more = c.sessions.length - rows.length;
+  const status = (s: LiveSession) => (s.alive ? statusWord(s.status) : t('gx.status.stopped'));
+  return (
+    <aside className="gx-panel gx-panel--cluster" style={{ ['--acc' as string]: col }}>
+      <div className="gx-panel-head">
+        <span className="gx-status-chip cluster">{t('gx.cluster.chip')}</span>
+        <h3>{c.project}</h3>
+        <p>{tp('gx.cluster.count', c.sessions.length)}</p>
+        <div className="gx-meta">{t('gx.cluster.sub')}</div>
+      </div>
+      <div className="gx-grid">
+        <div><label>{t('gx.cluster.tokens')}</label><b>{fmtTok(c.tokens24h)}</b></div>
+        <div><label>{t('gx.cluster.sessions')}</label><b>{c.sessions.length}</b></div>
+        <div><label>{t('gx.cluster.live')}</label><b>{c.live}</b></div>
+        <div><label>{t('gx.cluster.automatedL')}</label><b>{c.automated}</b></div>
+      </div>
+      {c.automated > 0 && <p className="gx-cl-hint">{t('gx.cluster.hint')}</p>}
+      <h4>{t('gx.cluster.list')}</h4>
+      <ul className="gx-cl-list">
+        {rows.map((s) => {
+          const title = s.title ?? s.name ?? s.sessionId.slice(0, 8);
+          const detail = href(`/session/${encodeURIComponent(s.sessionId)}`);
+          const body = (
+            <>
+              <span className="gx-cl-top">
+                <b title={title}>{short(title, 46)}</b>
+                <em>{fmtTok(s.tokens24h)}</em>
+              </span>
+              <span className="gx-cl-sub">
+                <span>{s.project}</span>
+                <span>{fmtAgo(s.lastActivity)}</span>
+                <span className={`gx-cl-kind ${s.kind === 'automated' ? 'auto' : ''}`}>{t(s.kind === 'automated' ? 'gx.kind.automated' : 'gx.kind.interactive')}</span>
+                <span className={`gx-cl-st ${s.alive ? s.status : 'stopped'}`}>{status(s)}</span>
+              </span>
+            </>
+          );
+          return (
+            <li key={s.sessionId} className={s.alive ? 'live' : ''}>
+              {s.alive ? (
+                <button type="button" className="gx-cl-row" onClick={() => onReveal(s.sessionId)} title={t('gx.cluster.show')}>{body}</button>
+              ) : (
+                <a className="gx-cl-row" href={detail} title={t('gx.cluster.open')}>{body}</a>
+              )}
+              {s.alive && <a className="gx-cl-go" href={detail} title={t('gx.cluster.open')} aria-label={t('gx.cluster.open')}>↗</a>}
+            </li>
+          );
+        })}
+      </ul>
+      {more > 0 && <p className="gx-cl-more">{tp('gx.cluster.more', more)}</p>}
+      <div className="gx-actions">
+        <a className="gx-btn primary" href={href('/analytics/sessions', { project: c.project })}>{t('gx.cluster.all', { project: c.project })}</a>
+      </div>
+    </aside>
+  );
+}
 
 function Legend({ onClose }: { onClose: () => void }) {
   return (

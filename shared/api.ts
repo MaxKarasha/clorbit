@@ -59,7 +59,15 @@ export interface LiveSession {
   subagentsActive: number;
   compactions: number;
   root: AgentNode;
+  /** 'automated' for runs nobody types into: `claude -p` from scripts/CI, the Agent SDK, GitHub Actions,
+   *  scheduled routines (entrypoint `sdk-*` / `*github-action` / `mcp` / `remote_trigger`, a daemon process, or a
+   *  first turn sent by the SDK or a scheduler). Additive: absent from servers older than 0.2.1 (treat as interactive). */
+  kind?: SessionKind;
+  /** Claude Code's entrypoint of the session ('cli', 'sdk-cli', 'sdk-ts', 'claude-vscode', ...), when known. */
+  entrypoint?: string | null;
 }
+
+export type SessionKind = 'interactive' | 'automated';
 
 export interface Limits {
   fiveHourPct: number | null;
@@ -109,6 +117,7 @@ export interface EventContext {
   project?: string | null;    // the session's project
   agentName?: string | null;  // type of e.agentId ('main' → null: the manager)
   parentName?: string | null; // spawn/finish: type of e.parentId
+  automated?: boolean;        // the session is an automated run (LiveSession.kind === 'automated')
 }
 export type RecentEvent = ClorbitEvent & EventContext;
 
@@ -252,7 +261,9 @@ export interface Settings {
     quietHours: { enabled: boolean; from: string; to: string }; // local 'HH:MM'; may cross midnight
     mutedUntil: number | null;                                // "mute for 1 h" from a toast (epoch ms)
   };
-  interface: { lang: 'en' | 'uk'; autoTour: boolean; reduceMotion: boolean };
+  /** showAutomated: automated sessions (claude -p, SDK, CI) are separate stars and may notify;
+   *  off (default) — they join their project's cluster, are grouped in the console and never notify. */
+  interface: { lang: 'en' | 'uk'; autoTour: boolean; reduceMotion: boolean; showAutomated: boolean };
 }
 
 const rule = (sound: boolean, browser: boolean, toast: boolean, browserHiddenOnly = false): NotifyRule => ({ sound, browser, browserHiddenOnly, toast, system: false });
@@ -271,7 +282,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   sound: { enabled: true, volume: 0.6, theme: 'orbit' },
   dnd: { enabled: false, quietHours: { enabled: false, from: '22:00', to: '08:00' }, mutedUntil: null },
-  interface: { lang: 'en', autoTour: false, reduceMotion: false },
+  interface: { lang: 'en', autoTour: false, reduceMotion: false, showAutomated: false },
 };
 
 /** GET /api/about — read-only facts for the Connection section of the settings panel. */

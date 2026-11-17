@@ -2,7 +2,25 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased] — planned 0.2.0
+## 0.2.1
+
+### Fixed
+
+- **The galaxy no longer turns into a ring of overlapping stars** when a project has many sessions in a day (typically automated `claude -p` runs from scripts or CI). Each run used to be its own star on a tiny fixed circle, so a hundred runs drew a solid ring of glowing stars and identical labels.
+
+### Added
+
+- **Automated sessions are recognized** from Claude Code's own fields: `entrypoint` (`sdk-cli` for `claude -p`, `sdk-ts` / `sdk-py` for the Agent SDK, the GitHub Action, `mcp`), the process `kind` (`daemon`, `daemon-worker`) and the first prompt's origin (`sdk`, `scheduled`). Additive API fields: `LiveSession.kind` (`'interactive' | 'automated'`), `LiveSession.entrypoint`, `EventContext.automated`. Summaries from 0.2.0 are classified from the head of their transcript, without a rescan.
+- **Star clusters:** a project's sessions without a live process — and its automated runs, even while running — fold into one cluster body (a few small stars in a soft nebula, sized by tokens, labelled `product · 137 sessions in 24 h`; a dashed ring when it is mostly automated). Clicking it opens a side panel with the sessions (title, time, tokens, kind, status): each row opens the session, live ones can be shown as a star; plus "All sessions of <project>".
+- **Settings → Interface → "Show automated sessions as separate stars"** (`interface.showAutomated`, off by default). While off, automated runs stay in the cluster, their console events are grouped into one collapsible row per project (`product (automated) · 42 events`) and they never trigger notifications.
+- Demo mode has an automated-heavy project, `nightly-ci`, with 60 runs over the day and two running now.
+
+### Changed
+
+- **Layout that scales:** a project's stars sit on a ring that grows with their number and size, project groups push each other apart instead of overlapping, and only a project's main star is labelled until you zoom in or hover (its siblings then show their session titles). Labels avoid each other and the bodies, and fade instead of popping.
+- **A cap of ~24 bodies on screen:** beyond it, the quietest projects fold their idle stars into their clusters (automated runs first); working and waiting sessions always stay visible.
+
+## 0.2.0
 
 ### Added
 

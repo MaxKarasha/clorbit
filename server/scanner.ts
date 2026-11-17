@@ -56,6 +56,7 @@ export function newSummary(file: string, id: { sessionId: string; agentId: strin
     v: SUMMARY_VERSION, path: file, size: 0, mtimeMs: 0, offset: 0,
     sessionId: id.sessionId, agentId: id.agentId, projectDir: id.projectDir, meta: null,
     cwd: null, gitBranch: null, title: null, permissionMode: null, model: null, requestedModel: null, effort: null,
+    entrypoint: null, promptOrigin: null,
     firstTs: 0, lastTs: 0, lastAssistantTs: 0, total: zeroT4(), turns: 0, toolCalls: 0, compactions: 0,
     autoCompactions: 0, turnDurMs: 0, days: {}, minutes: {}, startup: {}, skillsByPlugin: {}, mcpBlocks: {},
     mcpSeen: [], spawns: {}, reads: {}, bigResults: [], carry: emptyCarry(),
@@ -154,6 +155,7 @@ export class FileScanner {
   record(d: any, lineLen: number) {
     const s = this.s;
     const ts = parseTs(d.timestamp) ?? this.lastTs;
+    if (s.entrypoint == null && typeof d.entrypoint === 'string' && d.entrypoint) s.entrypoint = d.entrypoint;
     switch (d.type) {
       case 'assistant': return this.assistant(d, ts || Date.now());
       case 'user': return this.user(d, ts);
@@ -294,6 +296,11 @@ export class FileScanner {
     if (!hasResult && !d.isMeta && !sidechain && d.type === 'user' && !d.sourceToolUseID) {
       const isText = typeof content === 'string' || (Array.isArray(content) && content.some((x: any) => x?.type === 'text'));
       if (isText) {
+        // Only a summary that saw the start of the file (null, not a pre-0.2.1 undefined) records the first prompt.
+        if (s.promptOrigin === null) {
+          const o = d.turnOrigin ?? d.promptSource;
+          s.promptOrigin = typeof o === 'string' && o ? o : '';
+        }
         c.lastPromptTs = ts;
         c.lastStop = null;
         this.onEvent?.({ kind: 'prompt', ts });

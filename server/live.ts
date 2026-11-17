@@ -2,7 +2,8 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Limits, LiveSession, LiveSnapshot, SessionStatus, Tokens } from '../shared/api.ts';
+import type { Limits, LiveSession, LiveSnapshot, SessionKind, SessionStatus, Tokens } from '../shared/api.ts';
+import { sessionKind } from '../shared/automation';
 import { LEGACY_STATUSLINE_FILE, PROJECTS_DIR, SESSIONS_DIR, STATUSLINE_FILE, hookPluginEnabled } from './config';
 import type { Hooks } from './hooks';
 import { reasonCode, reasonText, type Lang, type Reason, type ServerEvent } from './i18n';
@@ -13,7 +14,11 @@ import { addT4, contextLimitFor, localDate, projectOf, sumT4, toTokens, zeroT4, 
 
 const DAY_MS = 24 * 3_600_000;
 
-export interface PidInfo { pid: number; sessionId: string; cwd: string | null; startedAt: number | null; name: string | null; status: string | null; alive: boolean }
+export interface PidInfo {
+  pid: number; sessionId: string; cwd: string | null; startedAt: number | null; name: string | null; status: string | null; alive: boolean;
+  /** 'interactive' | 'bg' | 'daemon' | 'daemon-worker' (Claude Code's own field), and the process's entrypoint. */
+  kind?: string | null; entrypoint?: string | null;
+}
 
 function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === 'EPERM'; }
@@ -33,10 +38,43 @@ export function readPidFiles(dir = SESSIONS_DIR): Map<string, PidInfo> {
       const info: PidInfo = {
         pid, sessionId: String(j.sessionId), cwd: j.cwd ?? null, startedAt: typeof j.startedAt === 'number' ? j.startedAt : null,
         name: j.name ?? null, status: j.status ?? null, alive: isAlive(pid),
+        kind: typeof j.kind === 'string' ? j.kind : null, entrypoint: typeof j.entrypoint === 'string' ? j.entrypoint : null,
       };
       const prev = out.get(info.sessionId);
       if (!prev || (!prev.alive && info.alive)) out.set(info.sessionId, info);
     } catch { /* the file is being written right now */ }
+  }
+  return out;
+}
+
+const HEAD_BYTES = 64 * 1024;
+
+/**
+ * The automation signals of a transcript from its first 64 KB: the first `entrypoint` and the first
+ * user prompt's `turnOrigin` / `promptSource`. Used for summaries written before 0.2.1, which lack them.
+ */
+export function readHeadOrigin(file: string): { entrypoint: string | null; promptOrigin: string | null } {
+  const out = { entrypoint: null as string | null, promptOrigin: null as string | null };
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(HEAD_BYTES);
+    const n = fs.readSync(fd, buf, 0, HEAD_BYTES, 0);
+    const lines = buf.subarray(0, n).toString('utf8').split('\n');
+    if (n === HEAD_BYTES) lines.pop(); // the last line may be cut
+    for (const line of lines) {
+      if (!line.includes('"entrypoint"') && !line.includes('"promptSource"') && !line.includes('"turnOrigin"')) continue;
+      let d: any;
+      try { d = JSON.parse(line); } catch { continue; }
+      if (!out.entrypoint && typeof d?.entrypoint === 'string') out.entrypoint = d.entrypoint;
+      if (!out.promptOrigin && d?.type === 'user' && !d.isMeta) {
+        const o = d.turnOrigin ?? d.promptSource;
+        if (typeof o === 'string' && o) out.promptOrigin = o;
+      }
+      if (out.entrypoint && out.promptOrigin) break;
+    }
+  } catch { /* unreadable: no signals */ } finally {
+    if (fd !== null) try { fs.closeSync(fd); } catch { /* ignore */ }
   }
   return out;
 }
@@ -87,6 +125,8 @@ export class Live extends EventEmitter {
   private watchers: fs.FSWatcher[] = [];
   private pending = new Map<string, NodeJS.Timeout>();
   private baseline = false;
+  /** Automation signals read from the head of pre-0.2.1 summaries' transcripts, by path. */
+  private heads = new Map<string, { entrypoint: string | null; promptOrigin: string | null }>();
 
   constructor(private store: Store, private hooks: Hooks) {
     super();
@@ -232,8 +272,26 @@ export class Live extends EventEmitter {
     }
   }
 
+  /** Interactive or automated (see shared/automation.ts), with the entrypoint it was decided by. */
+  kindOf(sessionId: string, main: FileSummary | null = this.store.mainOf(sessionId) ?? null, pid: PidInfo | null = this.pids.get(sessionId) ?? null): { kind: SessionKind; entrypoint: string | null } {
+    let entrypoint = main?.entrypoint ?? null;
+    let promptOrigin = main?.promptOrigin ?? null;
+    if (main && (main.entrypoint === undefined || main.promptOrigin === undefined)) {
+      let h = this.heads.get(main.path);
+      if (!h) {
+        h = readHeadOrigin(main.path);
+        this.heads.set(main.path, h);
+        if (this.heads.size > 5000) this.heads.clear();
+      }
+      entrypoint = entrypoint ?? h.entrypoint;
+      if (main.promptOrigin === undefined) promptOrigin = h.promptOrigin;
+    }
+    const kind = sessionKind({ pidKind: pid?.kind, pidEntrypoint: pid?.entrypoint, entrypoint, promptOrigin });
+    return { kind, entrypoint: entrypoint ?? pid?.entrypoint ?? null };
+  }
+
   /** Project and agent names of an event, resolved now (see EventContext). */
-  context(e: ServerEvent): { project: string | null; agentName: string | null; parentName: string | null } {
+  context(e: ServerEvent): { project: string | null; agentName: string | null; parentName: string | null; automated: boolean } {
     const files = this.store.sessionFiles(e.sessionId);
     const main = files.find((f) => f.agentId === null) ?? null;
     const any = main ?? files[0] ?? null;
@@ -248,7 +306,7 @@ export class Live extends EventEmitter {
     const agentId = 'agentId' in e ? e.agentId : undefined;
     const agentName = e.kind === 'spawn' ? e.agentType : typeOf(agentId);
     const parentName = 'parentId' in e ? typeOf(e.parentId) : null;
-    return { project, agentName, parentName };
+    return { project, agentName, parentName, automated: this.kindOf(e.sessionId, main, pid ?? null).kind === 'automated' };
   }
 
   private parentOf(sessionId: string, toolUseId: string): string {
@@ -323,6 +381,7 @@ export class Live extends EventEmitter {
       const project = projectOf(cwd, main?.projectDir ?? subs[0]?.projectDir);
       if (sumT4(s24) > 0) projects.add(project);
       for (const f of subs) if (f.lastTs >= cutoff && subagentDone(f, now, isAlive)) finished24++;
+      const k = this.kindOf(sid, main, pid);
       if (isAlive) alive++;
       if (st.status === 'working') working++;
       if (st.status === 'waiting') waiting++;
@@ -352,6 +411,8 @@ export class Live extends EventEmitter {
         subagentsActive: tree.active,
         compactions: main?.compactions ?? 0,
         root: tree.root,
+        kind: k.kind,
+        entrypoint: k.entrypoint,
       });
     }
     const order: Record<SessionStatus, number> = { waiting: 0, working: 1, idle: 2, stopped: 3 };

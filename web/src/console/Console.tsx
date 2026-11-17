@@ -1,8 +1,9 @@
 // The event console: the compact ticker over the galaxy, the docked drawer and the standalone window.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { t, type MsgKey } from '../i18n';
+import { t, tp, type MsgKey } from '../i18n';
+import { useSetting } from '../lib/settings';
 import { fmtTok, fmtClock } from '../galaxy/format';
-import { filterLines, KIND_GLYPH, LINE_KINDS, NO_FILTER, projectsOf, type ConsoleLine, type LineFilter, type LineKind } from './model';
+import { filterLines, groupAutomated, KIND_GLYPH, LINE_KINDS, NO_FILTER, projectsOf, type ConsoleItem, type ConsoleLine, type LineFilter, type LineKind } from './model';
 import { lineColor, projectColor, useColorVersion, useConsoleLines } from './store';
 
 export type FocusFn = (sessionId: string, agentId?: string) => void;
@@ -29,7 +30,7 @@ function AgentLink({ line, id, name, onFocus }: { line: ConsoleLine; id: string;
 }
 
 /** One line: time, glyph, project (star color), agent (planet color), what happened. */
-export function LineView({ line, onFocus, compact = false }: { line: ConsoleLine; onFocus: FocusFn; compact?: boolean }) {
+export function LineView({ line, onFocus, compact = false, sub = false }: { line: ConsoleLine; onFocus: FocusFn; compact?: boolean; sub?: boolean }) {
   const n = compact ? 60 : 400;
   let rest: ReactNode = null;
   switch (line.kind) {
@@ -71,7 +72,7 @@ export function LineView({ line, onFocus, compact = false }: { line: ConsoleLine
       break;
   }
   return (
-    <div className={`cl-line cl-line--${line.kind}`}>
+    <div className={`cl-line cl-line--${line.kind}${sub ? ' cl-line--sub' : ''}`}>
       <span className="cl-time">{fmtClock(line.ts)}</span>
       <span className="cl-glyph" aria-hidden>{KIND_GLYPH[line.kind]}</span>
       <span className="cl-body">
@@ -90,6 +91,33 @@ export function LineView({ line, onFocus, compact = false }: { line: ConsoleLine
     </div>
   );
 }
+
+/** A project's automated events folded into one row ("product (automated) · 42 events"). */
+function GroupView({ g, onFocus, onToggle }: { g: Extract<ConsoleItem, { t: 'group' }>; onFocus: FocusFn; onToggle?: () => void }) {
+  const n = tp('cl.autoEvents', g.count);
+  return (
+    <div className="cl-line cl-line--group">
+      <span className="cl-time">{fmtClock(g.lastTs)}</span>
+      <span className="cl-glyph" aria-hidden>⚙︎</span>
+      <span className="cl-body">
+        <button type="button" className="cl-proj" style={{ color: projectColor(g.project) }} onClick={() => onFocus(g.sessionId)} title={t('cl.focusProject', { project: g.project })}>
+          {t('cl.autoGroup', { project: g.project })}
+        </button>
+        <span className="cl-sep"> · </span>
+        {onToggle ? (
+          <button type="button" className="cl-group-toggle" aria-expanded={g.open} onClick={onToggle} title={g.open ? t('cl.autoCollapse') : t('cl.autoExpand')}>
+            {n} {g.open ? '▾' : '▸'}
+          </button>
+        ) : (
+          <span className="cl-group-n">{n}</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** Automated runs are grouped unless the user shows them as separate stars. */
+const useGroupAutomated = () => !useSetting((s) => s.interface.showAutomated);
 
 /* ---------------- icons ---------------- */
 
@@ -110,7 +138,8 @@ const ICON_CLEAR = 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3';
 export function Ticker({ onFocus, onExpand, onPopOut }: { onFocus: FocusFn; onExpand: () => void; onPopOut: () => void }) {
   const lines = useConsoleLines();
   useColorVersion();
-  const last = lines.slice(-8);
+  const group = useGroupAutomated();
+  const last = useMemo(() => groupAutomated(lines.slice(-400), new Set(), group).slice(-8), [lines, group]);
   return (
     <div className="gx-ticker">
       <div className="gx-ticker__bar">
@@ -122,9 +151,9 @@ export function Ticker({ onFocus, onExpand, onPopOut }: { onFocus: FocusFn; onEx
           <Icon d={ICON_POPOUT} />
         </button>
       </div>
-      {last.map((l, i) => (
-        <div key={l.key} className="gx-tick" style={{ opacity: Math.max(0.22, 1 - (last.length - 1 - i) * 0.11) }}>
-          <LineView line={l} onFocus={onFocus} compact />
+      {last.map((it, i) => (
+        <div key={it.t === 'line' ? it.line.key : it.key} className="gx-tick" style={{ opacity: Math.max(0.22, 1 - (last.length - 1 - i) * 0.11) }}>
+          {it.t === 'line' ? <LineView line={it.line} onFocus={onFocus} compact /> : <GroupView g={it} onFocus={onFocus} />}
         </div>
       ))}
     </div>
@@ -154,6 +183,10 @@ export function ConsolePanel({
   const [paused, setPaused] = useState<ConsoleLine[] | null>(null);
   const lines = paused ?? live;
   const shown = useMemo(() => filterLines(lines, filter), [lines, filter]);
+  const group = useGroupAutomated();
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  const items = useMemo(() => groupAutomated(shown, open, group), [shown, open, group]);
+  const toggleGroup = (key: string) => setOpen((cur) => { const n = new Set(cur); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const projects = useMemo(() => projectsOf(live), [live]);
   const listRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -163,7 +196,7 @@ export function ConsolePanel({
   useLayoutEffect(() => {
     const el = listRef.current;
     if (el && stick.current && !paused) el.scrollTop = el.scrollHeight;
-  }, [shown, paused]);
+  }, [items, paused]);
   const onScroll = () => {
     const el = listRef.current;
     if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
@@ -255,7 +288,16 @@ export function ConsolePanel({
       </div>
       <div className="cl-list" ref={listRef} onScroll={onScroll} role="log" aria-live={paused ? 'off' : 'polite'}>
         {shown.length ? (
-          shown.map((l) => <LineView key={l.key} line={l} onFocus={onFocus} />)
+          items.map((it) =>
+            it.t === 'line' ? (
+              <LineView key={it.line.key} line={it.line} onFocus={onFocus} />
+            ) : (
+              <div key={it.key}>
+                <GroupView g={it} onFocus={onFocus} onToggle={() => toggleGroup(it.key)} />
+                {it.open && it.lines.map((l) => <LineView key={l.key} line={l} onFocus={onFocus} sub />)}
+              </div>
+            ),
+          )
         ) : (
           <p className="cl-empty">{live.length ? t('cl.noMatch') : t('cl.empty')}</p>
         )}

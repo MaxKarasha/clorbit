@@ -66,3 +66,22 @@ describe('hooks', () => {
     expect(h.bySession.get('x')?.status).toBe('waiting');
   });
 });
+
+describe('automation signals of pre-0.2.1 summaries', () => {
+  it('readHeadOrigin finds the entrypoint and the first prompt origin in the head of a transcript', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { readHeadOrigin } = await import('../live');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clorbit-head-'));
+    const f = path.join(dir, 'a.jsonl');
+    fs.writeFileSync(f, [
+      JSON.stringify({ type: 'session-owner' }),
+      JSON.stringify({ type: 'user', isMeta: true, entrypoint: 'sdk-cli', promptSource: 'system' }),
+      JSON.stringify({ type: 'user', entrypoint: 'sdk-cli', promptSource: 'sdk', turnOrigin: 'sdk' }),
+    ].join('\n'));
+    expect(readHeadOrigin(f)).toEqual({ entrypoint: 'sdk-cli', promptOrigin: 'sdk' });
+    expect(readHeadOrigin(path.join(dir, 'missing.jsonl'))).toEqual({ entrypoint: null, promptOrigin: null });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

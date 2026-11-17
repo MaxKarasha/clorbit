@@ -68,12 +68,15 @@ function useOwnWatcher(active: boolean, onSnap: (s: LiveSnapshot) => void, onEve
   }, [active]);
 }
 
+/** Automated runs notify only when they are shown as separate stars (Settings → Interface). */
+const includeAutomated = () => getSettings().interface.showAutomated;
+
 export default function NotificationCenter() {
   const demo = useDemo();
   const settings = useSettings();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [sources, setSources] = useState(feed.sources);
-  const detector = useRef(new NotifyDetector());
+  const detector = useRef(new NotifyDetector(includeAutomated));
   const nextId = useRef(0);
 
   useEffect(() => unlockAudioOnGesture(), []);
@@ -84,7 +87,7 @@ export default function NotificationCenter() {
 
   // A new data source (demo ↔ live) starts from a fresh baseline.
   useEffect(() => {
-    detector.current = new NotifyDetector();
+    detector.current = new NotifyDetector(includeAutomated);
     setToasts([]);
   }, [demo]);
 

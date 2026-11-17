@@ -77,6 +77,10 @@ export interface FileSummary {
   model: string | null;
   requestedModel: string | null;
   effort: string | null;
+  /** Claude Code's `entrypoint` ('cli', 'sdk-cli', ...). Optional: summaries written before 0.2.1 lack it. */
+  entrypoint?: string | null;
+  /** `turnOrigin` / `promptSource` of the first user prompt ('human', 'sdk', 'scheduled', ...). Optional, as above. */
+  promptOrigin?: string | null;
   firstTs: number;
   lastTs: number;
   lastAssistantTs: number;

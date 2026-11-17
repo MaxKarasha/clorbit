@@ -26,7 +26,7 @@ export class RecentEvents {
   /** The newest `limit` events, oldest first, with status reasons in the given language. */
   list(lang: Lang, limit = this.max): RecentEvent[] {
     const n = Math.max(0, Math.min(this.max, Math.floor(limit) || 0));
-    return this.buf.slice(this.buf.length - n).map((e) => ({ ...localizeEvent(e, lang), project: e.project, agentName: e.agentName, parentName: e.parentName }) as RecentEvent);
+    return this.buf.slice(this.buf.length - n).map((e) => ({ ...localizeEvent(e, lang), project: e.project, agentName: e.agentName, parentName: e.parentName, ...(e.automated ? { automated: true } : {}) }) as RecentEvent);
   }
 
   get size() { return this.buf.length; }

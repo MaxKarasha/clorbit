@@ -22,6 +22,19 @@
 .cl-text--wait { color: var(--c-waiting); }
 .cl-line--prompt .cl-glyph { color: #e6ebf5; }
 .cl-line--compact .cl-glyph { color: #8f9cff; }
+.cl-line--group .cl-glyph { color: #c7b8ff; }
+.cl-line--group .cl-proj { font-weight: 500; }
+.cl-group-n { color: #9aa6bd; }
+.cl-group-toggle {
+  all: unset;
+  cursor: pointer;
+  color: #9aa6bd;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.cl-group-toggle:hover { color: #e6ebf5; background: rgba(120, 150, 220, 0.12); }
+.cl-group-toggle:focus-visible { outline: 1px solid currentColor; }
+.cl-line--sub { padding-left: 2.2em; opacity: 0.82; }
 .cl-sep { color: #5d6884; }
 .cl-text { color: #c3cbdb; }
 .cl-proj,

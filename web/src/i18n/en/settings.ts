@@ -95,6 +95,8 @@ export default {
   'ui.tour.d': 'After 25 s without input, the camera flies through the most active sessions.',
   'ui.motion': 'Reduce motion',
   'ui.motion.d': 'Slows orbits, stops twinkling and drifting, and cuts camera flights.',
+  'ui.automated': 'Show automated sessions as separate stars',
+  'ui.automated.d': 'Runs nobody types into: claude -p from scripts and CI, the Agent SDK, scheduled routines. Off: they join their project’s star cluster, are grouped in the console and never notify.',
 
   // Connection
   'con.version': 'Server',
@@ -168,4 +170,8 @@ export default {
   'cl.focusAgent': 'Show {agent} in the galaxy',
   'cl.window.hint': 'Clicks focus the galaxy in your main Clorbit tab.',
   'cl.count': '{shown} of {total}',
+  'cl.autoGroup': '{project} (automated)',
+  'cl.autoEvents': '{n} event|{n} events',
+  'cl.autoExpand': 'Show these events',
+  'cl.autoCollapse': 'Hide these events',
 } satisfies Record<string, string>;

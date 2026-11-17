@@ -153,6 +153,28 @@
 .gx-tree-row em { font-style: normal; font-family: var(--mono); font-size: 11.5px; color: #aab6cc; }
 .gx-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 
+/* Star cluster panel: a project's folded sessions. */
+.gx-status-chip.cluster { color: color-mix(in srgb, var(--acc, #9fe3ff) 80%, white); border-color: color-mix(in srgb, var(--acc, #5cc8ff) 45%, transparent); }
+.gx-panel--cluster .gx-grid { grid-template-columns: repeat(2, 1fr); }
+.gx-kind { color: #c7b8ff; }
+.gx-cl-hint { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: var(--mut); padding: 8px 10px; border-radius: 10px; background: rgba(120, 150, 220, 0.06); border: 1px dashed rgba(120, 150, 220, 0.22); }
+.gx-cl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.gx-cl-list li { display: flex; align-items: stretch; gap: 2px; }
+.gx-cl-row { all: unset; box-sizing: border-box; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 7px 9px; border-radius: 9px; cursor: pointer; transition: background 0.15s; }
+.gx-cl-row:hover, .gx-cl-row:focus-visible { background: rgba(120, 150, 220, 0.11); }
+.gx-cl-row:focus-visible { outline: 1px solid color-mix(in srgb, var(--acc, #5cc8ff) 60%, transparent); }
+.gx-cl-top { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+.gx-cl-top b { font-size: 12.5px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-cl-top em { font-style: normal; font-family: var(--mono); font-size: 11.5px; color: #aab6cc; flex: none; }
+.gx-cl-sub { display: flex; flex-wrap: wrap; gap: 2px 9px; font-family: var(--mono); font-size: 11px; color: var(--mut); }
+.gx-cl-kind.auto { color: #c7b8ff; }
+.gx-cl-st.working { color: #7fd6ff; }
+.gx-cl-st.waiting { color: var(--wait); }
+.gx-cl-list li.live .gx-cl-top b::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: #7fe0c4; box-shadow: 0 0 6px #7fe0c4; }
+.gx-cl-go { flex: none; display: grid; place-items: center; width: 30px; border-radius: 9px; color: var(--mut); text-decoration: none; font-size: 13px; }
+.gx-cl-go:hover, .gx-cl-go:focus-visible { background: rgba(120, 150, 220, 0.11); color: var(--txt); }
+.gx-cl-more { margin: 8px 0 0; font-family: var(--mono); font-size: 11.5px; color: var(--mut); }
+
 /* Event console: the ticker (bottom left). Only its buttons take the pointer, so dragging the galaxy still works around it. */
 .gx-ticker { position: absolute; left: 22px; bottom: 18px; z-index: 2; font-family: var(--mono); font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; max-width: min(52vw, 760px); }
 .gx-ticker__bar { display: flex; gap: 4px; margin-bottom: 4px; }

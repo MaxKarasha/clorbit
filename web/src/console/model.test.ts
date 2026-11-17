@@ -1,7 +1,7 @@
 // Event console: lines from events, merging history with the live stream, filters.
 import { describe, expect, it } from 'vitest';
 import type { AgentNode, LiveSnapshot, RecentEvent } from '@shared/api';
-import { filterLines, mergeLines, NO_FILTER, projectsOf, toLine, type ConsoleLine } from './model';
+import { filterLines, groupAutomated, mergeLines, NO_FILTER, projectsOf, toLine, type ConsoleLine } from './model';
 
 const node = (id: string, type: string, children: AgentNode[] = []): AgentNode => ({
   id, type, description: null, depth: id === 'main' ? 0 : 1, status: 'working', model: null, effort: null, currentTool: null, lastText: null,
@@ -56,5 +56,33 @@ describe('filterLines', () => {
   });
   it('lists projects, most recent first', () => {
     expect(projectsOf(lines).map((p) => p.project)).toEqual(['billing', 'aurora']);
+  });
+});
+
+describe('groupAutomated', () => {
+  const line = (ts: number, project: string, automated: boolean): ConsoleLine => ({
+    key: `${ts}|${project}`, ts, kind: 'tool', sessionId: `${project}-s`, project, agentId: 'main', agentName: null, text: 't', ...(automated ? { automated: true } : {}),
+  });
+  const lines = [line(1, 'ci', true), line(2, 'web', false), line(3, 'ci', true), line(4, 'nightly', true), line(5, 'web', false), line(6, 'ci', true)];
+
+  it('folds each project\'s automated lines into one row at its newest line', () => {
+    const items = groupAutomated(lines, new Set());
+    expect(items.map((i) => (i.t === 'line' ? i.line.ts : `${i.project}×${i.count}`))).toEqual([2, 'nightly×1', 5, 'ci×3']);
+    const g = items[3];
+    expect(g).toMatchObject({ t: 'group', key: 'auto:ci', lastTs: 6, open: false });
+  });
+
+  it('open groups carry their lines; grouping can be turned off', () => {
+    const items = groupAutomated(lines, new Set(['auto:ci']));
+    const g = items.find((i) => i.t === 'group' && i.project === 'ci')!;
+    expect(g.t === 'group' && g.open && g.lines.map((l) => l.ts)).toEqual([1, 3, 6]);
+    expect(groupAutomated(lines, new Set(), false)).toHaveLength(6);
+  });
+
+  it('toLine marks lines of automated sessions (server context or snapshot)', () => {
+    expect(toLine({ kind: 'prompt', ts: 1, sessionId: 'q', project: 'ci', automated: true }, null)).toMatchObject({ automated: true });
+    const s = { sessions: [{ sessionId: 'z', project: 'ci', kind: 'automated', root: node('main', 'main') }] } as unknown as LiveSnapshot;
+    expect(toLine({ kind: 'prompt', ts: 1, sessionId: 'z' }, s)).toMatchObject({ project: 'ci', automated: true });
+    expect(toLine({ kind: 'prompt', ts: 1, sessionId: 's1' }, snap)).not.toHaveProperty('automated');
   });
 });

@@ -14,6 +14,8 @@ export interface DetectSession {
   statusCode?: string | null;
   statusArg?: string | null;
   root?: AgentNode;
+  /** Automated runs (claude -p, SDK, CI) notify only when `includeAutomated` says so. */
+  kind?: 'interactive' | 'automated';
 }
 
 export interface DetectSnapshot {
@@ -68,6 +70,7 @@ interface SessState {
   arg: string | null;
   waitNotified: boolean;
   ctxNotified: boolean;
+  automated: boolean;
 }
 
 type StatusEvent = Extract<ClorbitEvent, { kind: 'status' }>;
@@ -75,7 +78,8 @@ type StatusEvent = Extract<ClorbitEvent, { kind: 'status' }>;
 /**
  * Rules:
  * - the first snapshot is a baseline: nothing fires for what is already going on (events before it are ignored);
- * - only sessions with a live process notify;
+ * - only sessions with a live process notify, and automated runs only when `includeAutomated()` is true
+ *   (a busy pipeline would otherwise ring for every one of its hundreds of runs);
  * - → waiting: once per wait (re-armed when the session leaves `waiting`);
  * - working → idle: the answer is ready;
  * - spawn / finish / compact events (each deduplicated: hooks and transcripts may report the same thing);
@@ -90,7 +94,15 @@ export class NotifyDetector {
   private agentTypes = new Map<string, string>();
   private seen = new Map<string, number>(); // dedupe keys → ts
 
+  /** @param includeAutomated read on every decision, so a settings change applies at once. */
+  constructor(private includeAutomated: () => boolean = () => false) {}
+
   get ready(): boolean { return this.baseline; }
+
+  /** A session that may notify right now. */
+  private notifies(st: SessState): boolean {
+    return st.alive && (!st.automated || this.includeAutomated());
+  }
 
   onSnapshot(snap: DetectSnapshot): DetectResult {
     const res: DetectResult = { events: [], resolved: [] };
@@ -101,7 +113,7 @@ export class NotifyDetector {
         const fill = s.contextTokens && s.contextLimit ? s.contextTokens / s.contextLimit : 0;
         this.sessions.set(s.sessionId, {
           status: s.status, statusTs: now, alive: s.alive, project: s.project, code: s.statusCode ?? null, arg: s.statusArg ?? null,
-          waitNotified: s.status === 'waiting', ctxNotified: fill > CONTEXT_HIGH,
+          waitNotified: s.status === 'waiting', ctxNotified: fill > CONTEXT_HIGH, automated: s.kind === 'automated',
         });
       }
       for (const w of ['5h', '7d'] as const) {
@@ -117,14 +129,15 @@ export class NotifyDetector {
       let st = this.sessions.get(s.sessionId);
       if (!st) {
         // A session that appeared after the baseline starts from "idle" so a first "waiting" still notifies.
-        st = { status: 'idle', statusTs: 0, alive: s.alive, project: s.project, code: null, arg: null, waitNotified: false, ctxNotified: false };
+        st = { status: 'idle', statusTs: 0, alive: s.alive, project: s.project, code: null, arg: null, waitNotified: false, ctxNotified: false, automated: s.kind === 'automated' };
         this.sessions.set(s.sessionId, st);
       }
       st.alive = s.alive;
       st.project = s.project;
+      st.automated = s.kind === 'automated';
       if (now >= st.statusTs) this.applyStatus(s.sessionId, st, s.status, now, s.statusCode ?? null, s.statusArg ?? null, res);
       const fill = s.contextTokens && s.contextLimit ? s.contextTokens / s.contextLimit : 0;
-      if (fill > CONTEXT_HIGH && !st.ctxNotified && st.alive) {
+      if (fill > CONTEXT_HIGH && !st.ctxNotified && this.notifies(st)) {
         st.ctxNotified = true;
         res.events.push({ type: 'context_high', ts: now, sessionId: s.sessionId, project: st.project, pct: Math.round(fill * 100) });
       } else if (fill < CONTEXT_REARM) st.ctxNotified = false;
@@ -151,7 +164,7 @@ export class NotifyDetector {
     if (!this.baseline) return res;
     const st = this.sessions.get(e.sessionId);
     if (e.kind === 'spawn') this.agentTypes.set(`${e.sessionId}:${e.agentId}`, e.agentType);
-    if (!st || !st.alive) {
+    if (!st || !this.notifies(st)) {
       // Still track statuses of known sessions so a later snapshot does not replay them.
       if (st && e.kind === 'status') this.applyStatus(e.sessionId, st, e.status, e.ts, (e as StatusEvent).code ?? null, (e as StatusEvent).arg ?? null, res);
       return res;
@@ -196,7 +209,7 @@ export class NotifyDetector {
       st.waitNotified = false;
       res.resolved.push(sid);
     }
-    if (!st.alive) return;
+    if (!this.notifies(st)) return;
     if (status === 'waiting' && !st.waitNotified) {
       st.waitNotified = true;
       res.events.push({ type: 'session_waiting', ts, sessionId: sid, project: st.project, wait: waitKind(code), tool: arg });

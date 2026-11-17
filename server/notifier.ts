@@ -126,7 +126,7 @@ interface Source {
  * per-session debounce and bursts of finished subagents merged into one notification.
  */
 export class ServerNotifications {
-  readonly detector = new NotifyDetector();
+  readonly detector = new NotifyDetector(() => this.settings().interface.showAutomated);
   private last = new Map<string, number>();
   private burst = new Map<string, { ev: NotifyEvent; timer: NodeJS.Timeout }>();
 

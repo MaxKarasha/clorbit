@@ -29,7 +29,7 @@ const sum = (x: Tokens) => x.input + x.output + x.cacheRead + x.cacheWrite;
 const tr = (k: string | null) => (k ? t(k as MK) : null);
 
 type Wait = 'permission' | 'you';
-interface MS { s: LiveSession; next: number; titleKey: MK; wait: Wait | null; lastByMain: boolean; restoreAt?: number }
+interface MS { s: LiveSession; next: number; titleKey: MK; titleN?: number; wait: Wait | null; lastByMain: boolean; restoreAt?: number }
 
 interface Def {
   project: string;
@@ -43,6 +43,11 @@ interface Def {
   rootTool?: string;
   rootText?: MK;
   kids?: (r: AgentNode) => void;
+  /** Automated runs (claude -p from CI): their own cluster in the galaxy. */
+  automated?: boolean;
+  titleN?: number;
+  /** Hours since the last activity of an asleep session (default 3). */
+  ago?: number;
 }
 
 export class MockFeed {
@@ -91,6 +96,17 @@ export class MockFeed {
       { project: 'design-system', branch: 'feat/combobox', title: 'mock.title.design.1', status: 'stopped', alive: false, finished: 140 },
     ];
     for (const d of defs) this.add(d);
+    // An automated-heavy project: a CI pipeline that runs `claude -p` dozens of times a day. Added after
+    // the seeded fleet above, so that fleet looks the same as before.
+    for (let i = 0; i < 60; i++) {
+      this.add({
+        project: 'nightly-ci', branch: 'main', title: i % 4 ? 'mock.title.ci.nightly' : 'mock.title.ci.triage', titleN: 4120 - i,
+        status: 'stopped', alive: false, finished: this.r.int(0, 4), automated: true, ago: 0.3 + (i / 60) * 23 + this.r.next() * 0.3,
+      });
+    }
+    for (let i = 0; i < 2; i++) {
+      this.add({ project: 'nightly-ci', branch: 'main', title: 'mock.title.ci.nightly', titleN: 4121 + i, status: 'working', alive: true, finished: 2, automated: true });
+    }
     this.list.forEach((m) => this.recount(m.s));
     this.emit();
     this.timer = window.setInterval(() => this.tick(), 450);
@@ -129,9 +145,24 @@ export class MockFeed {
       contextTokens: 40000 + r.next() * 120000, contextLimit: root.model?.includes('[1m]') ? 1_000_000 : 200_000,
       subagentsTotal: 0, subagentsActive: 0, compactions: Math.floor(r.next() * 3), root,
     };
+    if (d.automated) {
+      s.kind = 'automated';
+      s.entrypoint = 'sdk-cli';
+      s.tokens = tok(8e4 + r.next() * 5e5);
+      s.contextLimit = 200_000;
+      s.contextTokens = 20000 + r.next() * 60000;
+      if (!d.alive) {
+        s.lastActivity = now - (d.ago ?? 3) * 3600e3;
+        s.startedAt = s.lastActivity - (2 + r.next() * 8) * 60e3;
+        s.statusSince = s.lastActivity;
+      }
+    } else {
+      s.kind = 'interactive';
+      s.entrypoint = 'cli';
+    }
     s.tokens24h = sum(s.tokens);
     s.subagentsTotal = d.finished;
-    this.list.push({ s, next: 0, titleKey: d.title, wait: d.wait ?? null, lastByMain: true });
+    this.list.push({ s, next: 0, titleKey: d.title, titleN: d.titleN, wait: d.wait ?? null, lastByMain: true });
   }
 
   private walk(n: AgentNode, out: AgentNode[] = []) { out.push(n); n.children.forEach((c) => this.walk(c, out)); return out; }
@@ -162,7 +193,7 @@ export class MockFeed {
     }
     if (now < this.nextFlip) return;
     this.nextFlip = now + 25_000 + Math.random() * 20_000;
-    const cand = this.list.filter((m) => m.s.alive && m.s.status === 'working' && !m.restoreAt);
+    const cand = this.list.filter((m) => m.s.alive && m.s.status === 'working' && !m.restoreAt && m.s.kind !== 'automated');
     if (!cand.length) return;
     const m = cand[Math.floor(Math.random() * cand.length)];
     const waiting = Math.random() < 0.5;
@@ -257,7 +288,7 @@ export class MockFeed {
   private emit() {
     const sessions = this.list.map((m) => {
       const s = structuredClone(m.s);
-      s.title = t(m.titleKey);
+      s.title = m.titleN != null ? t(m.titleKey, { n: m.titleN }) : t(m.titleKey);
       s.statusReason = this.reason(m);
       const c = this.code(m);
       s.statusCode = c.code;
@@ -277,7 +308,7 @@ export class MockFeed {
         waitingSessions: sessions.filter((s) => s.status === 'waiting').length,
         workingSubagents: all.filter((a) => a.depth > 0 && a.status === 'working').length,
         finishedSubagents24h: sessions.reduce((a, s) => a + s.subagentsTotal - s.subagentsActive, 0),
-        cacheHitRate24h: t24.cacheRead / (t24.input + t24.cacheRead + t24.cacheWrite), projects24h: sessions.length,
+        cacheHitRate24h: t24.cacheRead / (t24.input + t24.cacheRead + t24.cacheWrite), projects24h: new Set(sessions.map((s) => s.project)).size,
       },
       limits: { fiveHourPct: 37, fiveHourResetsAt: Date.now() + 2.4 * 3600e3, sevenDayPct: 61, sevenDayResetsAt: Date.now() + 3.2 * 86400e3, updatedAt: Date.now() },
       hooksInstalled: false, statuslineCapture: true, scan: { done: true, filesTotal: 1, filesDone: 1 },

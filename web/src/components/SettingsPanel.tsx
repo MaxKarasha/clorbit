@@ -416,6 +416,9 @@ function Interface() {
       <Row title={t('ui.motion')} desc={t('ui.motion.d')}>
         <Orbit on={s.interface.reduceMotion} onChange={(v) => updateSettings({ interface: { reduceMotion: v } })} label={t('ui.motion')} />
       </Row>
+      <Row title={t('ui.automated')} desc={t('ui.automated.d')}>
+        <Orbit on={s.interface.showAutomated} onChange={(v) => updateSettings({ interface: { showAutomated: v } })} label={t('ui.automated')} />
+      </Row>
     </Section>
   );
 }

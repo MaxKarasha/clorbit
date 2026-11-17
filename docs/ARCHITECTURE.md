@@ -92,6 +92,16 @@ A subagent is **finished** when its meta says so, the session is gone, it ended 
 
 With the hooks plugin installed, hook events (`Notification`, `PermissionRequest`, `Stop`, `PreToolUse`, …) set the status directly; they win over the heuristic as long as the transcript is not newer than the last hook event.
 
+### Interactive vs automated sessions
+
+Every `claude -p` run from a script or CI, every Agent SDK query and every scheduled routine is its own session, so one project can have hundreds a day. `shared/automation.ts` classifies a session as `automated` from what Claude Code writes itself:
+
+- `entrypoint` on transcript records and in `sessions/<pid>.json`: `cli` for the interactive terminal; `claude -p` turns it into `sdk-cli`, the SDKs write `sdk-ts` / `sdk-py`, the GitHub Action `claude-code-github-action`, `claude mcp serve` `mcp`;
+- `kind` in `sessions/<pid>.json`: `daemon` / `daemon-worker` are automated (`interactive` and `bg` are not);
+- the first user prompt's `turnOrigin` / `promptSource` (`sdk`, `scheduled`) when no entrypoint says `cli`.
+
+The scanner keeps the first `entrypoint` and the first prompt's origin in `FileSummary`. Summaries written by 0.2.0 lack them; `Live.kindOf()` then reads the first 64 KB of the transcript once and caches the result, so no rescan is needed. `LiveSession.kind` / `entrypoint` and `EventContext.automated` carry the result (additive). Unless `interface.showAutomated` is on, the notification detector ignores automated sessions (its `includeAutomated` callback reads the setting on every decision, on the server and in the web).
+
 Status reasons are stored as language-neutral codes (`server/i18n.ts`) and rendered per request (`/api/live?lang=…`) and per SSE client (`/api/events?lang=…`).
 
 ## Hooks
@@ -102,12 +112,18 @@ On the server, `server/hooks.ts` turns payloads into live events and statuses, a
 
 `hooksInstalled` in the live snapshot is true when `clorbit@*` (or the legacy `fleet-hooks@*`) is enabled in `settings.json`, or when hook events have already arrived.
 
+## Galaxy layout
+
+`web/src/galaxy/plan.ts` (pure, unit-tested) decides what is drawn: live interactive sessions are stars; a project's sessions without a live process fold into one cluster (a lone asleep interactive session stays a dim star); automated sessions fold even while running unless `showAutomated` is on; focused and revealed sessions are pinned as stars. Above `MAX_BODIES` (24) stars + clusters, the least active projects fold their idle stars — automated ones first, least recently active first, only as many as needed; working and waiting sessions are never folded.
+
+`GalaxyEngine.layout()` places projects on a sunflower spiral in name order and a project's bodies (cluster first, then stars by start time) on a ring whose radius (`ringRadius`) keeps neighbours from overlapping. Each project's footprint is a disc; `relaxGroups` pushes overlapping discs apart inside the screen, deterministically, so positions only change when membership does. Labels are placed after all bodies, by priority (hovered, waiting, a project's primary star, clusters, the rest): each tries below, above, right and left of its body, avoiding other labels and bodies; secondary labels of crowded projects appear only from zoom 1.6 or on hover, and all labels fade instead of popping.
+
 ## Notifications
 
 One detector, two places it runs. `shared/notify.ts` (`NotifyDetector`) turns live snapshots and live events into notification events; it is pure (time comes from its inputs) and unit-tested:
 
 - the first snapshot is a baseline: nothing fires for what is already going on, and events before it are ignored;
-- only sessions with a live process notify;
+- only sessions with a live process notify, and automated runs only when "Show automated sessions as separate stars" is on;
 - **waiting**: a transition to `waiting`, once per wait (re-armed when the session leaves `waiting`); **answer ready**: `working → idle`;
 - **subagent finished / started**, **compaction**: from `finish` / `spawn` / `compact` events, deduplicated (hooks and transcripts report the same thing);
 - **context almost full**: fill crossing 85%, re-armed below 75%; **subscription limit**: a window crossing 80%, once per window (identified by its reset time), re-armed below 75%;
@@ -124,7 +140,7 @@ Settings live on the server (`GET/PUT /api/settings`); the web loads them on sta
 
 `server/recent-events.ts` keeps the last 500 console-worthy events (tool, spawn, finish, waiting, prompt, compact) in memory. Every live event is enriched once, when it is emitted, with `EventContext` (`project`, `agentName`, `parentName`; `Live.context()`), so old lines stay meaningful after agents are gone; SSE messages carry the same fields. `GET /api/events/recent?limit=` returns them oldest first.
 
-On the web (`web/src/console/`), `model.ts` turns events into lines (pure: `toLine`, `mergeLines` dedupes history against the live stream, `filterLines`), `store.ts` holds the page's lines and colors, and `Console.tsx` renders the ticker, the drawer and the window. Colors come from the galaxy engine (`knownColor`, so a project is its star's hue and an agent its planet's) and are remembered, so finished agents keep theirs. The `#/console` window loads the history and listens to the stream itself (demo: its own seeded demo feed). A `BroadcastChannel('clorbit')` connects it to the main tab: focus requests (acknowledged; with no answer the window opens the galaxy in a tab named `clorbit-main` and asks again) and the main tab's color map.
+On the web (`web/src/console/`), `model.ts` turns events into lines (pure: `toLine`, `mergeLines` dedupes history against the live stream, `filterLines`, `groupAutomated` folds each project's automated lines into one collapsible row placed at its newest line), `store.ts` holds the page's lines and colors, and `Console.tsx` renders the ticker, the drawer and the window. Colors come from the galaxy engine (`knownColor`, so a project is its star's hue and an agent its planet's) and are remembered, so finished agents keep theirs. The `#/console` window loads the history and listens to the stream itself (demo: its own seeded demo feed). A `BroadcastChannel('clorbit')` connects it to the main tab: focus requests (acknowledged; with no answer the window opens the galaxy in a tab named `clorbit-main` and asks again) and the main tab's color map.
 
 ## API contract
 

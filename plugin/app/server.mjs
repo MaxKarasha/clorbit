@@ -1,4 +1,4 @@
-// Clorbit 0.2.0 server, bundled from server/ by scripts/build.mjs. Do not edit.
+// Clorbit 0.2.1 server, bundled from server/ by scripts/build.mjs. Do not edit.
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res, err) => function __init() {
   if (err) throw err[0];
@@ -855,7 +855,7 @@ var init_config = __esm({
     SERVE_WEB = env("SERVE_WEB") ? env("SERVE_WEB") === "1" : BUNDLED;
     PORT = Number(env("PORT")) || 4980;
     HOST = "127.0.0.1";
-    VERSION = BUNDLED && true ? "0.2.0" : devVersion();
+    VERSION = BUNDLED && true ? "0.2.1" : devVersion();
     LEGACY_DB_FILE = path2.join(PROJECT_ROOT, "data", "fleet.db");
     settingsCache = null;
   }
@@ -2063,6 +2063,28 @@ var init_limits_log = __esm({
   }
 });
 
+// shared/automation.ts
+function isAutomatedEntrypoint(ep) {
+  if (!ep) return false;
+  return ep.startsWith("sdk-") || AUTOMATED_ENTRYPOINTS.has(ep);
+}
+function sessionKind(s) {
+  if (s.pidKind && AUTOMATED_PID_KINDS.has(s.pidKind)) return "automated";
+  if (isAutomatedEntrypoint(s.pidEntrypoint) || isAutomatedEntrypoint(s.entrypoint)) return "automated";
+  if (s.entrypoint === "cli" || s.pidEntrypoint === "cli") return "interactive";
+  if (s.promptOrigin && AUTOMATED_ORIGINS.has(s.promptOrigin)) return "automated";
+  return "interactive";
+}
+var AUTOMATED_ENTRYPOINTS, AUTOMATED_PID_KINDS, AUTOMATED_ORIGINS;
+var init_automation = __esm({
+  "shared/automation.ts"() {
+    "use strict";
+    AUTOMATED_ENTRYPOINTS = /* @__PURE__ */ new Set(["claude-code-github-action", "github-action", "mcp", "remote_trigger"]);
+    AUTOMATED_PID_KINDS = /* @__PURE__ */ new Set(["daemon", "daemon-worker"]);
+    AUTOMATED_ORIGINS = /* @__PURE__ */ new Set(["sdk", "scheduled"]);
+  }
+});
+
 // server/lines.ts
 import fs3 from "node:fs/promises";
 function classifyPrefix(head) {
@@ -2239,6 +2261,8 @@ function newSummary(file, id) {
     model: null,
     requestedModel: null,
     effort: null,
+    entrypoint: null,
+    promptOrigin: null,
     firstTs: 0,
     lastTs: 0,
     lastAssistantTs: 0,
@@ -2409,6 +2433,7 @@ var init_scanner = __esm({
       record(d, lineLen) {
         const s = this.s;
         const ts = parseTs(d.timestamp) ?? this.lastTs;
+        if (s.entrypoint == null && typeof d.entrypoint === "string" && d.entrypoint) s.entrypoint = d.entrypoint;
         switch (d.type) {
           case "assistant":
             return this.assistant(d, ts || Date.now());
@@ -2574,6 +2599,10 @@ var init_scanner = __esm({
         if (!hasResult && !d.isMeta && !sidechain && d.type === "user" && !d.sourceToolUseID) {
           const isText = typeof content === "string" || Array.isArray(content) && content.some((x) => x?.type === "text");
           if (isText) {
+            if (s.promptOrigin === null) {
+              const o = d.turnOrigin ?? d.promptSource;
+              s.promptOrigin = typeof o === "string" && o ? o : "";
+            }
             c.lastPromptTs = ts;
             c.lastStop = null;
             this.onEvent?.({ kind: "prompt", ts });
@@ -3212,10 +3241,45 @@ function readPidFiles(dir = SESSIONS_DIR) {
         startedAt: typeof j.startedAt === "number" ? j.startedAt : null,
         name: j.name ?? null,
         status: j.status ?? null,
-        alive: isAlive(pid)
+        alive: isAlive(pid),
+        kind: typeof j.kind === "string" ? j.kind : null,
+        entrypoint: typeof j.entrypoint === "string" ? j.entrypoint : null
       };
       const prev = out.get(info.sessionId);
       if (!prev || !prev.alive && info.alive) out.set(info.sessionId, info);
+    } catch {
+    }
+  }
+  return out;
+}
+function readHeadOrigin(file) {
+  const out = { entrypoint: null, promptOrigin: null };
+  let fd = null;
+  try {
+    fd = fs6.openSync(file, "r");
+    const buf = Buffer.alloc(HEAD_BYTES);
+    const n = fs6.readSync(fd, buf, 0, HEAD_BYTES, 0);
+    const lines = buf.subarray(0, n).toString("utf8").split("\n");
+    if (n === HEAD_BYTES) lines.pop();
+    for (const line of lines) {
+      if (!line.includes('"entrypoint"') && !line.includes('"promptSource"') && !line.includes('"turnOrigin"')) continue;
+      let d;
+      try {
+        d = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!out.entrypoint && typeof d?.entrypoint === "string") out.entrypoint = d.entrypoint;
+      if (!out.promptOrigin && d?.type === "user" && !d.isMeta) {
+        const o = d.turnOrigin ?? d.promptSource;
+        if (typeof o === "string" && o) out.promptOrigin = o;
+      }
+      if (out.entrypoint && out.promptOrigin) break;
+    }
+  } catch {
+  } finally {
+    if (fd !== null) try {
+      fs6.closeSync(fd);
     } catch {
     }
   }
@@ -3256,16 +3320,18 @@ function readLimits() {
     return { limits: null, capture: false };
   }
 }
-var DAY_MS, Live;
+var DAY_MS, HEAD_BYTES, Live;
 var init_live = __esm({
   "server/live.ts"() {
     "use strict";
+    init_automation();
     init_config();
     init_i18n();
     init_store();
     init_tree();
     init_util();
     DAY_MS = 24 * 36e5;
+    HEAD_BYTES = 64 * 1024;
     Live = class extends EventEmitter2 {
       constructor(store2, hooks2) {
         super();
@@ -3284,6 +3350,8 @@ var init_live = __esm({
       watchers = [];
       pending = /* @__PURE__ */ new Map();
       baseline = false;
+      /** Automation signals read from the head of pre-0.2.1 summaries' transcripts, by path. */
+      heads = /* @__PURE__ */ new Map();
       emitEvent(e) {
         this.cache = null;
         this.emit("event", e);
@@ -3417,6 +3485,23 @@ var init_live = __esm({
           if (this.listenerCount("snapshot")) this.emit("snapshot", this.snapshot("en"));
         }
       }
+      /** Interactive or automated (see shared/automation.ts), with the entrypoint it was decided by. */
+      kindOf(sessionId, main = this.store.mainOf(sessionId) ?? null, pid = this.pids.get(sessionId) ?? null) {
+        let entrypoint = main?.entrypoint ?? null;
+        let promptOrigin = main?.promptOrigin ?? null;
+        if (main && (main.entrypoint === void 0 || main.promptOrigin === void 0)) {
+          let h = this.heads.get(main.path);
+          if (!h) {
+            h = readHeadOrigin(main.path);
+            this.heads.set(main.path, h);
+            if (this.heads.size > 5e3) this.heads.clear();
+          }
+          entrypoint = entrypoint ?? h.entrypoint;
+          if (main.promptOrigin === void 0) promptOrigin = h.promptOrigin;
+        }
+        const kind = sessionKind({ pidKind: pid?.kind, pidEntrypoint: pid?.entrypoint, entrypoint, promptOrigin });
+        return { kind, entrypoint: entrypoint ?? pid?.entrypoint ?? null };
+      }
       /** Project and agent names of an event, resolved now (see EventContext). */
       context(e) {
         const files = this.store.sessionFiles(e.sessionId);
@@ -3433,7 +3518,7 @@ var init_live = __esm({
         const agentId = "agentId" in e ? e.agentId : void 0;
         const agentName = e.kind === "spawn" ? e.agentType : typeOf(agentId);
         const parentName = "parentId" in e ? typeOf(e.parentId) : null;
-        return { project, agentName, parentName };
+        return { project, agentName, parentName, automated: this.kindOf(e.sessionId, main, pid ?? null).kind === "automated" };
       }
       parentOf(sessionId, toolUseId) {
         for (const s of this.store.sessionFiles(sessionId)) if (s.spawns[toolUseId]) return s.agentId ?? "main";
@@ -3510,6 +3595,7 @@ var init_live = __esm({
           const project = projectOf(cwd, main?.projectDir ?? subs[0]?.projectDir);
           if (sumT4(s24) > 0) projects.add(project);
           for (const f of subs) if (f.lastTs >= cutoff && subagentDone(f, now, isAlive2)) finished24++;
+          const k = this.kindOf(sid, main, pid);
           if (isAlive2) alive++;
           if (st.status === "working") working++;
           if (st.status === "waiting") waiting++;
@@ -3538,7 +3624,9 @@ var init_live = __esm({
             subagentsTotal: tree.total,
             subagentsActive: tree.active,
             compactions: main?.compactions ?? 0,
-            root: tree.root
+            root: tree.root,
+            kind: k.kind,
+            entrypoint: k.entrypoint
           });
         }
         const order = { waiting: 0, working: 1, idle: 2, stopped: 3 };
@@ -3601,7 +3689,7 @@ var init_recent_events = __esm({
       /** The newest `limit` events, oldest first, with status reasons in the given language. */
       list(lang, limit = this.max) {
         const n = Math.max(0, Math.min(this.max, Math.floor(limit) || 0));
-        return this.buf.slice(this.buf.length - n).map((e) => ({ ...localizeEvent(e, lang), project: e.project, agentName: e.agentName, parentName: e.parentName }));
+        return this.buf.slice(this.buf.length - n).map((e) => ({ ...localizeEvent(e, lang), project: e.project, agentName: e.agentName, parentName: e.parentName, ...e.automated ? { automated: true } : {} }));
       }
       get size() {
         return this.buf.length;
@@ -3625,14 +3713,23 @@ var init_notify = __esm({
     LIMIT_HIGH = 80;
     LIMIT_REARM = 75;
     NotifyDetector = class {
+      // dedupe keys → ts
+      /** @param includeAutomated read on every decision, so a settings change applies at once. */
+      constructor(includeAutomated = () => false) {
+        this.includeAutomated = includeAutomated;
+      }
+      includeAutomated;
       sessions = /* @__PURE__ */ new Map();
       baseline = false;
       limitNotified = { "5h": null, "7d": null };
       agentTypes = /* @__PURE__ */ new Map();
       seen = /* @__PURE__ */ new Map();
-      // dedupe keys → ts
       get ready() {
         return this.baseline;
+      }
+      /** A session that may notify right now. */
+      notifies(st) {
+        return st.alive && (!st.automated || this.includeAutomated());
       }
       onSnapshot(snap) {
         const res = { events: [], resolved: [] };
@@ -3649,7 +3746,8 @@ var init_notify = __esm({
               code: s.statusCode ?? null,
               arg: s.statusArg ?? null,
               waitNotified: s.status === "waiting",
-              ctxNotified: fill > CONTEXT_HIGH
+              ctxNotified: fill > CONTEXT_HIGH,
+              automated: s.kind === "automated"
             });
           }
           for (const w of ["5h", "7d"]) {
@@ -3664,14 +3762,15 @@ var init_notify = __esm({
           present.add(s.sessionId);
           let st = this.sessions.get(s.sessionId);
           if (!st) {
-            st = { status: "idle", statusTs: 0, alive: s.alive, project: s.project, code: null, arg: null, waitNotified: false, ctxNotified: false };
+            st = { status: "idle", statusTs: 0, alive: s.alive, project: s.project, code: null, arg: null, waitNotified: false, ctxNotified: false, automated: s.kind === "automated" };
             this.sessions.set(s.sessionId, st);
           }
           st.alive = s.alive;
           st.project = s.project;
+          st.automated = s.kind === "automated";
           if (now >= st.statusTs) this.applyStatus(s.sessionId, st, s.status, now, s.statusCode ?? null, s.statusArg ?? null, res);
           const fill = s.contextTokens && s.contextLimit ? s.contextTokens / s.contextLimit : 0;
-          if (fill > CONTEXT_HIGH && !st.ctxNotified && st.alive) {
+          if (fill > CONTEXT_HIGH && !st.ctxNotified && this.notifies(st)) {
             st.ctxNotified = true;
             res.events.push({ type: "context_high", ts: now, sessionId: s.sessionId, project: st.project, pct: Math.round(fill * 100) });
           } else if (fill < CONTEXT_REARM) st.ctxNotified = false;
@@ -3697,7 +3796,7 @@ var init_notify = __esm({
         if (!this.baseline) return res;
         const st = this.sessions.get(e.sessionId);
         if (e.kind === "spawn") this.agentTypes.set(`${e.sessionId}:${e.agentId}`, e.agentType);
-        if (!st || !st.alive) {
+        if (!st || !this.notifies(st)) {
           if (st && e.kind === "status") this.applyStatus(e.sessionId, st, e.status, e.ts, e.code ?? null, e.arg ?? null, res);
           return res;
         }
@@ -3741,7 +3840,7 @@ var init_notify = __esm({
           st.waitNotified = false;
           res.resolved.push(sid);
         }
-        if (!st.alive) return;
+        if (!this.notifies(st)) return;
         if (status === "waiting" && !st.waitNotified) {
           st.waitNotified = true;
           res.events.push({ type: "session_waiting", ts, sessionId: sid, project: st.project, wait: waitKind(code), tool: arg });
@@ -3794,7 +3893,7 @@ var init_api = __esm({
       },
       sound: { enabled: true, volume: 0.6, theme: "orbit" },
       dnd: { enabled: false, quietHours: { enabled: false, from: "22:00", to: "08:00" }, mutedUntil: null },
-      interface: { lang: "en", autoTour: false, reduceMotion: false }
+      interface: { lang: "en", autoTour: false, reduceMotion: false, showAutomated: false }
     };
   }
 });
@@ -3844,6 +3943,7 @@ function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
     if (i.lang === "en" || i.lang === "uk") out.interface.lang = i.lang;
     out.interface.autoTour = bool(i.autoTour, out.interface.autoTour);
     out.interface.reduceMotion = bool(i.reduceMotion, out.interface.reduceMotion);
+    out.interface.showAutomated = bool(i.showAutomated, out.interface.showAutomated);
   }
   return out;
 }
@@ -4003,7 +4103,7 @@ var init_notifier = __esm({
       notifier;
       now;
       opts;
-      detector = new NotifyDetector();
+      detector = new NotifyDetector(() => this.settings().interface.showAutomated);
       last = /* @__PURE__ */ new Map();
       burst = /* @__PURE__ */ new Map();
       attach(src) {

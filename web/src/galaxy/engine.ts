@@ -1,12 +1,14 @@
 // Galaxy engine: canvas scene, camera, animations. Data comes from outside (snapshot + events).
 import type { AgentNode, ClorbitEvent, LiveSession, LiveSnapshot } from '@shared/api';
-import { t } from '../i18n';
+import { t, tp } from '../i18n';
+import { clusterKey, labelWanted, planGalaxy, primaryOf, relaxGroups, ringRadius, type ClusterInfo } from './plan';
 
 export type Col = { h: number; s: number; l: number };
 export type Focus =
   | { t: 'none' }
   | { t: 'sys'; sessionId: string }
-  | { t: 'agent'; sessionId: string; agentId: string };
+  | { t: 'agent'; sessionId: string; agentId: string }
+  | { t: 'cluster'; project: string };
 
 const WAIT = '#FFB15C';
 const MONO = '"JetBrains Mono", ui-monospace, Menlo, monospace';
@@ -57,6 +59,29 @@ interface Sys {
   fx: number; fy: number; tx: number; ty: number;
   belt: Dust[];
   appear: number;
+  /** Eased label opacity (labels fade in and out instead of popping) and the side it sits on. */
+  labelA: number;
+  labelPos?: number;
+}
+/** A project's folded sessions: one star cluster in a soft nebula. */
+interface Clu {
+  key: string;
+  info: ClusterInfo;
+  hue: number;
+  fx: number; fy: number; tx: number; ty: number;
+  appear: number;
+  absorb: number;
+  flare: number;
+  labelA: number;
+  labelPos?: number;
+}
+type Hit = { x: number; y: number; r: number; sys?: Sys; body?: Body; clu?: Clu };
+interface LabelLine { text: string; font: string; color: string }
+/** A name label to place: its body (centre, label offset `br`, obstacle radii) and how much it matters. */
+interface LabelCand {
+  key: string; bx: number; by: number; br: number; ox: number; oy: number;
+  lines: LabelLine[]; alpha: number; prio: number; must: boolean; want: boolean;
+  ent: { labelA: number; labelPos?: number };
 }
 
 /** Branch colors: a star has its project's base hue, each level-1 planet its own color, descendants shades of it. */
@@ -89,7 +114,17 @@ export class GalaxyEngine {
   private cam = { x: 0, y: 0, s: 1 };
   private camInit = false;
   private timeScale = 1;
-  private hits: { x: number; y: number; r: number; sys: Sys; body?: Body }[] = [];
+  private hits: Hit[] = [];
+  private clusters = new Map<string, Clu>();
+  /** sessionId → project of the cluster it is folded into. */
+  private folded = new Map<string, string>();
+  private lastSnap: LiveSnapshot | null = null;
+  /** Sessions revealed from a cluster's list: shown as stars while they are in focus. */
+  private pinned = new Set<string>();
+  private needSync = false;
+  private showAutomated = false;
+  private hover: string | null = null;
+  private dt = 0.016;
   private firstSync = true;
   private distant: (Distant & { ang: number; rr: number; tw: number })[] = [];
   private distantHits: { x: number; y: number; name: string }[] = [];
@@ -120,6 +155,7 @@ export class GalaxyEngine {
     window.addEventListener('pointermove', this.onPointerMove);
     window.addEventListener('pointerup', this.onPointerUp);
     window.addEventListener('keydown', this.onKey);
+    canvas.addEventListener('pointerleave', this.onLeave);
     this.lastUser = this.T;
     this.raf = requestAnimationFrame(this.frame);
   }
@@ -133,6 +169,7 @@ export class GalaxyEngine {
     window.removeEventListener('pointermove', this.onPointerMove);
     window.removeEventListener('pointerup', this.onPointerUp);
     window.removeEventListener('keydown', this.onKey);
+    this.canvas.removeEventListener('pointerleave', this.onLeave);
   }
 
   private resize() {
@@ -143,6 +180,8 @@ export class GalaxyEngine {
     this.canvas.width = Math.round(r.width * d);
     this.canvas.height = Math.round(r.height * d);
     this.ctx.setTransform(d, 0, 0, d, 0, 0);
+    // Ring radii are in pixels: a new screen size means new target positions.
+    this.layout();
   }
 
   getFocus() { return this.focus; }
@@ -176,6 +215,9 @@ export class GalaxyEngine {
   setFocus(f: Focus, user = false) {
     if (user) this.lastUser = this.T;
     this.focus = f;
+    // A revealed session goes back into its cluster once the focus moves elsewhere.
+    const keep = f.t === 'sys' || f.t === 'agent' ? f.sessionId : null;
+    for (const id of [...this.pinned]) if (id !== keep) { this.pinned.delete(id); this.needSync = true; }
     // A new focus flies to its own framing; drop the manual pan/zoom.
     this.pan = { x: 0, y: 0 };
     this.zoomMul = 1;
@@ -184,16 +226,66 @@ export class GalaxyEngine {
 
   /* ---------- data sync ---------- */
 
+  /** Automated sessions as separate stars (Settings → Interface). */
+  setShowAutomated(v: boolean) {
+    if (v === this.showAutomated) return;
+    this.showAutomated = v;
+    if (this.lastSnap) this.sync(this.lastSnap);
+  }
+
+  /** The cluster a session is folded into, or null when it is a star (or unknown). */
+  clusterOf(sessionId: string): string | null { return this.folded.get(sessionId) ?? null; }
+  /** A project's cluster as currently shown. */
+  cluster(project: string): ClusterInfo | null { return this.clusters.get(project)?.info ?? null; }
+  hasSystem(sessionId: string): boolean { return this.systems.has(sessionId); }
+
+  /** Takes a session out of its cluster as a star and focuses it (or one of its agents). */
+  reveal(sessionId: string, agentId?: string) {
+    if (!this.systems.has(sessionId)) {
+      if (!this.lastSnap?.sessions.some((s) => s.sessionId === sessionId)) return;
+      this.pinned.add(sessionId);
+      this.sync(this.lastSnap);
+    }
+    if (!this.systems.has(sessionId)) return;
+    if (agentId && agentId !== 'main' && this.bodies.has(`${sessionId}:${agentId}`)) this.setFocus({ t: 'agent', sessionId, agentId }, true);
+    else this.setFocus({ t: 'sys', sessionId }, true);
+  }
+
   sync(snap: LiveSnapshot) {
     const now = this.T;
+    this.lastSnap = snap;
     const seen = new Set<string>();
-    for (const s of snap.sessions) {
+    const pinned = new Set(this.pinned);
+    const f = this.focus;
+    if (f.t === 'sys' || f.t === 'agent') pinned.add(f.sessionId);
+    const plan = planGalaxy(snap.sessions, { showAutomated: this.showAutomated, pinned });
+    this.folded.clear();
+    const seenClu = new Set<string>();
+    for (const info of plan.clusters) {
+      seenClu.add(info.project);
+      for (const s of info.sessions) this.folded.set(s.sessionId, info.project);
+      let c = this.clusters.get(info.project);
+      if (!c) {
+        c = { key: info.key, info, hue: Math.round(hashStr(info.project) * 360), fx: 0.5, fy: 0.5, tx: 0.5, ty: 0.5, appear: this.firstSync ? -99 : now, absorb: -9, flare: -9, labelA: 1 };
+        this.clusters.set(info.project, c);
+      } else if (info.sessions.length > c.info.sessions.length) c.absorb = now;
+      c.info = info;
+    }
+    for (const [p] of this.clusters) {
+      if (seenClu.has(p)) continue;
+      this.clusters.delete(p);
+      if (this.focus.t === 'cluster' && this.focus.project === p) this.setFocus({ t: 'none' });
+    }
+    for (const s of plan.stars) {
       seen.add(s.sessionId);
       let sys = this.systems.get(s.sessionId);
       if (!sys) {
         const hue = Math.round(hashStr(s.project) * 360);
         const root = this.makeBody(s.sessionId, s.root, null, this.firstSync ? -99 : now, hue, 0);
-        sys = { s, root, hue, fx: 0.5, fy: 0.5, tx: 0.5, ty: 0.5, belt: [], appear: this.firstSync ? -99 : now };
+        sys = { s, root, hue, fx: 0.5, fy: 0.5, tx: 0.5, ty: 0.5, belt: [], appear: this.firstSync ? -99 : now, labelA: 1 };
+        // A session leaving its cluster starts where the cluster is.
+        const from = [...this.clusters.values()].find((c) => c.info.project === s.project);
+        if (from && !this.firstSync) { sys.fx = from.fx; sys.fy = from.fy; }
         this.systems.set(s.sessionId, sys);
       }
       sys.s = s;
@@ -267,29 +359,43 @@ export class GalaxyEngine {
     for (const c of b.children) yield* this.walk(c);
   }
 
-  /** Layout: live sessions closer to the center, sessions of one project side by side (binary stars). */
+  /**
+   * Layout: projects on a sunflower spiral in a stable order (by name); a project's bodies (its cluster
+   * first, then its stars by start time) on a ring around the project's spot. The ring grows with the
+   * number and size of bodies so neighbours never overlap. Positions depend only on membership, so they
+   * do not jump between polls.
+   */
   private layout() {
-    const list = [...this.systems.values()].sort((a, b) => Number(b.s.alive) - Number(a.s.alive) || b.s.lastActivity - a.s.lastActivity);
-    const byProject = new Map<string, Sys[]>();
-    for (const s of list) {
-      const arr = byProject.get(s.s.project) ?? [];
-      arr.push(s);
-      byProject.set(s.s.project, arr);
-    }
-    // Stable order by project name: stars do not jump when activity changes.
-    const groups = [...byProject.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([, g]) => g.sort((x, y) => x.s.startedAt - y.s.startedAt));
-    const n = groups.length;
-    groups.forEach((g, i) => {
+    const groups = new Map<string, { clu: Clu | null; stars: Sys[] }>();
+    const g = (p: string) => groups.get(p) ?? (groups.set(p, { clu: null, stars: [] }), groups.get(p)!);
+    for (const c of this.clusters.values()) g(c.info.project).clu = c;
+    for (const s of this.systems.values()) g(s.s.project).stars.push(s);
+    const names = [...groups.keys()].sort((a, b) => a.localeCompare(b));
+    const n = names.length;
+    const W = Math.max(1, this.W), H = Math.max(1, this.H), u = this.U;
+    const plans = names.map((name, i) => {
+      const grp = groups.get(name)!;
       const r = n === 1 ? 0 : Math.sqrt((i + 0.6) / n) * 0.4;
       const a = i * 2.39996 + 0.6;
-      const cx = 0.5 + r * Math.cos(a) * 0.98;
-      const cy = 0.53 + r * Math.sin(a) * 0.82;
-      g.forEach((s, j) => {
-        const off = g.length > 1 ? 0.045 : 0;
-        const aa = (j / g.length) * 6.283 + i;
-        s.tx = clamp(cx + Math.cos(aa) * off, 0.07, 0.93);
-        s.ty = clamp(cy + Math.sin(aa) * off * 1.3, 0.14, 0.86);
-        if (s.fx === 0.5 && s.fy === 0.5 && s.appear === -99) { s.fx = s.tx; s.fy = s.ty; }
+      grp.stars.sort((x, y) => x.s.startedAt - y.s.startedAt || x.s.sessionId.localeCompare(y.s.sessionId));
+      const members: (Clu | Sys)[] = [...(grp.clu ? [grp.clu] : []), ...grp.stars];
+      const sizes = members.map((m) => ('info' in m ? this.cluR(m) * 1.1 : Math.max(this.starR(m) * 1.8, 12 * u)));
+      const R = ringRadius(sizes, 38 * u, 30 * u);
+      // Footprint: the ring, its biggest body and room for the labels around it.
+      const foot = R + Math.max(...sizes) + 34 * u;
+      return { i, members, R, disc: { x: (0.5 + r * Math.cos(a) * 0.98) * W, y: (0.53 + r * Math.sin(a) * 0.82) * H, r: foot } };
+    });
+    // Groups never overlap: a big ring pushes its neighbours away instead of swallowing them.
+    const discs = relaxGroups(plans.map((p) => p.disc), { left: 12, top: Math.min(H * 0.14, 110), right: W - 12, bottom: H - 36 });
+    plans.forEach((p, k) => {
+      const { x: gx, y: gy } = discs[k];
+      p.members.forEach((m, j) => {
+        const aa = (j / p.members.length) * 6.283 + p.i;
+        const tx = clamp((gx + Math.cos(aa) * p.R) / W, 0.02, 0.98);
+        const ty = clamp((gy + Math.sin(aa) * p.R) / H, 0.1, 0.96);
+        m.tx = tx;
+        m.ty = ty;
+        if (m.fx === 0.5 && m.fy === 0.5 && m.appear === -99) { m.fx = tx; m.fy = ty; }
       });
     });
   }
@@ -298,6 +404,12 @@ export class GalaxyEngine {
 
   pushEvent(e: ClorbitEvent) {
     const now = this.T;
+    const fp = this.folded.get(e.sessionId);
+    if (fp) {
+      const c = this.clusters.get(fp);
+      if (c && (e.kind === 'tool' || e.kind === 'spawn' || e.kind === 'prompt')) c.flare = now;
+      return;
+    }
     if (e.kind === 'tool') {
       const b = this.bodies.get(`${e.sessionId}:${e.agentId}`);
       if (b) { b.flare = now; b.flareLabel = e.label; }
@@ -340,6 +452,11 @@ export class GalaxyEngine {
   }
   private bodyR(b: Body, sys: Sys) {
     return b.depth === 0 ? this.starR(sys) : (b.depth === 1 ? 2.4 : b.depth === 2 ? 1.25 : 0.75) * this.U;
+  }
+  /** A cluster's radius: grows with the tokens of its sessions over 24 h. */
+  private cluR(c: Clu) {
+    const k = Math.log10(1 + c.info.tokens24h / 1000);
+    return clamp(11 + k * 3.2, 12, 34) * this.U;
   }
   private beltR(sys: Sys) {
     return this.starR(sys) + 54 * this.U;
@@ -421,9 +538,30 @@ export class GalaxyEngine {
     this.drag = { lastX: e.clientX, lastY: e.clientY, dist: 0 };
   };
 
+  private hitAt(mx: number, my: number): Hit | null {
+    let best: Hit | null = null;
+    let bd = 1e9;
+    for (const h of this.hits) {
+      const d = Math.hypot(h.x - mx, h.y - my);
+      if (d < h.r && d / h.r < bd) { bd = d / h.r; best = h; }
+    }
+    return best;
+  }
+
+  private onLeave = () => {
+    if (!this.drag) { this.hover = null; this.canvas.style.cursor = ''; }
+  };
+
   private onPointerMove = (e: PointerEvent) => {
     const d = this.drag;
-    if (!d) return;
+    if (!d) {
+      if (e.target !== this.canvas) return;
+      const r = this.canvas.getBoundingClientRect();
+      const h = this.hitAt(e.clientX - r.left, e.clientY - r.top);
+      this.hover = h ? (h.clu ? h.clu.key : h.body ? h.body.key : h.sys!.s.sessionId) : null;
+      this.canvas.style.cursor = h ? 'pointer' : '';
+      return;
+    }
     const dx = e.clientX - d.lastX, dy = e.clientY - d.lastY;
     d.lastX = e.clientX;
     d.lastY = e.clientY;
@@ -462,6 +600,10 @@ export class GalaxyEngine {
       const sys = this.systems.get(this.focus.sessionId);
       if (sys) { const c = this.pos(sys.root); return { x: c[0] + panel / 4.2, y: c[1], s: 4.2 }; }
     }
+    if (this.focus.t === 'cluster') {
+      const c = this.clusters.get(this.focus.project);
+      if (c) return { x: c.fx * this.W + panel / 3, y: c.fy * this.H, s: 3 };
+    }
     if (this.focus.t === 'agent') {
       const b = this.bodies.get(`${this.focus.sessionId}:${this.focus.agentId}`);
       if (b) { const c = this.pos(b); const s = b.depth <= 1 ? 9 : 14; return { x: c[0] + panel / s, y: c[1], s }; }
@@ -474,20 +616,20 @@ export class GalaxyEngine {
     const mx = e.clientX - r.left, my = e.clientY - r.top;
     this.lastUser = this.T;
     if (this.suppressClick) { this.suppressClick = false; return; }
-    let best: (typeof this.hits)[number] | null = null;
-    let bd = 1e9;
-    for (const h of this.hits) {
-      const d = Math.hypot(h.x - mx, h.y - my);
-      if (d < h.r && d / h.r < bd) { bd = d / h.r; best = h; }
-    }
+    const best = this.hitAt(mx, my);
     const f = this.focus;
     if (!best && f.t === 'none') {
       const d = this.distantHits.find((h) => Math.hypot(h.x - mx, h.y - my) < 16);
       if (d) return this.cb.onDistant?.(d.name);
     }
-    if (best && f.t === 'none') return this.setFocus({ t: 'sys', sessionId: best.sys.s.sessionId }, true);
-    if (best?.body && best.body.depth > 0) return this.setFocus({ t: 'agent', sessionId: best.sys.s.sessionId, agentId: best.body.node.id }, true);
-    if (best && !(f.t === 'sys' && f.sessionId === best.sys.s.sessionId) && !best.body) return this.setFocus({ t: 'sys', sessionId: best.sys.s.sessionId }, true);
+    if (best?.clu) {
+      if (f.t === 'cluster' && f.project === best.clu.info.project) return this.up(true);
+      return this.setFocus({ t: 'cluster', project: best.clu.info.project }, true);
+    }
+    const sys = best?.sys;
+    if (best && sys && f.t === 'none') return this.setFocus({ t: 'sys', sessionId: sys.s.sessionId }, true);
+    if (sys && best?.body && best.body.depth > 0) return this.setFocus({ t: 'agent', sessionId: sys.s.sessionId, agentId: best.body.node.id }, true);
+    if (sys && !(f.t === 'sys' && f.sessionId === sys.s.sessionId) && !best?.body) return this.setFocus({ t: 'sys', sessionId: sys.s.sessionId }, true);
     this.up(true);
   };
 
@@ -525,6 +667,8 @@ export class GalaxyEngine {
     this.T = now;
     this.A += dt * (this.reduceMotion ? 0.08 : 1);
     this.frameN++;
+    this.dt = dt;
+    if (this.needSync && this.lastSnap) { this.needSync = false; this.sync(this.lastSnap); }
     if (this.tourOn && this.T - this.lastUser > 25 && this.T - this.lastTour > 5) { this.lastTour = this.T; this.tour(); }
     this.step(dt);
     this.draw();
@@ -533,6 +677,10 @@ export class GalaxyEngine {
   private step(dt: number) {
     const ts = this.focus.t === 'agent' ? 0.25 : this.focus.t === 'sys' ? 0.45 : 1;
     this.timeScale += (ts - this.timeScale) * Math.min(1, dt * 2);
+    for (const c of this.clusters.values()) {
+      c.fx += (c.tx - c.fx) * Math.min(1, dt * 1.5);
+      c.fy += (c.ty - c.fy) * Math.min(1, dt * 1.5);
+    }
     for (const sys of this.systems.values()) {
       sys.fx += (sys.tx - sys.fx) * Math.min(1, dt * 1.5);
       sys.fy += (sys.ty - sys.fy) * Math.min(1, dt * 1.5);
@@ -586,7 +734,7 @@ export class GalaxyEngine {
   private drawDistant(z1: number) {
     const { ctx, W, H, A, cam } = this;
     this.distantHits = [];
-    const live = new Set([...this.systems.values()].map((s) => s.s.project));
+    const live = new Set([...this.systems.values()].map((s) => s.s.project).concat([...this.clusters.keys()]));
     const a = 1 - z1;
     if (a < 0.03) return;
     for (const d of this.distant) {
@@ -726,17 +874,33 @@ export class GalaxyEngine {
     const k = this.cam.s;
     const z1 = clamp((k - 1) / 3.2, 0, 1), z2 = clamp((k - 4.2) / 4.5, 0, 1);
     const focus = this.focus;
-    const fSys = focus.t === 'none' ? null : focus.sessionId;
+    const fKey = focus.t === 'none' ? null : focus.t === 'cluster' ? clusterKey(focus.project) : focus.sessionId;
+    const fSys = focus.t === 'sys' || focus.t === 'agent' ? focus.sessionId : null;
     const fBody = focus.t === 'agent' ? this.bodies.get(`${focus.sessionId}:${focus.agentId}`) ?? null : null;
     this.hits = [];
     this.placed = [];
     this.drawDistant(z1);
+    const cands: LabelCand[] = [];
+    // Project groups: who speaks for a project (primary label) and how crowded it is.
+    const groupStars = new Map<string, LiveSession[]>();
+    for (const sys of this.systems.values()) {
+      const l = groupStars.get(sys.s.project);
+      if (l) l.push(sys.s);
+      else groupStars.set(sys.s.project, [sys.s]);
+    }
+    const primary = new Set<string>();
+    for (const l of groupStars.values()) { const p = primaryOf(l); if (p) primary.add(p); }
+    for (const c of [...this.clusters.values()].sort((a, b) => a.fy - b.fy)) {
+      const appear = clamp((T - c.appear) / 1.2, 0, 1);
+      const alpha = (fKey && fKey !== c.key ? 1 - z1 * 0.82 : 1) * appear;
+      this.drawCluster(c, k, alpha, fKey === c.key, cands, !groupStars.has(c.info.project));
+    }
     const systems = [...this.systems.values()].sort((a, b) => a.fy - b.fy);
     for (const sys of systems) {
       const isF = fSys === sys.s.sessionId;
       const appear = clamp((T - sys.appear) / 1.2, 0, 1);
       ctx.save();
-      ctx.globalAlpha = (fSys && !isF ? 1 - z1 * 0.82 : 1) * appear;
+      ctx.globalAlpha = (fKey && fKey !== sys.s.sessionId ? 1 - z1 * 0.82 : 1) * appear;
       const c = this.S(this.pos(sys.root));
       const sr = this.starR(sys);
       // belt of finished subagents
@@ -796,27 +960,31 @@ export class GalaxyEngine {
         if (b.depth === 1) la = isF ? z1 : 0;
         else if (b.depth > 1) la = fBody && (b.parent === fBody || b === fBody || b.parent === fBody.parent) ? z2 : 0;
         this.drawBody(sys, b, x, y, k, la);
-        this.hits.push(b.depth ? { x, y, r: Math.max(24, this.bodyR(b, sys) * k * 3), sys, body: b } : { x, y, r: Math.max(34, sr * k * 2.2), sys });
+        this.hits.push(b.depth ? { x, y, r: Math.max(24, this.bodyR(b, sys) * k * 3), sys, body: b } : { x, y, r: Math.max(26, sr * k * 2.2), sys });
       }
       ctx.globalCompositeOperation = 'source-over';
-      // labels
-      const nameA = 1 - z1 * (isF ? 1 : 0);
-      if (nameA > 0.02) {
-        const yy = c[1] + sr * k * 1.5 + 22;
-        ctx.textAlign = 'center';
-        ctx.font = `600 13px ${MONO}`;
-        ctx.fillStyle = cA(sys.s.alive ? '#E3EAF7' : '#8792A8', 0.95 * nameA);
-        ctx.fillText(sys.s.project, c[0], yy);
-        ctx.font = `11.5px ${MONO}`;
-        ctx.fillStyle = cA(sys.s.status === 'waiting' ? WAIT : '#A9B4C8', 0.95 * nameA);
+      // The name label is placed after every body is drawn, by priority, so crowded groups stay readable.
+      const nameA = (1 - z1 * (isF ? 1 : 0)) * ctx.globalAlpha;
+      {
         const n = sys.s.subagentsActive;
-        const sub = sys.s.status === 'waiting' ? t('gx.canvas.waiting') : n ? t('gx.canvas.subs', { active: n, done: sys.s.subagentsTotal - n }) : sys.s.alive ? (sys.s.status === 'working' ? t('gx.canvas.working') : t('gx.canvas.idle')) : t('gx.canvas.asleep');
-        ctx.fillText(sub, c[0], yy + 16);
-        if (sys.s.effort || sys.s.model) {
-          ctx.fillStyle = cA('#8D99B0', 0.9 * nameA);
-          ctx.fillText([prettyModel(sys.s.model), sys.s.effort].filter(Boolean).join(' · '), c[0], yy + 31);
-        }
-        ctx.textAlign = 'left';
+        const waiting = sys.s.status === 'waiting';
+        const sub = waiting ? t('gx.canvas.waiting') : n ? t('gx.canvas.subs', { active: n, done: sys.s.subagentsTotal - n }) : sys.s.alive ? (sys.s.status === 'working' ? t('gx.canvas.working') : t('gx.canvas.idle')) : t('gx.canvas.asleep');
+        const isP = primary.has(sys.s.sessionId);
+        // The group's primary star names the project; its siblings say which session they are.
+        const lines: LabelLine[] = isP || (groupStars.get(sys.s.project)?.length ?? 1) < 2
+          ? [{ text: sys.s.project, font: `600 13px ${MONO}`, color: sys.s.alive ? '#E3EAF7' : '#8792A8' }]
+          : [{ text: short(sys.s.title ?? sys.s.name ?? sys.s.sessionId.slice(0, 8), 28), font: `500 12px ${MONO}`, color: sys.s.alive ? '#D5DDEB' : '#8792A8' }];
+        lines.push({ text: sub, font: `11.5px ${MONO}`, color: waiting ? WAIT : '#A9B4C8' });
+        if (isP && (sys.s.effort || sys.s.model)) lines.push({ text: [prettyModel(sys.s.model), sys.s.effort].filter(Boolean).join(' · '), font: `11.5px ${MONO}`, color: '#8D99B0' });
+        const hovered = this.hover === sys.s.sessionId;
+        const gs = (groupStars.get(sys.s.project)?.length ?? 1) + (this.clusters.has(sys.s.project) ? 1 : 0);
+        const ob = clamp(sr * k * 0.9, 9, 34);
+        cands.push({
+          key: sys.s.sessionId, bx: c[0], by: c[1], br: sr * k * 1.5 + 9, ox: ob, oy: ob, lines, alpha: nameA, ent: sys,
+          prio: hovered ? 7 : waiting ? 6 : isP ? (sys.s.alive ? 5 : 4) : sys.s.alive ? 2 : 1,
+          must: isP || hovered || waiting || isF,
+          want: labelWanted({ primary: isP, hovered, waiting, zoom: k, groupSize: gs }),
+        });
       }
       if (isF) {
         for (const { b, x, y } of bodies) {
@@ -833,6 +1001,137 @@ export class GalaxyEngine {
       }
       ctx.restore();
     }
+    this.placeLabels(cands);
+  }
+
+  /**
+   * Name labels by priority. Each label tries below its body, then above, right and left (its last side
+   * first, so it does not hop around), avoiding other labels and other bodies. High-priority labels are
+   * always drawn (below, if nothing is free); the rest are skipped where there is no room. All fade.
+   */
+  private placeLabels(cands: LabelCand[]) {
+    const { ctx } = this;
+    type R = { x: number; y: number; w: number; h: number };
+    const hit = (a: R, b: R) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    const bodies = cands.map((c) => ({ key: c.key, r: { x: c.bx - c.ox, y: c.by - c.oy, w: c.ox * 2, h: c.oy * 2 } }));
+    const rects: R[] = [];
+    const ease = Math.min(1, this.dt * 7);
+    cands.sort((a, b) => b.prio - a.prio || a.key.localeCompare(b.key));
+    ctx.save();
+    ctx.textAlign = 'center';
+    for (const c of cands) {
+      let w = 0;
+      for (const l of c.lines) { ctx.font = l.font; w = Math.max(w, ctx.measureText(l.text).width); }
+      const h = c.lines.length * 15 + 4;
+      // Label centre x and top y for each side: below, above, right, left.
+      const at = (pos: number): R => {
+        const x = pos === 2 ? c.bx + c.ox + 8 + w / 2 : pos === 3 ? c.bx - c.ox - 8 - w / 2 : c.bx;
+        const y = pos === 0 ? c.by + c.br - 4 : pos === 1 ? c.by - c.br - h + 2 : c.by - h / 2;
+        return { x: x - w / 2 - 4, y, w: w + 8, h };
+      };
+      const free = (r: R) => !rects.some((o) => hit(r, o)) && !bodies.some((b) => b.key !== c.key && hit(r, b.r));
+      const order = c.ent.labelPos != null ? [c.ent.labelPos, 0, 1, 2, 3] : [0, 1, 2, 3];
+      let pos = -1;
+      if (c.want && c.alpha > 0.02) for (const p of order) if (free(at(p))) { pos = p; break; }
+      if (pos < 0 && c.want && c.must && c.alpha > 0.02) pos = c.ent.labelPos ?? 0;
+      const vis = pos >= 0;
+      if (vis) {
+        rects.push(at(pos));
+        if (pos !== c.ent.labelPos) {
+          // Moving to another side: fade from zero there instead of jumping.
+          if (c.ent.labelPos != null) c.ent.labelA = 0;
+          c.ent.labelPos = pos;
+        }
+      }
+      c.ent.labelA += ((vis ? 1 : 0) - c.ent.labelA) * ease;
+      const a = c.alpha * c.ent.labelA;
+      if (a <= 0.02 || c.ent.labelPos == null) continue;
+      const r = at(c.ent.labelPos);
+      const cx = r.x + r.w / 2;
+      c.lines.forEach((l, i) => {
+        ctx.font = l.font;
+        ctx.fillStyle = cA(l.color, 0.95 * a);
+        ctx.fillText(l.text, cx, r.y + 13 + (i === 0 ? 0 : 16 + (i - 1) * 15));
+      });
+    }
+    ctx.restore();
+  }
+
+  /** A star cluster: a few small stars in a soft nebula; dashed ring when most of it is automated runs. */
+  private drawCluster(c: Clu, k: number, alpha: number, isF: boolean, cands: LabelCand[], alone: boolean) {
+    const { ctx, A, T } = this;
+    const [sx, sy] = this.S([c.fx * this.W, c.fy * this.H]);
+    const R0 = this.cluR(c) * k;
+    const rr = Math.min(R0, 70 + R0 * 0.25);
+    const info = c.info;
+    const n = info.sessions.length;
+    const auto = info.automated * 2 >= n;
+    const col: Col = { h: c.hue, s: auto ? 38 : 62, l: 70 };
+    const act = info.working ? 1 : info.live ? 0.65 : 0.35;
+    const hov = this.hover === c.key;
+    // Varying part first: FNV of strings that differ only at the end is poorly spread.
+    const hr = (salt: string, i: number) => hashStr(`${i}|${salt}|${c.key}`);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    for (let q = 0; q < 3; q++) {
+      const a = hr('n', q) * 6.283 + A * 0.012 * (q - 1);
+      const d = rr * 0.38 * hr('d', q);
+      this.glow(sx + Math.cos(a) * d, sy + Math.sin(a) * d * 0.7, rr * (1.35 + 0.35 * q), col, 0.18 + 0.1 * act + (hov || isF ? 0.08 : 0));
+    }
+    if (auto) {
+      ctx.save();
+      ctx.setLineDash([3, 6]);
+      ctx.lineDashOffset = -A * 4;
+      ctx.strokeStyle = cA(col, 0.3 + (hov ? 0.2 : 0));
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(sx, sy, rr * 1.18, rr * 0.74, 0, 0, 7); ctx.stroke();
+      ctx.restore();
+    }
+    if (isF) {
+      ctx.strokeStyle = cA(col, 0.45); ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.ellipse(sx, sy, rr * 1.4, rr * 0.9, 0, 0, 7); ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    const m = clamp(Math.round(2 + Math.log2(1 + n) * 1.2), 3, 10);
+    const sk = clamp(Math.sqrt(k), 1, 3) * this.U;
+    const flareI = Math.floor(hr('f', Math.floor(c.flare * 10)) * m);
+    const ff = (T - c.flare) / 0.8;
+    for (let i = 0; i < m; i++) {
+      const dir = i % 2 ? 1 : -1;
+      const ang = hr('a', i) * 6.283 + A * 0.03 * dir * (0.5 + hr('s', i));
+      const dist = rr * (0.12 + 0.78 * Math.sqrt(hr('r', i)));
+      const px = sx + Math.cos(ang) * dist, py = sy + Math.sin(ang) * dist * 0.7;
+      const size = (1 + 1.6 * hr('z', i)) * sk;
+      const tw = 0.55 + 0.45 * Math.sin(A * 1.6 + i * 1.7);
+      const sc: Col = { h: (c.hue + (hr('h', i) - 0.5) * 50 + 360) % 360, s: auto ? 30 : 70, l: 82 };
+      this.glow(px, py, size * 4.5, sc, 0.75 * tw * (0.6 + 0.4 * act));
+      ctx.fillStyle = cA('#ffffff', 0.6 + 0.4 * tw);
+      ctx.beginPath(); ctx.arc(px, py, Math.max(1.1, size * 0.6), 0, 7); ctx.fill();
+      if (ff < 1 && i === flareI) {
+        ctx.strokeStyle = cA('#F2FDFF', 1 - ff); ctx.lineWidth = 1;
+        const L = size * (2 + 4 * eOut(ff));
+        ctx.beginPath(); ctx.moveTo(px - L, py); ctx.lineTo(px + L, py); ctx.moveTo(px, py - L); ctx.lineTo(px, py + L); ctx.stroke();
+      }
+    }
+    if (info.working) {
+      const pulse = 1 + 0.12 * Math.sin(A * 3 + hashStr(c.key) * 9);
+      this.glow(sx, sy, rr * 0.5 * pulse, { h: c.hue, s: 85, l: 80 }, 0.55);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    if (T - c.absorb < 0.9) {
+      const f = (T - c.absorb) / 0.9;
+      ctx.strokeStyle = cA('#DFFBFF', (1 - f) * 0.8); ctx.lineWidth = 1.5 * (1 - f) + 0.5;
+      ctx.beginPath(); ctx.ellipse(sx, sy, rr * (0.8 + f * 1.4), rr * (0.8 + f * 1.4) * 0.7, 0, 0, 7); ctx.stroke();
+    }
+    ctx.restore();
+    this.hits.push({ x: sx, y: sy, r: Math.max(28, rr * 1.25), clu: c });
+    const lines: LabelLine[] = [{ text: `${info.project} · ${tp('gx.cluster.count', n)}`, font: `600 12.5px ${MONO}`, color: '#C9D2E3' }];
+    const parts = [info.live ? tp('gx.cluster.running', info.live) : '', info.automated ? tp('gx.cluster.automated', info.automated) : ''].filter(Boolean);
+    if (parts.length) lines.push({ text: parts.join(' · '), font: `11px ${MONO}`, color: '#8D99B0' });
+    cands.push({
+      key: c.key, bx: sx, by: sy, br: rr * 0.8 + 8, ox: rr * 1.05, oy: rr * 0.75, lines, alpha, ent: c,
+      prio: hov ? 7 : alone ? 4 : 3, must: hov || isF || alone, want: true,
+    });
   }
 }
 

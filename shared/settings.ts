@@ -57,6 +57,7 @@ export function normalizeSettings(patch: unknown, base: Settings = DEFAULT_SETTI
     if (i.lang === 'en' || i.lang === 'uk') out.interface.lang = i.lang;
     out.interface.autoTour = bool(i.autoTour, out.interface.autoTour);
     out.interface.reduceMotion = bool(i.reduceMotion, out.interface.reduceMotion);
+    out.interface.showAutomated = bool(i.showAutomated, out.interface.showAutomated);
   }
   return out;
 }

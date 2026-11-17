@@ -21,6 +21,8 @@ export default {
   'mock.title.design.1': 'Додати компонент Combobox з підтримкою клавіатури',
   'mock.title.design.2': 'Перевірити контрастність колірних токенів',
   'mock.title.cli.1': 'Додати прапорець --json до команди status',
+  'mock.title.ci.nightly': 'Нічні перевірки, запуск #{n}',
+  'mock.title.ci.triage': 'Розбір збійної збірки, запуск #{n}',
   'mock.title.dotfiles.1': 'Пришвидшити запуск zsh',
   'mock.title.any.1': 'Огляд PR: GraphQL-мутації',
   'mock.title.any.2': 'Оновити залежності й перевірити збірку',
