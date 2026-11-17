@@ -1,0 +1,12 @@
+{
+  "name": "clorbit",
+  "description": "Session and agent events for Clorbit: async hooks with no effect on how Claude Code runs.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Maksym Karasha",
+    "url": "https://github.com/MaxKarasha"
+  },
+  "homepage": "https://github.com/MaxKarasha/clorbit",
+  "repository": "https://github.com/MaxKarasha/clorbit",
+  "license": "MIT"
+}

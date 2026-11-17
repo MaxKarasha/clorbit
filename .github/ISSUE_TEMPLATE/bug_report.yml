@@ -1,0 +1,49 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Please do not paste real transcripts, project names or paths you would not want to make public.
+        For security issues, use private vulnerability reporting instead (see SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `pnpm dev`
+        2. Open …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Clorbit version or commit
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Node.js version, browser, Claude Code version
+      placeholder: macOS 15, Node 22.12, Chrome 140, Claude Code 2.x
+    validations:
+      required: true
+  - type: dropdown
+    id: hooks
+    attributes:
+      label: Is the clorbit hooks plugin installed?
+      options: ['Yes', 'No', 'Not sure']
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log / browser console
+      description: Output of the server (lines starting with `[clorbit]`) and any browser console errors. `GET /api/debug/scan` output helps too.
+      render: text

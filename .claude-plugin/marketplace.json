@@ -1,0 +1,13 @@
+{
+  "name": "clorbit",
+  "description": "Clorbit — a local, read-only dashboard for your Claude Code sessions.",
+  "owner": { "name": "Maksym Karasha" },
+  "plugins": [
+    {
+      "name": "clorbit",
+      "description": "Streams Claude Code session and agent events to a local Clorbit server (127.0.0.1:4980). Async hooks; does nothing when Clorbit is not running.",
+      "source": "./plugin",
+      "category": "productivity"
+    }
+  ]
+}

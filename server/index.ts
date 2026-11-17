@@ -1,0 +1,155 @@
+// Clorbit HTTP server: REST + SSE, bound to 127.0.0.1 only.
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { attribution, overview, parseRange, sessions } from './analytics';
+import { CACHE_DIR, DB_FILE, DIST_DIR, HOST, PORT, PROJECTS_DIR, env, knownPlugins, migrateLegacyDb } from './config';
+import { ClorbitDb } from './db';
+import { HookLog } from './hook-log';
+import { Hooks } from './hooks';
+import { errorText, localizeEvent, parseLang, type Lang, type ServerEvent } from './i18n';
+import { insights } from './insights';
+import { LimitsLog, parseTsRange } from './limits-log';
+import { Live, readLimits } from './live';
+import { sessionDetail } from './session-detail';
+import { Store } from './store';
+
+const t0 = Date.now();
+const migratedFrom = migrateLegacyDb();
+if (migratedFrom) console.log(`[clorbit] copied the database from ${migratedFrom} to ${DB_FILE} (one-time migration; the old file is left untouched)`);
+// SQLite is the persistence layer; if it cannot be opened, the server still runs in memory only.
+let db: ClorbitDb | null = null;
+try { db = ClorbitDb.open(DB_FILE); } catch (e) {
+  console.error(`[clorbit] could not open ${DB_FILE}, running without persistence:`, (e as Error).message);
+}
+const store = new Store(PROJECTS_DIR, db, { knownPlugins: knownPlugins() });
+store.loadCache(CACHE_DIR);
+if (store.persist.imported) console.log(`[clorbit] imported ${store.persist.imported.count} summaries from ${store.persist.imported.file}`);
+const hooks = new Hooks();
+const hookLog = new HookLog(db);
+const limitsLog = new LimitsLog(db, () => readLimits().limits);
+const live = new Live(store, hooks);
+
+function dbHealth() {
+  if (!db) return { enabled: false };
+  hookLog.flush();
+  return {
+    enabled: true, ...db.stats(),
+    archivedInMemory: store.missing.size, warmLoadMs: store.stats.loadMs, pendingWrites: store.isDirty,
+    lastFlush: { at: store.persist.lastFlushAt, ms: store.persist.lastFlushMs, rows: store.persist.lastFlushRows, count: store.persist.flushes },
+  };
+}
+
+// SSE clients with their language; status reasons are rendered per language.
+const clients = new Map<http.ServerResponse, Lang>();
+const broadcast = (e: ServerEvent) => {
+  const byLang = new Map<Lang, string>();
+  for (const [c, lang] of clients) {
+    let data = byLang.get(lang);
+    if (!data) byLang.set(lang, (data = `data: ${JSON.stringify(localizeEvent(e, lang))}\n\n`));
+    c.write(data);
+  }
+};
+live.on('event', broadcast);
+
+function json(res: http.ServerResponse, code: number, body: unknown) {
+  const s = JSON.stringify(body);
+  res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+  res.end(s);
+}
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff2': 'font/woff2', '.json': 'application/json',
+  '.ico': 'image/x-icon', '.webp': 'image/webp',
+};
+
+function serveStatic(res: http.ServerResponse, urlPath: string) {
+  const safe = path.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, '');
+  let file = path.join(DIST_DIR, safe);
+  if (!file.startsWith(DIST_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST_DIR, 'index.html');
+  if (!fs.existsSync(file)) { res.writeHead(404); res.end('dist is not built: run pnpm build'); return; }
+  res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': file.endsWith('index.html') ? 'no-store' : 'public, max-age=3600' });
+  fs.createReadStream(file).pipe(res);
+}
+
+function readBody(req: http.IncomingMessage, limit = 2_000_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let n = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => { n += c.length; if (n > limit) { reject(new Error(errorText('en').tooLarge)); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url ?? '/', `http://${HOST}`);
+  const p = url.pathname;
+  const lang = parseLang(url.searchParams);
+  const err = errorText(lang);
+  try {
+    if (req.method === 'POST' && p === '/api/hook') {
+      const body = await readBody(req);
+      let j: any = null;
+      try { j = JSON.parse(body); } catch { /* not JSON */ }
+      for (const e of hooks.ingest(j)) live.emitEvent(e);
+      hookLog.record(j);
+      return json(res, 200, { ok: true });
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: err.getOnly });
+    if (p === '/api/live') return json(res, 200, live.snapshot(lang));
+    if (p === '/api/events') {
+      res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+      res.write(': clorbit\n\n');
+      clients.set(res, lang);
+      const hb = setInterval(() => res.write(': heartbeat\n\n'), 15_000);
+      req.on('close', () => { clearInterval(hb); clients.delete(res); });
+      return;
+    }
+    if (p === '/api/analytics/overview') return json(res, 200, overview(store, parseRange(url.searchParams)));
+    if (p === '/api/analytics/attribution') return json(res, 200, attribution(store, parseRange(url.searchParams), lang));
+    if (p === '/api/analytics/sessions') return json(res, 200, sessions(store, parseRange(url.searchParams), url.searchParams.get('project')));
+    if (p.startsWith('/api/session/')) {
+      const id = decodeURIComponent(p.slice('/api/session/'.length));
+      if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: err.badSession });
+      const alive = !!live.pids.get(id)?.alive;
+      const d = await sessionDetail(store, id, alive, lang);
+      return d ? json(res, 200, d) : json(res, 404, { error: err.notFound });
+    }
+    if (p === '/api/insights') return json(res, 200, insights(store, parseRange(url.searchParams), hookLog, lang));
+    if (p === '/api/limits/history') { const r = parseTsRange(url.searchParams); return json(res, 200, limitsLog.history(r.from, r.to)); }
+    if (p === '/api/debug/scan') return json(res, 200, { ...store.stats, files: store.files.size, archived: store.missing.size, hooksRecent: hooks.recent.slice(-20), uptimeMs: Date.now() - t0, db: dbHealth() });
+    if (p === '/api/debug/db') return json(res, 200, dbHealth());
+    if (p.startsWith('/api/')) return json(res, 404, { error: err.unknownRoute });
+    if (env('SERVE_WEB') === '1') return serveStatic(res, p);
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Clorbit API. To serve the web app from here: pnpm start (or CLORBIT_SERVE_WEB=1 after pnpm build).');
+  } catch (e) {
+    console.error('[clorbit] request failed', p, e);
+    if (!res.headersSent) json(res, 500, { error: String((e as Error)?.message ?? e) });
+    else res.end();
+  }
+});
+
+server.listen(PORT, HOST, () => {
+  console.log(`[clorbit] http://${HOST}:${PORT} ready in ${Date.now() - t0} ms; ${store.files.size} files in the database, ${store.missing.size} archived (loaded in ${store.stats.loadMs} ms)`);
+  live.start();
+  hookLog.start();
+  limitsLog.start();
+  store.coldScan().then(() => {
+    const st = store.stats;
+    console.log(`[clorbit] scan: ${st.filesTotal} files, parsed ${st.filesParsed} (${(st.bytesParsed / 1e9).toFixed(2)} GB), from cache ${st.fromCache}, ${st.finishedAt! - st.startedAt} ms`);
+  }).catch((e) => console.error('[clorbit] scan failed', e));
+});
+
+const shutdown = () => {
+  live.stop();
+  limitsLog.stop();
+  try { hookLog.stop(); store.saveNow(); db?.close(); } catch { /* ignore on shutdown */ }
+  for (const c of clients.keys()) c.end();
+  server.close();
+  process.exit(0);
+};
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

@@ -1,0 +1,52 @@
+{
+  "name": "clorbit",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Your Claude Code agents, in orbit — a local, read-only dashboard over Claude Code sessions.",
+  "license": "MIT",
+  "author": "Maksym Karasha",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MaxKarasha/clorbit.git"
+  },
+  "homepage": "https://github.com/MaxKarasha/clorbit#readme",
+  "bugs": {
+    "url": "https://github.com/MaxKarasha/clorbit/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "claude",
+    "dashboard",
+    "agents",
+    "observability",
+    "tokens"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "packageManager": "pnpm@12.18.0",
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c cyan,magenta \"tsx watch server/index.ts\" \"vite\"",
+    "server": "tsx server/index.ts",
+    "build": "vite build",
+    "start": "vite build && CLORBIT_SERVE_WEB=1 tsx server/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "concurrently": "^10.0.7",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}
