@@ -2,6 +2,11 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.1.1
+
+- Galaxy camera: drag to pan, scroll / pinch to zoom toward the cursor, on-screen zoom buttons and keyboard (`+`, `-`, `0` reset, `Esc` up a level).
+- Auto tour is now opt-in ("Auto tour" toggle in the HUD), remembered per browser, with a clear explanation.
+
 ## [0.1.0] - 2026-11-17
 
 First public release.

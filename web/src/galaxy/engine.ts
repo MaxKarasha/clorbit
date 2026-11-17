@@ -94,7 +94,13 @@ export class GalaxyEngine {
   private stars: { x: number; y: number; z: number; s: number }[];
   private ro: ResizeObserver;
   lastUser = -99;
-  tourOn = true;
+  /** Auto tour is opt-in (toggle in the HUD). */
+  tourOn = false;
+  /** User camera offset on top of the focus target: drag pans, wheel/buttons zoom. */
+  private pan = { x: 0, y: 0 };
+  private zoomMul = 1;
+  private drag: { lastX: number; lastY: number; dist: number } | null = null;
+  private suppressClick = false;
   private lastTour = 0;
   private tourI = 0;
 
@@ -105,6 +111,11 @@ export class GalaxyEngine {
     this.ro.observe(canvas);
     this.resize();
     canvas.addEventListener('click', this.onClick);
+    canvas.addEventListener('wheel', this.onWheel, { passive: false });
+    canvas.addEventListener('pointerdown', this.onPointerDown);
+    window.addEventListener('pointermove', this.onPointerMove);
+    window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('keydown', this.onKey);
     this.lastUser = this.T;
     this.raf = requestAnimationFrame(this.frame);
   }
@@ -113,6 +124,11 @@ export class GalaxyEngine {
     cancelAnimationFrame(this.raf);
     this.ro.disconnect();
     this.canvas.removeEventListener('click', this.onClick);
+    this.canvas.removeEventListener('wheel', this.onWheel);
+    this.canvas.removeEventListener('pointerdown', this.onPointerDown);
+    window.removeEventListener('pointermove', this.onPointerMove);
+    window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('keydown', this.onKey);
   }
 
   private resize() {
@@ -143,6 +159,9 @@ export class GalaxyEngine {
   setFocus(f: Focus, user = false) {
     if (user) this.lastUser = this.T;
     this.focus = f;
+    // A new focus flies to its own framing; drop the manual pan/zoom.
+    this.pan = { x: 0, y: 0 };
+    this.zoomMul = 1;
     this.cb.onFocus(f);
   }
 
@@ -329,7 +348,98 @@ export class GalaxyEngine {
     return [(w[0] - this.cam.x) * this.cam.s + this.W / 2, (w[1] - this.cam.y) * this.cam.s + this.H / 2];
   }
 
+  /* ---------- manual camera ---------- */
+
+  private static readonly MIN_S = 0.35;
+  private static readonly MAX_S = 40;
+
   private camTarget() {
+    const b = this.baseTarget();
+    return { x: b.x + this.pan.x, y: b.y + this.pan.y, s: clamp(b.s * this.zoomMul, GalaxyEngine.MIN_S, GalaxyEngine.MAX_S) };
+  }
+
+  /** Zoom keeping the world point under (mx, my) fixed; instant, so it feels direct. */
+  private zoomAt(mx: number, my: number, factor: number) {
+    const b = this.baseTarget();
+    const s0 = this.cam.s;
+    const s1 = clamp(s0 * factor, GalaxyEngine.MIN_S, GalaxyEngine.MAX_S);
+    const wx = (mx - this.W / 2) / s0 + this.cam.x;
+    const wy = (my - this.H / 2) / s0 + this.cam.y;
+    const cx = wx - (mx - this.W / 2) / s1;
+    const cy = wy - (my - this.H / 2) / s1;
+    this.zoomMul = s1 / b.s;
+    this.pan = { x: cx - b.x, y: cy - b.y };
+    this.cam.x = cx;
+    this.cam.y = cy;
+    this.cam.s = s1;
+    this.lastUser = this.T;
+  }
+
+  /** Smooth zoom around the screen centre (buttons, keyboard). */
+  zoomBy(factor: number) {
+    const b = this.baseTarget();
+    const cur = this.camTarget();
+    const s1 = clamp(cur.s * factor, GalaxyEngine.MIN_S, GalaxyEngine.MAX_S);
+    this.zoomMul = s1 / b.s;
+    this.lastUser = this.T;
+  }
+
+  /** Back to the automatic framing of the current focus. */
+  resetView() {
+    this.pan = { x: 0, y: 0 };
+    this.zoomMul = 1;
+    this.lastUser = this.T;
+  }
+
+  private onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const r = this.canvas.getBoundingClientRect();
+    const unit = e.deltaMode === 1 ? 16 : 1;
+    const factor = Math.exp(-e.deltaY * unit * (e.ctrlKey ? 0.012 : 0.0018));
+    this.zoomAt(e.clientX - r.left, e.clientY - r.top, factor);
+  };
+
+  private onPointerDown = (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    this.drag = { lastX: e.clientX, lastY: e.clientY, dist: 0 };
+  };
+
+  private onPointerMove = (e: PointerEvent) => {
+    const d = this.drag;
+    if (!d) return;
+    const dx = e.clientX - d.lastX, dy = e.clientY - d.lastY;
+    d.lastX = e.clientX;
+    d.lastY = e.clientY;
+    d.dist += Math.abs(dx) + Math.abs(dy);
+    if (d.dist < 5) return;
+    this.canvas.style.cursor = 'grabbing';
+    const s = this.cam.s;
+    this.pan.x -= dx / s;
+    this.pan.y -= dy / s;
+    this.cam.x -= dx / s;
+    this.cam.y -= dy / s;
+    this.lastUser = this.T;
+  };
+
+  private onPointerUp = () => {
+    if (this.drag && this.drag.dist >= 5) this.suppressClick = true;
+    this.drag = null;
+    this.canvas.style.cursor = '';
+  };
+
+  private onKey = (e: KeyboardEvent) => {
+    const el = e.target as HTMLElement | null;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === '+' || e.key === '=') this.zoomBy(1.3);
+    else if (e.key === '-' || e.key === '_') this.zoomBy(1 / 1.3);
+    else if (e.key === '0') this.resetView();
+    else if (e.key === 'Escape') this.up(true);
+    else return;
+    e.preventDefault();
+  };
+
+  private baseTarget() {
     const panel = 200;
     if (this.focus.t === 'sys') {
       const sys = this.systems.get(this.focus.sessionId);
@@ -346,6 +456,7 @@ export class GalaxyEngine {
     const r = this.canvas.getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
     this.lastUser = this.T;
+    if (this.suppressClick) { this.suppressClick = false; return; }
     let best: (typeof this.hits)[number] | null = null;
     let bd = 1e9;
     for (const h of this.hits) {

@@ -1,4 +1,4 @@
-// Clorbit 0.1.0 server, bundled from server/ by scripts/build.mjs. Do not edit.
+// Clorbit 0.1.1 server, bundled from server/ by scripts/build.mjs. Do not edit.
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res, err) => function __init() {
   if (err) throw err[0];
@@ -811,7 +811,7 @@ var init_config = __esm({
     SERVE_WEB = env("SERVE_WEB") ? env("SERVE_WEB") === "1" : BUNDLED;
     PORT = Number(env("PORT")) || 4980;
     HOST = "127.0.0.1";
-    VERSION = BUNDLED && true ? "0.1.0" : devVersion();
+    VERSION = BUNDLED && true ? "0.1.1" : devVersion();
     LEGACY_DB_FILE = path2.join(PROJECT_ROOT, "data", "fleet.db");
     settingsCache = null;
   }

@@ -37,7 +37,9 @@ export default function GalaxyPage() {
   const [checking, setChecking] = useState(false);
   const retryRef = useRef<() => void>(() => {});
   const [legend, setLegend] = useState(false);
-  const [tour, setTour] = useState(true);
+  // Auto tour is opt-in and remembered per browser.
+  const [tour, setTourState] = useState(() => { try { return localStorage.getItem('clorbit.tour') === '1'; } catch { return false; } });
+  const setTour = (v: boolean) => { setTourState(v); try { localStorage.setItem('clorbit.tour', v ? '1' : '0'); } catch { /* storage unavailable */ } };
   const tickId = useRef(0);
   const lang = useLang();
 
@@ -171,6 +173,17 @@ export default function GalaxyPage() {
 
       {!offline && fSession && focus.t === 'sys' && <SessionPanel s={fSession} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
       {!offline && fSession && fAgent && <AgentPanel s={fSession} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
+
+      {!offline && (
+        <div className={`gx-zoom ${focus.t !== 'none' ? 'panel' : ''}`}>
+          <div className="gx-zoom-pad">
+            <button onClick={() => engineRef.current?.zoomBy(1.3)} title={t('gx.zoom.in')} aria-label={t('gx.zoom.in')}>+</button>
+            <button onClick={() => engineRef.current?.zoomBy(1 / 1.3)} title={t('gx.zoom.out')} aria-label={t('gx.zoom.out')}>−</button>
+            <button onClick={() => engineRef.current?.resetView()} title={t('gx.zoom.reset')} aria-label={t('gx.zoom.reset')}>⟲</button>
+          </div>
+          <div className="gx-zoom-hint">{t('gx.zoom.hint')}</div>
+        </div>
+      )}
 
       <div className="gx-ticker">
         {ticks.map((t, i) => (

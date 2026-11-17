@@ -1,7 +1,7 @@
 {
   "name": "clorbit",
   "description": "Clorbit, a local dashboard for your Claude Code sessions: /clorbit to open it, silent server autostart, and async hooks for live session and agent events.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
     "name": "Maksym Karasha",
     "url": "https://github.com/MaxKarasha"
