@@ -196,7 +196,14 @@ const server = http.createServer(async (req, res) => {
       const unusedDays = Number.isFinite(nd) && nd > 0
         ? Math.round(Math.min(RECOMMEND_DAYS.max, Math.max(RECOMMEND_DAYS.min, nd)))
         : settings.get().recommendations.unusedDays;
-      return json(res, 200, insights(store, parseRange(url.searchParams), hookLog, lang, { page: (page as InsightPage | null) ?? undefined, unusedDays }));
+      const session = url.searchParams.get('session');
+      if (session !== null && !/^[\w-]{8,64}$/.test(session)) return json(res, 400, { error: err.badSession });
+      return json(res, 200, insights(store, parseRange(url.searchParams), hookLog, lang, {
+        page: (page as InsightPage | null) ?? undefined,
+        unusedDays,
+        session: session ?? undefined,
+        limits: () => forecaster.get(readLimits().limits),
+      }));
     }
     if (p === '/api/limits/history') { const r = parseTsRange(url.searchParams); return json(res, 200, limitsLog.history(r.from, r.to)); }
     if (p === '/api/limits/forecast') return json(res, 200, forecaster.get(readLimits().limits));

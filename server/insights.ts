@@ -1,5 +1,6 @@
 // Insights: rules with evidence and a concrete fix. Wording lives in insights-text.ts (en/uk).
-import { DEFAULT_SETTINGS, type Insight, type InsightPage, type Range } from '../shared/api';
+import { DEFAULT_SETTINGS, type Insight, type InsightPage, type LimitsForecast, type Range } from '../shared/api';
+import { bySavings, homePage, pickOverview } from '../shared/insights';
 import { attribution, Ctx, memoize, overview } from './analytics';
 import { readSettings } from './config';
 import type { Store } from './store';
@@ -14,6 +15,8 @@ import { mcpRecommendations } from './recommend-mcp';
 import { skillRecommendations } from './recommend-skills';
 import { startupRecommendations } from './recommend-startup';
 import { permissionRecommendation, toolRecommendations } from './recommend-tools';
+import { limitRecommendations } from './recommend-limits';
+import { sessionRange, sessionRecommendations, sessionView } from './recommend-sessions';
 
 const sevRank = { high: 0, warn: 1, info: 2 } as const;
 
@@ -32,18 +35,57 @@ export interface InsightOptions {
   unusedDays?: number;
   /** Overrides of the outside facts (tests); disables memoization. */
   env?: Partial<RecommendEnv>;
+  /** With page 'session': the session whose own cards are wanted (over its whole span; the range is ignored). */
+  session?: string;
+  /** The current subscription-limits forecast (the limits panel's cards); omitted = no limits cards. */
+  limits?: () => LimitsForecast | null;
 }
 
 const bySaving = (a: Insight, b: Insight) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity];
 
 export function insights(store: Store, range: Range, hookLog?: HookLog | null, lang: Lang = 'en', opts: InsightOptions = {}): Insight[] {
   const env: RecommendEnv = { ...defaultEnv({ unusedDays: opts.unusedDays ?? DEFAULT_SETTINGS.recommendations.unusedDays }), ...opts.env };
-  // Recommendations also depend on the enabled plugins, the threshold and the day ("unused for N days").
-  const key = `ins:${lang}:${range.from}:${range.to}:${env.unusedDays}:${localDate(env.now)}:${hash8(JSON.stringify([env.enabledPlugins, env.mcp.user, env.mcp.local]))}`;
-  const base = opts.env ? compute(store, range, lang, env) : memoize(store, key, () => compute(store, range, lang, env));
+  if (opts.page === 'session') return opts.session ? sessionInsights(store, opts.session, lang, env) : [];
+  const base = baseInsights(store, range, lang, env, !!opts.env);
   const extra = hookLog ? waitInsights(store, hookLog, range, lang, env) : [];
-  const all = extra.length ? [...base, ...extra].sort(bySaving) : base;
+  // The limits panel's cards follow the current window, not the range; the Overview leaves them out (the panel is there).
+  const forecast = opts.limits && (!opts.page || opts.page === 'limits') ? opts.limits() : null;
+  const lim = forecast ? limitRecommendations(store, forecast, lang, (from) => {
+    const r = { from: localDate(from), to: localDate(env.now) };
+    return { cards: baseInsights(store, r, lang, env, !!opts.env), range: r };
+  }) : [];
+  const all = extra.length || lim.length ? [...base, ...extra, ...lim].sort(bySaving) : base;
+  if (opts.page === 'overview') return pickOverview(all);
   return opts.page ? all.filter((i) => i.pages?.includes(opts.page!)) : all;
+}
+
+/** The range's cards (memoized per store version, settings that matter and day). */
+function baseInsights(store: Store, range: Range, lang: Lang, env: RecommendEnv, noMemo: boolean): Insight[] {
+  // Recommendations also depend on the enabled plugins, the threshold and the day ("unused for N days").
+  const key = `ins:${lang}:${range.from}:${range.to}:${env.unusedDays}:${localDate(env.now)}:${hash8(JSON.stringify([env.enabledPlugins, env.mcp.user, env.mcp.local, env.autoCompactPct]))}`;
+  return noMemo ? compute(store, range, lang, env) : memoize(store, key, () => compute(store, range, lang, env));
+}
+
+/**
+ * One session's own cards (the Session page): the Sessions rules (compactions, idle-gap rebuilds, a nearly full
+ * context), repeated reads and huge outputs (Tools) and read-only subagents on a top-tier model (Subagents), run over
+ * a store that holds only this session's files, over the days it covers. Each card links to the tab of its rule.
+ */
+export function sessionInsights(store: Store, sessionId: string, lang: Lang = 'en', env?: RecommendEnv): Insight[] {
+  const range = sessionRange(store, sessionId);
+  if (!range) return [];
+  const e = env ?? defaultEnv({ unusedDays: DEFAULT_SETTINGS.recommendations.unusedDays });
+  const view = sessionView(store, sessionId);
+  const cards = [
+    ...sessionRecommendations(view, range, lang, e, { scope: 'session' }),
+    ...toolRecommendations(view, range, lang, e).filter((i) => /^(repeated-reads|big-outputs):/.test(i.id)),
+    ...agentRecommendations(view, range, lang, e).filter((i) => i.id.startsWith('agent-model:')),
+  ];
+  return cards.map((i): Insight => {
+    const home = homePage(i);
+    // A distinct id: hiding a card here does not hide the tab's card (and the other way round).
+    return { ...i, id: i.id.replace(/^([^:]+)/, '$1@session'), pages: ['session'], ...(home && home !== 'session' ? { seeAlso: home } : {}) };
+  }).sort(bySavings);
 }
 
 /** Local-day range → [from, to) epoch ms. */
@@ -98,7 +140,7 @@ export function waitInsights(store: Store, hookLog: HookLog, range: Range, lang:
     const capH = WAIT_CAP_MS / 3_600_000;
     v.push({
       id: 'hook-waits',
-      pages: ['sessions', 'overview'],
+      pages: ['sessions'],
       severity: total > 60 * 60_000 ? 'warn' : 'info',
       title: T.waits.title(total, longest.end - longest.start),
       detail: T.waits.detail(
@@ -140,35 +182,15 @@ function compute(store: Store, range: Range, lang: Lang, env: RecommendEnv): Ins
     // Subagents: cheaper models for read-only agents, startup overhead, bursts / deep nesting, failing agents.
     ...agentRecommendations(store, range, lang, env),
   ];
+  const settings = readSettings();
+  // Sessions: auto-compactions, idle gaps that expired the cache, a nearly full context, raised effort on simple
+  // rounds, automated sessions and days with a low cache hit rate (replace the older 'auto-compactions' / 'low-cache-days').
+  out.push(...sessionRecommendations(store, range, lang, env));
   const ov = overview(store, range);
   const grand = ov.totals.total || 1;
-  const settings = readSettings();
-  const ctx = new Ctx(store);
   const pluginKey = (name: string) => Object.keys(settings.enabledPlugins).find((k) => k.split('@')[0] === name) ?? `${name}@…`;
 
   const filesInRange = filesActiveIn(store, range);
-
-  // (e) Sessions with auto-compactions.
-  const compacted: { s: FileSummary; n: number }[] = [];
-  for (const s of filesInRange) {
-    if (s.agentId !== null) continue;
-    let n = 0;
-    for (const [d, b] of Object.entries(s.days)) if (d >= range.from && d <= range.to) n += b.autoCompactions;
-    if (n > 0) compacted.push({ s, n });
-  }
-  if (compacted.length) {
-    compacted.sort((a, b) => b.n - a.n);
-    const total = compacted.reduce((n, c) => n + c.n, 0);
-    out.push({
-      id: 'auto-compactions',
-      pages: ['sessions'],
-      severity: total >= 10 ? 'warn' : 'info',
-      title: T.autoCompactions.title(total, compacted.length),
-      detail: T.autoCompactions.detail,
-      evidence: compacted.slice(0, 8).map((c) => `${c.s.title ?? ctx.project(c.s)} — ${c.n}× (${ctx.project(c.s)})`),
-      fix: T.autoCompactions.fix(settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE),
-    });
-  }
 
   // (f) Skills: load frequency vs. share of tokens.
   const skillsSorted = attr.skills.filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
@@ -196,30 +218,6 @@ function compute(store: Store, range: Range, lang: Lang, env: RecommendEnv): Ins
       detail: T.skillLoads.detail,
       evidence: oftenLoaded.slice(0, 8).map((r) => T.skillLoads.evidence(r.key, r.extra!.loads, r.total / grand)),
     });
-  }
-
-  // (g) Days with a low cache hit rate.
-  const rates = ov.daily.map((d) => {
-    const denom = d.tokens.input + d.tokens.cacheRead + d.tokens.cacheWrite;
-    return { d, denom, rate: denom ? d.tokens.cacheRead / denom : 1 };
-  }).filter((x) => x.denom > 1e6);
-  if (rates.length) {
-    const sumDen = rates.reduce((n, x) => n + x.denom, 0);
-    const avg = rates.reduce((n, x) => n + x.d.tokens.cacheRead, 0) / sumDen;
-    const low = rates.filter((x) => x.rate < Math.min(0.85, avg - 0.05)).sort((a, b) => a.rate - b.rate);
-    if (low.length) {
-      const saving = low.reduce((n, x) => n + Math.max(0, (avg - x.rate) * x.denom), 0);
-      out.push({
-        id: 'low-cache-days',
-      pages: ['overview'],
-        severity: low.some((x) => x.rate < 0.7) ? 'warn' : 'info',
-        title: T.lowCache.title(low.length, avg),
-        detail: T.lowCache.detail,
-        evidence: low.slice(0, 8).map((x) => T.lowCache.evidence(x.d.date, x.rate, x.d.tokens.cacheWrite, x.d.tokens.input)),
-        fix: T.lowCache.fix,
-        estSavingTokens: Math.round(saving),
-      });
-    }
   }
 
   // (h) Plugin hooks: frequent runs, time spent and errors.

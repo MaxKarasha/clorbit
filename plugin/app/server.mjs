@@ -1021,7 +1021,7 @@ var SUMMARY_VERSION, MIN_SUMMARY_VERSION;
 var init_types = __esm({
   "server/types.ts"() {
     "use strict";
-    SUMMARY_VERSION = 8;
+    SUMMARY_VERSION = 9;
     MIN_SUMMARY_VERSION = 5;
   }
 });
@@ -1596,11 +1596,35 @@ var init_hooks = __esm({
   }
 });
 
+// shared/insights.ts
+function homePage(ins) {
+  return ins.pages?.[0] ?? null;
+}
+function bySavings(a, b) {
+  return (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || (b.saving?.waitMs ?? 0) - (a.saving?.waitMs ?? 0) || SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.id.localeCompare(b.id);
+}
+function pickOverview(list, n = OVERVIEW_MAX * 4) {
+  return list.filter((i) => {
+    const home = homePage(i);
+    if (!home || home === "limits" || home === "session" || home === "overview") return false;
+    return (i.estSavingTokens ?? 0) > 0 || (i.saving?.waitMs ?? 0) > 0 || i.severity !== "info";
+  }).sort(bySavings).slice(0, n);
+}
+var SEV_RANK, OVERVIEW_MAX;
+var init_insights = __esm({
+  "shared/insights.ts"() {
+    "use strict";
+    SEV_RANK = { high: 0, warn: 1, info: 2 };
+    OVERVIEW_MAX = 3;
+  }
+});
+
 // server/insights-text.ts
 function en() {
   const N = (n) => fmtNum(n, "en");
   const D = (ms) => fmtDuration(ms, "en");
   const times = (n) => `${n} ${plural(n, "en", ["time", "times"])}`;
+  const long = (ms) => ms >= 48 * 36e5 ? `${Math.floor(ms / 864e5)} d ${Math.round(ms % 864e5 / 36e5)} h` : D(ms);
   return {
     pct,
     unknownTool: "unknown tool",
@@ -1941,6 +1965,94 @@ function en() {
           action: (type) => `Find out why ${type} subagents fail or get stopped`,
           why: (facts, errors) => `${facts}. ${errors ? "Look at a few failed runs (their transcripts are in the sessions' subagents folders) and tell me the common cause: a tool that keeps failing, a too-broad task, a timeout" : "Mostly stopped by me: maybe the task given to them is too broad or they take too long \u2014 suggest a narrower brief"}; do not change anything unless I agree`
         }
+      },
+      // ---------- Sessions (recommend-sessions.ts) ----------
+      sessions: {
+        compact: {
+          facts: (n, avgPre) => `${n} auto-${plural(n, "en", ["compaction", "compactions"])}${avgPre ? ` at \u2248 ${N(avgPre)} tokens of context` : ""}`,
+          title: (total, sessions2) => `${total} auto-${plural(total, "en", ["compaction", "compactions"])} in ${sessions2} ${plural(sessions2, "en", ["session", "sessions"])}`,
+          titleOne: (total) => `This session auto-compacted ${times(total)}`,
+          detail: "Auto-compaction kicks in when the context is nearly full: Claude summarizes the conversation and loses details, and the summary is one more large request over the whole context. Split long tasks into stages, run /compact with a focus (what to keep) before the context fills up, and /clear between unrelated tasks.",
+          avg: (n) => `Average context at an auto-compaction: \u2248 ${N(n)} tokens`,
+          pctEnv: (v) => `Your auto-compaction threshold: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=${v}`,
+          summary: (total, sessions2) => `${total} auto-${plural(total, "en", ["compaction", "compactions"])} in ${sessions2} ${plural(sessions2, "en", ["session", "sessions"])}: long tasks keep filling the context.`,
+          summaryOne: (total) => `one of my sessions auto-compacted ${times(total)}: a long task kept filling the context.`,
+          name: "Long tasks: compact on purpose",
+          section: "Long tasks",
+          noteText: "For a long multi-step task, keep a short plan/progress file and update it after each step; when a step is done and the context is large, suggest that I run /compact with a focus (or /clear and continue from the plan file) instead of waiting for auto-compaction.",
+          why: (total, sessions2) => `${total} auto-${plural(total, "en", ["compaction", "compactions"])} in ${sessions2} ${plural(sessions2, "en", ["session", "sessions"])}`,
+          noteRule: "That line is the only change: do not touch autoCompactEnabled or any other setting."
+        },
+        idle: {
+          facts: (n, n60, write) => `${n} cache ${plural(n, "en", ["rebuild", "rebuilds"])} after a break${n60 ? ` (${n60} after more than an hour)` : ""}, \u2248 ${N(write)} tokens written again`,
+          title: (n, sessions2, write) => `Resuming after breaks re-wrote \u2248 ${N(write)} tokens of context to the cache (${times(n)} in ${sessions2} ${plural(sessions2, "en", ["session", "sessions"])})`,
+          titleOne: (n, write) => `After breaks, this session re-wrote \u2248 ${N(write)} tokens of context to the cache (${times(n)})`,
+          detail: "The prompt cache keeps the context for a limited time (5 minutes by default, an hour on some plans). After a longer break the next turn writes the whole context to the cache again, and cache writes cost more than reads and count against your limits. Only turns that really did that are counted (a break after which the cache was still warm is not). The saving leaves out the startup context a fresh session writes anyway.",
+          total: (n, n60, write) => `In total: ${n} ${plural(n, "en", ["rebuild", "rebuilds"])}${n60 ? `, ${n60} after more than an hour` : ""}; \u2248 ${N(write)} tokens written again`,
+          fix: "Before stepping away from a large session, run /compact with what to keep (or ask for a short summary and /clear); after a long break, start a new session from that summary instead of continuing the old one. Small sessions are cheap to resume: this matters only for large contexts."
+        },
+        full: {
+          facts: (share, hi, limit, compactions) => `${pct(share)} of turns above 85% of the ${limit > 2e5 ? "1M" : "200K"} window (${hi})${compactions ? `, ${compactions} auto-${plural(compactions, "en", ["compaction", "compactions"])}` : ""}`,
+          title: (n) => `${n} sessions keep running with a nearly full context`,
+          titleOne: (share) => `This session ran ${pct(share)} of its turns with the context over 85% full`,
+          detail: "Every turn re-reads the whole context, so a nearly full window makes each turn expensive, and answers get worse as old details pile up; auto-compaction comes next.",
+          fix: "Run /compact with a focus at around 60\u201370% instead of waiting for auto-compaction; /clear between unrelated tasks; hand bulk reads and searches to subagents (Explore) so raw results stay out of the main context; read large files in parts."
+        },
+        effort: {
+          title: (simple, rounds, levels) => `${simple} of ${rounds} prompts at ${levels} effort were simple`,
+          detail: 'A raised effort (xhigh, max) lets the model think longer on every prompt. These prompts were answered in at most two requests, without tools and with a short answer: lookups, small edits, questions. How much less a lower effort would have thought cannot be measured, so there is no saving estimate; "high", the usual default, is not counted.',
+          evidence: (lvl, simple, rounds, tok, sessions2) => `${lvl}: ${simple} of ${rounds} prompts simple, \u2248 ${N(tok)} tokens, in ${sessions2} ${plural(sessions2, "en", ["session", "sessions"])}`,
+          fix: "Keep the default effort for routine work and raise it for hard problems only: the effort level can be changed in the middle of a session."
+        },
+        auto: {
+          facts: (runs, tok, share, model, last) => `${runs} ${plural(runs, "en", ["run", "runs"])}, \u2248 ${N(tok)} tokens (${pct(share)} of all), mostly ${model}, last ${last}`,
+          title: (runs, share) => `Automated runs (scripts, SDK, schedules) used ${pct(share)} of your tokens (${runs} ${plural(runs, "en", ["session", "sessions"])})`,
+          detail: "Sessions nobody sits in front of: claude -p from scripts or CI, the Agent SDK, scheduled routines, the GitHub Action. They often run on the default top model with no turn limit, and a busy pipeline repeats them many times a day.",
+          fix: "Check what starts them (cron, CI, scripts, scheduled routines) and whether each needs the top model (--model sonnet), a --max-turns limit or a lower frequency."
+        },
+        cache: {
+          detail: "On these days a large part of the context was written to the cache again instead of being read from it. Cache writes cost more than reads and burn through limits faster. The likely causes are what the transcripts show; CLAUDE.md edits or MCP changes in the middle of a session are not visible in them.",
+          likely: (list) => `likely: ${list}`,
+          unknown: "no cause visible in the data",
+          causeIdle: (n, w) => `${n} ${plural(n, "en", ["rebuild", "rebuilds"])} after breaks (\u2248 ${N(w)})`,
+          causeSwitch: (n, w) => `${n} model ${plural(n, "en", ["switch", "switches"])} (\u2248 ${N(w)})`,
+          causeCompact: (n) => `${n} ${plural(n, "en", ["compaction", "compactions"])}`,
+          causeStarts: (n, w) => `${n} new sessions and subagents (\u2248 ${N(w)} of startup context)`
+        }
+      },
+      // ---------- Subscription limits (recommend-limits.ts) ----------
+      limits: {
+        page: { skills: "Skills & plugins", mcp: "MCP", startup: "Startup context", tools: "Tools", subagents: "Subagents", sessions: "Sessions", overview: "Overview", limits: "Limits", session: "Session" },
+        connect: {
+          title: "Subscription limits are not connected",
+          detail: "Clorbit reads your 5-hour and weekly limits from Claude Code's status line. Once connected, this panel shows how fast you use them, whether a window runs out before it resets, and what eats it.",
+          evidence: [
+            "In Claude Code, type /clorbit statusline: a dry run that shows exactly what would change in ~/.claude/settings.json and changes nothing.",
+            "If the preview looks right, run /clorbit statusline --apply yourself: it backs up settings.json and changes only the status-line command (--remove restores it)."
+          ]
+        },
+        eat: {
+          projects: (list) => `Projects in this window: ${list}`,
+          agents: (list) => `Who: ${list}`,
+          main: "main sessions",
+          models: (list) => `Models: ${list}`
+        },
+        runout: {
+          title: (w, early) => `At this pace the ${w === "7d" ? "weekly" : "5-hour"} limit runs out \u2248 ${long(early)} before it resets`,
+          titleExhausted: (w, left) => `The ${w === "7d" ? "weekly" : "5-hour"} limit is used up${left ? `; it resets in ${long(left)}` : ""}`,
+          detail: (w, levers) => `The forecast extends the recent burn rate to the reset. Below: what used this window so far (weighted the way limits roughly count: output and cache writes more than cache reads)${levers ? ", and the recommendations that would free the most of it: their savings as a share of the window, assuming the saved tokens have your usual mix (an estimate)" : ""}.`,
+          now: (w, used, rate, hitsAt, resetsAt, projected) => `Now ${used}% used, \u2248 ${pp(rate, "en")}%/h${hitsAt ? `; runs out \u2248 ${when(hitsAt)}` : ""}${resetsAt ? `; resets ${when(resetsAt)}` : ""}; \u2248 ${projected}% by the reset at this pace`,
+          lever: (title, p, w, page) => `${page ? `${page}: ` : ""}${title} \u2014 \u2248 \u2212${pp(p, "en")}% of the ${w === "7d" ? "weekly" : "5-hour"} limit`,
+          leverNote: (p, w, page) => `\u2248 \u2212${pp(p, "en")}% of the ${w === "7d" ? "weekly" : "5-hour"} limit${page ? ` \xB7 ${page}` : ""}`,
+          fixNone: "No single recommendation stands out. The usual levers: subagents that only search on a cheaper model, a smaller startup context, shorter tool outputs, fewer automated runs."
+        },
+        pace: {
+          titleRoom: (p) => `On pace to finish the week at \u2248 ${p}% of the weekly limit: you have room`,
+          titleTight: (p) => `On pace to finish the week at \u2248 ${p}% of the weekly limit`,
+          titleOver: (p) => `On a straight line the weekly limit runs out before it resets (\u2248 ${p}% by then)`,
+          detail: (used, elapsed, left, forecast) => `${used}% used with ${pct(elapsed)} of the 7-day window gone; it resets in ${long(left)}. ${forecast ? "The projection is the forecast (the recent burn rate)." : "The projection is a straight line through the use so far."}`,
+          line: (used, elapsed, projected) => `Used ${used}% \xB7 ${pct(elapsed)} of the week gone \xB7 \u2248 ${projected}% at the reset`
+        }
       }
     }
   };
@@ -1949,6 +2061,7 @@ function uk() {
   const N = (n) => fmtNum(n, "uk");
   const D = (ms) => fmtDuration(ms, "uk");
   const times = (n) => `${n} ${plural(n, "uk", ["\u0440\u0430\u0437", "\u0440\u0430\u0437\u0438", "\u0440\u0430\u0437\u0456\u0432"])}`;
+  const long = (ms) => ms >= 48 * 36e5 ? `${Math.floor(ms / 864e5)} \u0434\u043D. ${Math.round(ms % 864e5 / 36e5)} \u0433\u043E\u0434` : D(ms);
   return {
     pct,
     unknownTool: "\u043D\u0435\u0432\u0456\u0434\u043E\u043C\u0438\u0439 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442",
@@ -2286,6 +2399,92 @@ function uk() {
           action: (type) => `\u0417'\u044F\u0441\u0443\u0432\u0430\u0442\u0438, \u0447\u043E\u043C\u0443 \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0438 ${type} \u043F\u0430\u0434\u0430\u044E\u0442\u044C \u0430\u0431\u043E \u0437\u0443\u043F\u0438\u043D\u044F\u044E\u0442\u044C\u0441\u044F`,
           why: (facts, errors) => `${facts}. ${errors ? "\u041F\u043E\u0434\u0438\u0432\u0438\u0441\u044C \u043A\u0456\u043B\u044C\u043A\u0430 \u043D\u0435\u0432\u0434\u0430\u043B\u0438\u0445 \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432 (\u0457\u0445\u043D\u0456 \u0442\u0440\u0430\u043D\u0441\u043A\u0440\u0438\u043F\u0442\u0438 \u2014 \u0443 \u0442\u0435\u043A\u0430\u0445 subagents \u0441\u0435\u0441\u0456\u0439) \u0456 \u0441\u043A\u0430\u0436\u0438 \u0441\u043F\u0456\u043B\u044C\u043D\u0443 \u043F\u0440\u0438\u0447\u0438\u043D\u0443: \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442, \u0449\u043E \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u043F\u0430\u0434\u0430\u0454, \u043D\u0430\u0434\u0442\u043E \u0448\u0438\u0440\u043E\u043A\u0430 \u0437\u0430\u0434\u0430\u0447\u0430, \u0442\u0430\u0439\u043C-\u0430\u0443\u0442" : "\u0417\u0434\u0435\u0431\u0456\u043B\u044C\u0448\u043E\u0433\u043E \u0457\u0445 \u0437\u0443\u043F\u0438\u043D\u044F\u0432 \u044F: \u043C\u043E\u0436\u043B\u0438\u0432\u043E, \u0437\u0430\u0434\u0430\u0447\u0430 \u043D\u0430\u0434\u0442\u043E \u0448\u0438\u0440\u043E\u043A\u0430 \u0430\u0431\u043E \u0432\u043E\u043D\u0438 \u043F\u0440\u0430\u0446\u044E\u044E\u0442\u044C \u0437\u0430\u0434\u043E\u0432\u0433\u043E \u2014 \u0437\u0430\u043F\u0440\u043E\u043F\u043E\u043D\u0443\u0439 \u0432\u0443\u0436\u0447\u0435 \u0444\u043E\u0440\u043C\u0443\u043B\u044E\u0432\u0430\u043D\u043D\u044F"}; \u043D\u0456\u0447\u043E\u0433\u043E \u043D\u0435 \u0437\u043C\u0456\u043D\u044E\u0439 \u0431\u0435\u0437 \u043C\u043E\u0454\u0457 \u0437\u0433\u043E\u0434\u0438`
         }
+      },
+      sessions: {
+        compact: {
+          facts: (n, avgPre) => `${n} ${plural(n, "uk", ["\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u044F", "\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0457", "\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0439"])}${avgPre ? ` \u043F\u0440\u0438 \u2248 ${N(avgPre)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443` : ""}`,
+          title: (total, sessions2) => `${total} ${plural(total, "uk", ["\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u044F", "\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0457", "\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0439"])} \u0443 ${sessions2} ${plural(sessions2, "uk", ["\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u044F\u0445", "\u0441\u0435\u0441\u0456\u044F\u0445"])}`,
+          titleOne: (total) => `\u0426\u044F \u0441\u0435\u0441\u0456\u044F \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u043D\u043E \u0441\u0442\u0438\u0441\u043A\u0430\u043B\u0430\u0441\u044F ${times(total)}`,
+          detail: "\u0410\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u044F \u0432\u043C\u0438\u043A\u0430\u0454\u0442\u044C\u0441\u044F, \u043A\u043E\u043B\u0438 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u043C\u0430\u0439\u0436\u0435 \u043F\u043E\u0432\u043D\u0438\u0439: Claude \u043F\u0456\u0434\u0441\u0443\u043C\u043E\u0432\u0443\u0454 \u0440\u043E\u0437\u043C\u043E\u0432\u0443 \u0439 \u0433\u0443\u0431\u0438\u0442\u044C \u043F\u043E\u0434\u0440\u043E\u0431\u0438\u0446\u0456, \u0430 \u0441\u0430\u043C \u043F\u0456\u0434\u0441\u0443\u043C\u043E\u043A \u2014 \u0449\u0435 \u043E\u0434\u0438\u043D \u0432\u0435\u043B\u0438\u043A\u0438\u0439 \u0437\u0430\u043F\u0438\u0442 \u043F\u043E \u0432\u0441\u044C\u043E\u043C\u0443 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443. \u0420\u043E\u0437\u0431\u0438\u0432\u0430\u0439 \u0434\u043E\u0432\u0433\u0456 \u0437\u0430\u0434\u0430\u0447\u0456 \u043D\u0430 \u0435\u0442\u0430\u043F\u0438, \u0437\u0430\u043F\u0443\u0441\u043A\u0430\u0439 /compact \u0456\u0437 \u0444\u043E\u043A\u0443\u0441\u043E\u043C (\u0449\u043E \u0437\u0431\u0435\u0440\u0435\u0433\u0442\u0438) \u0434\u043E \u0442\u043E\u0433\u043E, \u044F\u043A \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0437\u0430\u043F\u043E\u0432\u043D\u0438\u0442\u044C\u0441\u044F, \u0456 /clear \u043C\u0456\u0436 \u043D\u0435\u043F\u043E\u0432'\u044F\u0437\u0430\u043D\u0438\u043C\u0438 \u0437\u0430\u0434\u0430\u0447\u0430\u043C\u0438.",
+          avg: (n) => `\u0421\u0435\u0440\u0435\u0434\u043D\u0456\u0439 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u043D\u0430 \u043C\u043E\u043C\u0435\u043D\u0442 \u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0457: \u2248 ${N(n)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432`,
+          pctEnv: (v) => `\u0422\u0432\u0456\u0439 \u043F\u043E\u0440\u0456\u0433 \u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0457: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=${v}`,
+          summary: (total, sessions2) => `${total} ${plural(total, "uk", ["\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u044F", "\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0457", "\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0439"])} \u0443 ${sessions2} ${plural(sessions2, "uk", ["\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u044F\u0445", "\u0441\u0435\u0441\u0456\u044F\u0445"])}: \u0434\u043E\u0432\u0433\u0456 \u0437\u0430\u0434\u0430\u0447\u0456 \u0440\u0430\u0437 \u0443 \u0440\u0430\u0437 \u0437\u0430\u043F\u043E\u0432\u043D\u044E\u044E\u0442\u044C \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442.`,
+          summaryOne: (total) => `\u043E\u0434\u043D\u0430 \u0437 \u043C\u043E\u0457\u0445 \u0441\u0435\u0441\u0456\u0439 \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u043D\u043E \u0441\u0442\u0438\u0441\u043A\u0430\u043B\u0430\u0441\u044F ${times(total)}: \u0434\u043E\u0432\u0433\u0430 \u0437\u0430\u0434\u0430\u0447\u0430 \u0437\u0430\u043F\u043E\u0432\u043D\u044E\u0432\u0430\u043B\u0430 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442.`,
+          name: "\u0414\u043E\u0432\u0433\u0456 \u0437\u0430\u0434\u0430\u0447\u0456: \u0441\u0442\u0438\u0441\u043A\u0430\u0442\u0438 \u0441\u0432\u0456\u0434\u043E\u043C\u043E",
+          section: "\u0414\u043E\u0432\u0433\u0456 \u0437\u0430\u0434\u0430\u0447\u0456",
+          noteText: "\u0414\u043B\u044F \u0434\u043E\u0432\u0433\u043E\u0457 \u0431\u0430\u0433\u0430\u0442\u043E\u043A\u0440\u043E\u043A\u043E\u0432\u043E\u0457 \u0437\u0430\u0434\u0430\u0447\u0456 \u0432\u0435\u0434\u0438 \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u0444\u0430\u0439\u043B \u043F\u043B\u0430\u043D\u0443 \u0439 \u043F\u0440\u043E\u0433\u0440\u0435\u0441\u0443 \u0442\u0430 \u043E\u043D\u043E\u0432\u043B\u044E\u0439 \u0439\u043E\u0433\u043E \u043F\u0456\u0441\u043B\u044F \u043A\u043E\u0436\u043D\u043E\u0433\u043E \u043A\u0440\u043E\u043A\u0443; \u043A\u043E\u043B\u0438 \u043A\u0440\u043E\u043A \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043D\u043E, \u0430 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0432\u0435\u043B\u0438\u043A\u0438\u0439, \u0437\u0430\u043F\u0440\u043E\u043F\u043E\u043D\u0443\u0439 \u043C\u0435\u043D\u0456 /compact \u0456\u0437 \u0444\u043E\u043A\u0443\u0441\u043E\u043C (\u0430\u0431\u043E /clear \u0456 \u043F\u0440\u043E\u0434\u043E\u0432\u0436\u0435\u043D\u043D\u044F \u0437 \u0444\u0430\u0439\u043B\u0443 \u043F\u043B\u0430\u043D\u0443), \u0430 \u043D\u0435 \u0447\u0435\u043A\u0430\u0439 \u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0457.",
+          why: (total, sessions2) => `${total} ${plural(total, "uk", ["\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u044F", "\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0457", "\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0439"])} \u0443 ${sessions2} ${plural(sessions2, "uk", ["\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u044F\u0445", "\u0441\u0435\u0441\u0456\u044F\u0445"])}`,
+          noteRule: "\u0426\u0435\u0439 \u0440\u044F\u0434\u043E\u043A \u2014 \u0454\u0434\u0438\u043D\u0430 \u0437\u043C\u0456\u043D\u0430: \u043D\u0435 \u0447\u0456\u043F\u0430\u0439 autoCompactEnabled \u0442\u0430 \u0456\u043D\u0448\u0456 \u043D\u0430\u043B\u0430\u0448\u0442\u0443\u0432\u0430\u043D\u043D\u044F."
+        },
+        idle: {
+          facts: (n, n60, write) => `${n} ${plural(n, "uk", ["\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0438\u0441", "\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0438\u0441\u0438", "\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0438\u0441\u0456\u0432"])} \u043A\u0435\u0448\u0443 \u043F\u0456\u0441\u043B\u044F \u043F\u0435\u0440\u0435\u0440\u0432\u0438${n60 ? ` (${n60} \u2014 \u043F\u0456\u0441\u043B\u044F \u043F\u043E\u043D\u0430\u0434 \u0433\u043E\u0434\u0438\u043D\u0438)` : ""}, \u2248 ${N(write)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u043E \u0437\u043D\u043E\u0432\u0443`,
+          title: (n, sessions2, write) => `\u041F\u0440\u043E\u0434\u043E\u0432\u0436\u0435\u043D\u043D\u044F \u043F\u0456\u0441\u043B\u044F \u043F\u0435\u0440\u0435\u0440\u0432 \u0437\u043D\u043E\u0432\u0443 \u0437\u0430\u043F\u0438\u0441\u0430\u043B\u043E \u0432 \u043A\u0435\u0448 \u2248 ${N(write)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443 (${times(n)} \u0443 ${sessions2} ${plural(sessions2, "uk", ["\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u044F\u0445", "\u0441\u0435\u0441\u0456\u044F\u0445"])})`,
+          titleOne: (n, write) => `\u041F\u0456\u0441\u043B\u044F \u043F\u0435\u0440\u0435\u0440\u0432 \u0446\u044F \u0441\u0435\u0441\u0456\u044F \u0437\u043D\u043E\u0432\u0443 \u0437\u0430\u043F\u0438\u0441\u0430\u043B\u0430 \u0432 \u043A\u0435\u0448 \u2248 ${N(write)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443 (${times(n)})`,
+          detail: "\u041A\u0435\u0448 \u043F\u0440\u043E\u043C\u043F\u0442\u0430 \u0442\u0440\u0438\u043C\u0430\u0454 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u043E\u0431\u043C\u0435\u0436\u0435\u043D\u0438\u0439 \u0447\u0430\u0441 (\u0442\u0438\u043F\u043E\u0432\u043E 5 \u0445\u0432\u0438\u043B\u0438\u043D, \u043D\u0430 \u0434\u0435\u044F\u043A\u0438\u0445 \u043F\u043B\u0430\u043D\u0430\u0445 \u0433\u043E\u0434\u0438\u043D\u0443). \u041F\u0456\u0441\u043B\u044F \u0434\u043E\u0432\u0448\u043E\u0457 \u043F\u0435\u0440\u0435\u0440\u0432\u0438 \u043D\u0430\u0441\u0442\u0443\u043F\u043D\u0438\u0439 \u0445\u0456\u0434 \u0437\u0430\u043F\u0438\u0441\u0443\u0454 \u0432 \u043A\u0435\u0448 \u0443\u0432\u0435\u0441\u044C \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0437\u0430\u043D\u043E\u0432\u043E, \u0430 \u0437\u0430\u043F\u0438\u0441 \u0443 \u043A\u0435\u0448 \u0434\u043E\u0440\u043E\u0436\u0447\u0438\u0439 \u0437\u0430 \u0447\u0438\u0442\u0430\u043D\u043D\u044F \u0456 \u0440\u0430\u0445\u0443\u0454\u0442\u044C\u0441\u044F \u0432 \u043B\u0456\u043C\u0456\u0442\u0438. \u0412\u0440\u0430\u0445\u043E\u0432\u0430\u043D\u043E \u043B\u0438\u0448\u0435 \u0445\u043E\u0434\u0438, \u044F\u043A\u0456 \u0441\u043F\u0440\u0430\u0432\u0434\u0456 \u0446\u0435 \u0437\u0440\u043E\u0431\u0438\u043B\u0438 (\u043F\u0435\u0440\u0435\u0440\u0432\u0430, \u043F\u0456\u0441\u043B\u044F \u044F\u043A\u043E\u0457 \u043A\u0435\u0448 \u0431\u0443\u0432 \u0449\u0435 \u0442\u0435\u043F\u043B\u0438\u043C, \u043D\u0435 \u0440\u0430\u0445\u0443\u0454\u0442\u044C\u0441\u044F). \u0415\u043A\u043E\u043D\u043E\u043C\u0456\u044F \u043D\u0435 \u0432\u043A\u043B\u044E\u0447\u0430\u0454 \u0441\u0442\u0430\u0440\u0442\u043E\u0432\u0438\u0439 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442, \u044F\u043A\u0438\u0439 \u043D\u043E\u0432\u0430 \u0441\u0435\u0441\u0456\u044F \u0432\u0441\u0435 \u043E\u0434\u043D\u043E \u0437\u0430\u043F\u0438\u0448\u0435.",
+          total: (n, n60, write) => `\u0420\u0430\u0437\u043E\u043C: ${n} ${plural(n, "uk", ["\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0438\u0441", "\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0438\u0441\u0438", "\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0438\u0441\u0456\u0432"])}${n60 ? `, ${n60} \u2014 \u043F\u0456\u0441\u043B\u044F \u043F\u043E\u043D\u0430\u0434 \u0433\u043E\u0434\u0438\u043D\u0438` : ""}; \u2248 ${N(write)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u043E \u0437\u043D\u043E\u0432\u0443`,
+          fix: "\u041F\u0435\u0440\u0448 \u043D\u0456\u0436 \u0432\u0456\u0434\u0456\u0439\u0442\u0438 \u0432\u0456\u0434 \u0432\u0435\u043B\u0438\u043A\u043E\u0457 \u0441\u0435\u0441\u0456\u0457, \u0437\u0430\u043F\u0443\u0441\u0442\u0438 /compact \u0456\u0437 \u0442\u0438\u043C, \u0449\u043E \u0437\u0431\u0435\u0440\u0435\u0433\u0442\u0438 (\u0430\u0431\u043E \u043F\u043E\u043F\u0440\u043E\u0441\u0438 \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u043F\u0456\u0434\u0441\u0443\u043C\u043E\u043A \u0456 \u0437\u0440\u043E\u0431\u0438 /clear); \u043F\u0456\u0441\u043B\u044F \u0434\u043E\u0432\u0433\u043E\u0457 \u043F\u0435\u0440\u0435\u0440\u0432\u0438 \u043F\u043E\u0447\u043D\u0438 \u043D\u043E\u0432\u0443 \u0441\u0435\u0441\u0456\u044E \u0437 \u0446\u044C\u043E\u0433\u043E \u043F\u0456\u0434\u0441\u0443\u043C\u043A\u0443, \u0430 \u043D\u0435 \u043F\u0440\u043E\u0434\u043E\u0432\u0436\u0443\u0439 \u0441\u0442\u0430\u0440\u0443. \u041C\u0430\u043B\u0456 \u0441\u0435\u0441\u0456\u0457 \u043F\u0440\u043E\u0434\u043E\u0432\u0436\u0443\u0432\u0430\u0442\u0438 \u0434\u0435\u0448\u0435\u0432\u043E: \u0446\u0435 \u0432\u0430\u0436\u043B\u0438\u0432\u043E \u043B\u0438\u0448\u0435 \u0434\u043B\u044F \u0432\u0435\u043B\u0438\u043A\u0438\u0445 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0456\u0432."
+        },
+        full: {
+          facts: (share, hi, limit, compactions) => `${pct(share)} \u0445\u043E\u0434\u0456\u0432 \u043F\u043E\u043D\u0430\u0434 85% \u0432\u0456\u043A\u043D\u0430 ${limit > 2e5 ? "1 \u043C\u043B\u043D" : "200 \u0442\u0438\u0441."} (${hi})${compactions ? `, ${compactions} ${plural(compactions, "uk", ["\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u044F", "\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0457", "\u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0439"])}` : ""}`,
+          title: (n) => `${n} ${plural(n, "uk", ["\u0441\u0435\u0441\u0456\u044F \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u043F\u0440\u0430\u0446\u044E\u0454", "\u0441\u0435\u0441\u0456\u0457 \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u043F\u0440\u0430\u0446\u044E\u044E\u0442\u044C", "\u0441\u0435\u0441\u0456\u0439 \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u043F\u0440\u0430\u0446\u044E\u044E\u0442\u044C"])} \u0437 \u043C\u0430\u0439\u0436\u0435 \u043F\u043E\u0432\u043D\u0438\u043C \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u043E\u043C`,
+          titleOne: (share) => `\u0426\u044F \u0441\u0435\u0441\u0456\u044F \u043F\u0440\u043E\u0432\u0435\u043B\u0430 ${pct(share)} \u0445\u043E\u0434\u0456\u0432 \u0456\u0437 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u043E\u043C, \u0437\u0430\u043F\u043E\u0432\u043D\u0435\u043D\u0438\u043C \u043F\u043E\u043D\u0430\u0434 85%`,
+          detail: "\u041A\u043E\u0436\u0435\u043D \u0445\u0456\u0434 \u043F\u0435\u0440\u0435\u0447\u0438\u0442\u0443\u0454 \u0432\u0435\u0441\u044C \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442, \u0442\u043E\u0436 \u043C\u0430\u0439\u0436\u0435 \u043F\u043E\u0432\u043D\u0435 \u0432\u0456\u043A\u043D\u043E \u0440\u043E\u0431\u0438\u0442\u044C \u043A\u043E\u0436\u0435\u043D \u0445\u0456\u0434 \u0434\u043E\u0440\u043E\u0433\u0438\u043C, \u0430 \u0432\u0456\u0434\u043F\u043E\u0432\u0456\u0434\u0456 \u0433\u0456\u0440\u0448\u0430\u044E\u0442\u044C, \u043A\u043E\u043B\u0438 \u043D\u0430\u043A\u043E\u043F\u0438\u0447\u0443\u044E\u0442\u044C\u0441\u044F \u0441\u0442\u0430\u0440\u0456 \u043F\u043E\u0434\u0440\u043E\u0431\u0438\u0446\u0456; \u0434\u0430\u043B\u0456 \u2014 \u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u044F.",
+          fix: "\u0417\u0430\u043F\u0443\u0441\u043A\u0430\u0439 /compact \u0456\u0437 \u0444\u043E\u043A\u0443\u0441\u043E\u043C \u0434\u0435\u0441\u044C \u043D\u0430 60\u201370%, \u043D\u0435 \u0447\u0435\u043A\u0430\u044E\u0447\u0438 \u0430\u0432\u0442\u043E\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0457; /clear \u043C\u0456\u0436 \u043D\u0435\u043F\u043E\u0432'\u044F\u0437\u0430\u043D\u0438\u043C\u0438 \u0437\u0430\u0434\u0430\u0447\u0430\u043C\u0438; \u043C\u0430\u0441\u043E\u0432\u0456 \u0447\u0438\u0442\u0430\u043D\u043D\u044F \u0439 \u043F\u043E\u0448\u0443\u043A\u0438 \u0432\u0456\u0434\u0434\u0430\u0432\u0430\u0439 \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430\u043C (Explore), \u0449\u043E\u0431 \u0441\u0438\u0440\u0456 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0438 \u043D\u0435 \u043F\u043E\u0442\u0440\u0430\u043F\u043B\u044F\u043B\u0438 \u0432 \u0433\u043E\u043B\u043E\u0432\u043D\u0438\u0439 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442; \u0432\u0435\u043B\u0438\u043A\u0456 \u0444\u0430\u0439\u043B\u0438 \u0447\u0438\u0442\u0430\u0439 \u0447\u0430\u0441\u0442\u0438\u043D\u0430\u043C\u0438."
+        },
+        effort: {
+          title: (simple, rounds, levels) => `${simple} \u0437 ${rounds} \u043F\u0440\u043E\u043C\u043F\u0442\u0456\u0432 \u0456\u0437 \u0437\u0443\u0441\u0438\u043B\u043B\u044F\u043C ${levels} \u0431\u0443\u043B\u0438 \u043F\u0440\u043E\u0441\u0442\u0438\u043C\u0438`,
+          detail: "\u041F\u0456\u0434\u0432\u0438\u0449\u0435\u043D\u0435 \u0437\u0443\u0441\u0438\u043B\u043B\u044F (xhigh, max) \u0434\u0430\u0454 \u043C\u043E\u0434\u0435\u043B\u0456 \u0434\u043E\u0432\u0448\u0435 \u0434\u0443\u043C\u0430\u0442\u0438 \u043D\u0430\u0434 \u043A\u043E\u0436\u043D\u0438\u043C \u043F\u0440\u043E\u043C\u043F\u0442\u043E\u043C. \u041D\u0430 \u0446\u0456 \u043F\u0440\u043E\u043C\u043F\u0442\u0438 \u0432\u0438\u0441\u0442\u0430\u0447\u0438\u043B\u043E \u043D\u0435 \u0431\u0456\u043B\u044C\u0448\u0435 \u0434\u0432\u043E\u0445 \u0437\u0430\u043F\u0438\u0442\u0456\u0432, \u0431\u0435\u0437 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432 \u0456 \u0437 \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u044E \u0432\u0456\u0434\u043F\u043E\u0432\u0456\u0434\u0434\u044E: \u0434\u043E\u0432\u0456\u0434\u043A\u0438, \u0434\u0440\u0456\u0431\u043D\u0456 \u043F\u0440\u0430\u0432\u043A\u0438, \u0437\u0430\u043F\u0438\u0442\u0430\u043D\u043D\u044F. \u041D\u0430\u0441\u043A\u0456\u043B\u044C\u043A\u0438 \u043C\u0435\u043D\u0448\u0435 \u043C\u043E\u0434\u0435\u043B\u044C \u0434\u0443\u043C\u0430\u043B\u0430 \u0431 \u0456\u0437 \u043D\u0438\u0436\u0447\u0438\u043C \u0437\u0443\u0441\u0438\u043B\u043B\u044F\u043C, \u0432\u0438\u043C\u0456\u0440\u044F\u0442\u0438 \u043D\u0435 \u043C\u043E\u0436\u043D\u0430, \u0442\u043E\u0436 \u043E\u0446\u0456\u043D\u043A\u0438 \u0435\u043A\u043E\u043D\u043E\u043C\u0456\u0457 \u043D\u0435\u043C\u0430\u0454; \xABhigh\xBB, \u0437\u0432\u0438\u0447\u043D\u0435 \u0442\u0438\u043F\u043E\u0432\u0435 \u0437\u043D\u0430\u0447\u0435\u043D\u043D\u044F, \u043D\u0435 \u0432\u0440\u0430\u0445\u043E\u0432\u0443\u0454\u0442\u044C\u0441\u044F.",
+          evidence: (lvl, simple, rounds, tok, sessions2) => `${lvl}: ${simple} \u0437 ${rounds} \u043F\u0440\u043E\u043C\u043F\u0442\u0456\u0432 \u043F\u0440\u043E\u0441\u0442\u0456, \u2248 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432, \u0443 ${sessions2} ${plural(sessions2, "uk", ["\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u044F\u0445", "\u0441\u0435\u0441\u0456\u044F\u0445"])}`,
+          fix: "\u0414\u043B\u044F \u0437\u0432\u0438\u0447\u0430\u0439\u043D\u043E\u0457 \u0440\u043E\u0431\u043E\u0442\u0438 \u043B\u0438\u0448\u0430\u0439 \u0442\u0438\u043F\u043E\u0432\u0435 \u0437\u0443\u0441\u0438\u043B\u043B\u044F, \u0430 \u043F\u0456\u0434\u0432\u0438\u0449\u0443\u0439 \u0439\u043E\u0433\u043E \u043B\u0438\u0448\u0435 \u0434\u043B\u044F \u0441\u043A\u043B\u0430\u0434\u043D\u0438\u0445 \u0437\u0430\u0434\u0430\u0447: \u0440\u0456\u0432\u0435\u043D\u044C \u0437\u0443\u0441\u0438\u043B\u043B\u044F \u043C\u043E\u0436\u043D\u0430 \u0437\u043C\u0456\u043D\u0438\u0442\u0438 \u043F\u043E\u0441\u0435\u0440\u0435\u0434 \u0441\u0435\u0441\u0456\u0457."
+        },
+        auto: {
+          facts: (runs, tok, share, model, last) => `${runs} ${plural(runs, "uk", ["\u0437\u0430\u043F\u0443\u0441\u043A", "\u0437\u0430\u043F\u0443\u0441\u043A\u0438", "\u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432"])}, \u2248 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 (${pct(share)} \u0443\u0441\u0456\u0445), \u0437\u0434\u0435\u0431\u0456\u043B\u044C\u0448\u043E\u0433\u043E ${model}, \u043E\u0441\u0442\u0430\u043D\u043D\u0456\u0439 ${last}`,
+          title: (runs, share) => `\u0410\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u043D\u0456 \u0437\u0430\u043F\u0443\u0441\u043A\u0438 (\u0441\u043A\u0440\u0438\u043F\u0442\u0438, SDK, \u0440\u043E\u0437\u043A\u043B\u0430\u0434) \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043B\u0438 ${pct(share)} \u0442\u0432\u043E\u0457\u0445 \u0442\u043E\u043A\u0435\u043D\u0456\u0432 (${runs} ${plural(runs, "uk", ["\u0441\u0435\u0441\u0456\u044F", "\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u0439"])})`,
+          detail: "\u0421\u0435\u0441\u0456\u0457, \u043F\u0435\u0440\u0435\u0434 \u044F\u043A\u0438\u043C\u0438 \u043D\u0456\u0445\u0442\u043E \u043D\u0435 \u0441\u0438\u0434\u0438\u0442\u044C: claude -p \u0437\u0456 \u0441\u043A\u0440\u0438\u043F\u0442\u0456\u0432 \u0447\u0438 CI, Agent SDK, \u0437\u0430\u043F\u043B\u0430\u043D\u043E\u0432\u0430\u043D\u0456 \u0437\u0430\u043F\u0443\u0441\u043A\u0438, GitHub Action. \u0412\u043E\u043D\u0438 \u0447\u0430\u0441\u0442\u043E \u043F\u0440\u0430\u0446\u044E\u044E\u0442\u044C \u043D\u0430 \u0442\u0438\u043F\u043E\u0432\u0456\u0439 \u0442\u043E\u043F\u043E\u0432\u0456\u0439 \u043C\u043E\u0434\u0435\u043B\u0456 \u0431\u0435\u0437 \u043B\u0456\u043C\u0456\u0442\u0443 \u0445\u043E\u0434\u0456\u0432, \u0430 \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0435\u043D\u0438\u0439 \u043A\u043E\u043D\u0432\u0435\u0454\u0440 \u043F\u043E\u0432\u0442\u043E\u0440\u044E\u0454 \u0457\u0445 \u0431\u0430\u0433\u0430\u0442\u043E \u0440\u0430\u0437\u0456\u0432 \u043D\u0430 \u0434\u0435\u043D\u044C.",
+          fix: "\u041F\u0435\u0440\u0435\u0432\u0456\u0440, \u0449\u043E \u0457\u0445 \u0437\u0430\u043F\u0443\u0441\u043A\u0430\u0454 (cron, CI, \u0441\u043A\u0440\u0438\u043F\u0442\u0438, \u0437\u0430\u043F\u043B\u0430\u043D\u043E\u0432\u0430\u043D\u0456 \u0437\u0430\u043F\u0443\u0441\u043A\u0438) \u0456 \u0447\u0438 \u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0456 \u043A\u043E\u0436\u043D\u043E\u043C\u0443 \u0442\u043E\u043F\u043E\u0432\u0430 \u043C\u043E\u0434\u0435\u043B\u044C (--model sonnet), \u043B\u0456\u043C\u0456\u0442 --max-turns \u0430\u0431\u043E \u043C\u0435\u043D\u0448\u0430 \u0447\u0430\u0441\u0442\u043E\u0442\u0430."
+        },
+        cache: {
+          detail: "\u0423 \u0446\u0456 \u0434\u043D\u0456 \u0437\u043D\u0430\u0447\u043D\u0430 \u0447\u0430\u0441\u0442\u0438\u043D\u0430 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443 \u0437\u0430\u043F\u0438\u0441\u0443\u0432\u0430\u043B\u0430\u0441\u044C \u0443 \u043A\u0435\u0448 \u0437\u0430\u043D\u043E\u0432\u043E \u0437\u0430\u043C\u0456\u0441\u0442\u044C \u0447\u0438\u0442\u0430\u043D\u043D\u044F \u0437 \u043D\u044C\u043E\u0433\u043E. \u0417\u0430\u043F\u0438\u0441 \u0443 \u043A\u0435\u0448 \u0434\u043E\u0440\u043E\u0436\u0447\u0438\u0439 \u0437\u0430 \u0447\u0438\u0442\u0430\u043D\u043D\u044F \u0456 \u0448\u0432\u0438\u0434\u0448\u0435 \u0437'\u0457\u0434\u0430\u0454 \u043B\u0456\u043C\u0456\u0442\u0438. \u0406\u043C\u043E\u0432\u0456\u0440\u043D\u0456 \u043F\u0440\u0438\u0447\u0438\u043D\u0438 \u2014 \u0442\u0435, \u0449\u043E \u0432\u0438\u0434\u043D\u043E \u0432 \u0442\u0440\u0430\u043D\u0441\u043A\u0440\u0438\u043F\u0442\u0430\u0445; \u0437\u043C\u0456\u043D\u0438 CLAUDE.md \u0447\u0438 MCP \u043F\u043E\u0441\u0435\u0440\u0435\u0434 \u0441\u0435\u0441\u0456\u0457 \u0432 \u043D\u0438\u0445 \u043D\u0435 \u0432\u0438\u0434\u043D\u043E.",
+          likely: (list) => `\u0456\u043C\u043E\u0432\u0456\u0440\u043D\u043E: ${list}`,
+          unknown: "\u043F\u0440\u0438\u0447\u0438\u043D\u0438 \u0432 \u0434\u0430\u043D\u0438\u0445 \u043D\u0435 \u0432\u0438\u0434\u043D\u043E",
+          causeIdle: (n, w) => `${n} ${plural(n, "uk", ["\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0438\u0441", "\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0438\u0441\u0438", "\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0438\u0441\u0456\u0432"])} \u043F\u0456\u0441\u043B\u044F \u043F\u0435\u0440\u0435\u0440\u0432 (\u2248 ${N(w)})`,
+          causeSwitch: (n, w) => `${n} ${plural(n, "uk", ["\u0437\u043C\u0456\u043D\u0430", "\u0437\u043C\u0456\u043D\u0438", "\u0437\u043C\u0456\u043D"])} \u043C\u043E\u0434\u0435\u043B\u0456 (\u2248 ${N(w)})`,
+          causeCompact: (n) => `${n} ${plural(n, "uk", ["\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u044F", "\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0457", "\u043A\u043E\u043C\u043F\u0430\u043A\u0446\u0456\u0439"])}`,
+          causeStarts: (n, w) => `${n} \u043D\u043E\u0432\u0438\u0445 \u0441\u0435\u0441\u0456\u0439 \u0456 \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0456\u0432 (\u2248 ${N(w)} \u0441\u0442\u0430\u0440\u0442\u043E\u0432\u043E\u0433\u043E \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443)`
+        }
+      },
+      limits: {
+        page: { skills: "\u0421\u043A\u0456\u043B\u0438 \u0439 \u043F\u043B\u0430\u0433\u0456\u043D\u0438", mcp: "MCP", startup: "\u0421\u0442\u0430\u0440\u0442\u043E\u0432\u0438\u0439 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442", tools: "\u0406\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0438", subagents: "\u0421\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0438", sessions: "\u0421\u0435\u0441\u0456\u0457", overview: "\u041E\u0433\u043B\u044F\u0434", limits: "\u041B\u0456\u043C\u0456\u0442\u0438", session: "\u0421\u0435\u0441\u0456\u044F" },
+        connect: {
+          title: "\u041B\u0456\u043C\u0456\u0442\u0438 \u043F\u0456\u0434\u043F\u0438\u0441\u043A\u0438 \u043D\u0435 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0456",
+          detail: "Clorbit \u0447\u0438\u0442\u0430\u0454 \u0442\u0432\u043E\u0457 5-\u0433\u043E\u0434\u0438\u043D\u043D\u0438\u0439 \u0456 \u0442\u0438\u0436\u043D\u0435\u0432\u0438\u0439 \u043B\u0456\u043C\u0456\u0442\u0438 \u0437\u0456 \u0441\u0442\u0430\u0442\u0443\u0441-\u0440\u044F\u0434\u043A\u0430 Claude Code. \u041F\u0456\u0441\u043B\u044F \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u043D\u044F \u0446\u044F \u043F\u0430\u043D\u0435\u043B\u044C \u043F\u043E\u043A\u0430\u0436\u0435, \u044F\u043A \u0448\u0432\u0438\u0434\u043A\u043E \u0442\u0438 \u0457\u0445 \u0432\u0438\u0442\u0440\u0430\u0447\u0430\u0454\u0448, \u0447\u0438 \u0437\u0430\u043A\u0456\u043D\u0447\u0438\u0442\u044C\u0441\u044F \u0432\u0456\u043A\u043D\u043E \u0434\u043E \u0441\u043A\u0438\u0434\u0430\u043D\u043D\u044F \u0456 \u0449\u043E \u0439\u043E\u0433\u043E \u0437'\u0457\u0434\u0430\u0454.",
+          evidence: [
+            "\u0423 Claude Code \u0432\u0432\u0435\u0434\u0438 /clorbit statusline: \u0446\u0435 \u043F\u0440\u043E\u0431\u043D\u0438\u0439 \u0437\u0430\u043F\u0443\u0441\u043A, \u044F\u043A\u0438\u0439 \u043F\u043E\u043A\u0430\u0437\u0443\u0454, \u0449\u043E \u0441\u0430\u043C\u0435 \u0437\u043C\u0456\u043D\u0438\u0442\u044C\u0441\u044F \u0432 ~/.claude/settings.json, \u0456 \u043D\u0456\u0447\u043E\u0433\u043E \u043D\u0435 \u0437\u043C\u0456\u043D\u044E\u0454.",
+            "\u042F\u043A\u0449\u043E \u043F\u043E\u043F\u0435\u0440\u0435\u0434\u043D\u0456\u0439 \u043F\u0435\u0440\u0435\u0433\u043B\u044F\u0434 \u0432\u0438\u0433\u043B\u044F\u0434\u0430\u0454 \u043F\u0440\u0430\u0432\u0438\u043B\u044C\u043D\u043E, \u0441\u0430\u043C \u0437\u0430\u043F\u0443\u0441\u0442\u0438 /clorbit statusline --apply: \u0432\u0456\u043D \u0437\u0440\u043E\u0431\u0438\u0442\u044C \u043A\u043E\u043F\u0456\u044E settings.json \u0456 \u0437\u043C\u0456\u043D\u0438\u0442\u044C \u043B\u0438\u0448\u0435 \u043A\u043E\u043C\u0430\u043D\u0434\u0443 \u0441\u0442\u0430\u0442\u0443\u0441-\u0440\u044F\u0434\u043A\u0430 (--remove \u043F\u043E\u0432\u0435\u0440\u0442\u0430\u0454 \u044F\u043A \u0431\u0443\u043B\u043E)."
+          ]
+        },
+        eat: {
+          projects: (list) => `\u041F\u0440\u043E\u0454\u043A\u0442\u0438 \u0432 \u0446\u044C\u043E\u043C\u0443 \u0432\u0456\u043A\u043D\u0456: ${list}`,
+          agents: (list) => `\u0425\u0442\u043E: ${list}`,
+          main: "\u0433\u043E\u043B\u043E\u0432\u043D\u0456 \u0441\u0435\u0441\u0456\u0457",
+          models: (list) => `\u041C\u043E\u0434\u0435\u043B\u0456: ${list}`
+        },
+        runout: {
+          title: (w, early) => `\u0417 \u0442\u0430\u043A\u0438\u043C \u0442\u0435\u043C\u043F\u043E\u043C ${w === "7d" ? "\u0442\u0438\u0436\u043D\u0435\u0432\u0438\u0439" : "5-\u0433\u043E\u0434\u0438\u043D\u043D\u0438\u0439"} \u043B\u0456\u043C\u0456\u0442 \u0437\u0430\u043A\u0456\u043D\u0447\u0438\u0442\u044C\u0441\u044F \u2248 \u0437\u0430 ${long(early)} \u0434\u043E \u0441\u043A\u0438\u0434\u0430\u043D\u043D\u044F`,
+          titleExhausted: (w, left) => `${w === "7d" ? "\u0422\u0438\u0436\u043D\u0435\u0432\u0438\u0439" : "5-\u0433\u043E\u0434\u0438\u043D\u043D\u0438\u0439"} \u043B\u0456\u043C\u0456\u0442 \u0432\u0438\u0447\u0435\u0440\u043F\u0430\u043D\u043E${left ? `; \u0441\u043A\u0438\u043D\u0435\u0442\u044C\u0441\u044F \u0447\u0435\u0440\u0435\u0437 ${long(left)}` : ""}`,
+          detail: (w, levers) => `\u041F\u0440\u043E\u0433\u043D\u043E\u0437 \u043F\u0440\u043E\u0434\u043E\u0432\u0436\u0443\u0454 \u043D\u0435\u0434\u0430\u0432\u043D\u0456\u0439 \u0442\u0435\u043C\u043F \u0432\u0438\u0442\u0440\u0430\u0442 \u0434\u043E \u0441\u043A\u0438\u0434\u0430\u043D\u043D\u044F. \u041D\u0438\u0436\u0447\u0435 \u2014 \u0449\u043E \u0437'\u0457\u043B\u043E \u0446\u0435 \u0432\u0456\u043A\u043D\u043E \u0434\u043E\u0441\u0456 (\u0437 \u0432\u0430\u0433\u0430\u043C\u0438, \u043F\u0440\u0438\u0431\u043B\u0438\u0437\u043D\u043E \u044F\u043A \u0440\u0430\u0445\u0443\u044E\u0442\u044C \u043B\u0456\u043C\u0456\u0442\u0438: \u0432\u0438\u0445\u0456\u0434 \u0456 \u0437\u0430\u043F\u0438\u0441 \u0443 \u043A\u0435\u0448 \u0432\u0430\u0436\u0430\u0442\u044C \u0431\u0456\u043B\u044C\u0448\u0435, \u043D\u0456\u0436 \u0447\u0438\u0442\u0430\u043D\u043D\u044F \u0437 \u043A\u0435\u0448\u0443)${levers ? ", \u0456 \u0440\u0435\u043A\u043E\u043C\u0435\u043D\u0434\u0430\u0446\u0456\u0457, \u044F\u043A\u0456 \u0437\u0432\u0456\u043B\u044C\u043D\u0438\u043B\u0438 \u0431 \u043D\u0430\u0439\u0431\u0456\u043B\u044C\u0448\u0435: \u0457\u0445\u043D\u044F \u0435\u043A\u043E\u043D\u043E\u043C\u0456\u044F \u044F\u043A \u0447\u0430\u0441\u0442\u043A\u0430 \u0432\u0456\u043A\u043D\u0430, \u044F\u043A\u0449\u043E \u0437\u0435\u043A\u043E\u043D\u043E\u043C\u043B\u0435\u043D\u0456 \u0442\u043E\u043A\u0435\u043D\u0438 \u043C\u0430\u044E\u0442\u044C \u0442\u0432\u0456\u0439 \u0437\u0432\u0438\u0447\u043D\u0438\u0439 \u0441\u043A\u043B\u0430\u0434 (\u043E\u0446\u0456\u043D\u043A\u0430)" : ""}.`,
+          now: (w, used, rate, hitsAt, resetsAt, projected) => `\u0417\u0430\u0440\u0430\u0437 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E ${used}%, \u2248 ${pp(rate, "uk")}%/\u0433\u043E\u0434${hitsAt ? `; \u0437\u0430\u043A\u0456\u043D\u0447\u0438\u0442\u044C\u0441\u044F \u2248 ${when(hitsAt)}` : ""}${resetsAt ? `; \u0441\u043A\u0438\u0434\u0430\u043D\u043D\u044F ${when(resetsAt)}` : ""}; \u0437 \u0442\u0430\u043A\u0438\u043C \u0442\u0435\u043C\u043F\u043E\u043C \u2248 ${projected}% \u0434\u043E \u0441\u043A\u0438\u0434\u0430\u043D\u043D\u044F`,
+          lever: (title, p, w, page) => `${page ? `${page}: ` : ""}${title} \u2014 \u2248 \u2212${pp(p, "uk")}% ${w === "7d" ? "\u0442\u0438\u0436\u043D\u0435\u0432\u043E\u0433\u043E" : "5-\u0433\u043E\u0434\u0438\u043D\u043D\u043E\u0433\u043E"} \u043B\u0456\u043C\u0456\u0442\u0443`,
+          leverNote: (p, w, page) => `\u2248 \u2212${pp(p, "uk")}% ${w === "7d" ? "\u0442\u0438\u0436\u043D\u0435\u0432\u043E\u0433\u043E" : "5-\u0433\u043E\u0434\u0438\u043D\u043D\u043E\u0433\u043E"} \u043B\u0456\u043C\u0456\u0442\u0443${page ? ` \xB7 ${page}` : ""}`,
+          fixNone: "\u0416\u043E\u0434\u043D\u0430 \u043E\u043A\u0440\u0435\u043C\u0430 \u0440\u0435\u043A\u043E\u043C\u0435\u043D\u0434\u0430\u0446\u0456\u044F \u043D\u0435 \u0432\u0438\u0434\u0456\u043B\u044F\u0454\u0442\u044C\u0441\u044F. \u0417\u0432\u0438\u0447\u043D\u0456 \u0432\u0430\u0436\u0435\u043B\u0456: \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0438, \u0449\u043E \u043B\u0438\u0448\u0435 \u0448\u0443\u043A\u0430\u044E\u0442\u044C, \u043D\u0430 \u0434\u0435\u0448\u0435\u0432\u0448\u0456\u0439 \u043C\u043E\u0434\u0435\u043B\u0456, \u043C\u0435\u043D\u0448\u0438\u0439 \u0441\u0442\u0430\u0440\u0442\u043E\u0432\u0438\u0439 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442, \u043A\u043E\u0440\u043E\u0442\u0448\u0456 \u0432\u0438\u0432\u043E\u0434\u0438 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432, \u043C\u0435\u043D\u0448\u0435 \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u043D\u0438\u0445 \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432."
+        },
+        pace: {
+          titleRoom: (p) => `\u0417 \u0442\u0430\u043A\u0438\u043C \u0442\u0435\u043C\u043F\u043E\u043C \u0442\u0438\u0436\u0434\u0435\u043D\u044C \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044C\u0441\u044F \u043D\u0430 \u2248 ${p}% \u0442\u0438\u0436\u043D\u0435\u0432\u043E\u0433\u043E \u043B\u0456\u043C\u0456\u0442\u0443: \u0437\u0430\u043F\u0430\u0441 \u0454`,
+          titleTight: (p) => `\u0417 \u0442\u0430\u043A\u0438\u043C \u0442\u0435\u043C\u043F\u043E\u043C \u0442\u0438\u0436\u0434\u0435\u043D\u044C \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044C\u0441\u044F \u043D\u0430 \u2248 ${p}% \u0442\u0438\u0436\u043D\u0435\u0432\u043E\u0433\u043E \u043B\u0456\u043C\u0456\u0442\u0443`,
+          titleOver: (p) => `\u0417\u0430 \u043F\u0440\u044F\u043C\u043E\u044E \u043B\u0456\u043D\u0456\u0454\u044E \u0442\u0438\u0436\u043D\u0435\u0432\u0438\u0439 \u043B\u0456\u043C\u0456\u0442 \u0437\u0430\u043A\u0456\u043D\u0447\u0438\u0442\u044C\u0441\u044F \u0434\u043E \u0441\u043A\u0438\u0434\u0430\u043D\u043D\u044F (\u2248 ${p}% \u043D\u0430 \u0442\u043E\u0439 \u043C\u043E\u043C\u0435\u043D\u0442)`,
+          detail: (used, elapsed, left, forecast) => `\u0412\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E ${used}%, \u0430 \u043C\u0438\u043D\u0443\u043B\u043E ${pct(elapsed)} 7-\u0434\u0435\u043D\u043D\u043E\u0433\u043E \u0432\u0456\u043A\u043D\u0430; \u0441\u043A\u0438\u0434\u0430\u043D\u043D\u044F \u0447\u0435\u0440\u0435\u0437 ${long(left)}. ${forecast ? "\u041F\u0440\u043E\u0454\u043A\u0446\u0456\u044F \u2014 \u0446\u0435 \u043F\u0440\u043E\u0433\u043D\u043E\u0437 (\u043D\u0435\u0434\u0430\u0432\u043D\u0456\u0439 \u0442\u0435\u043C\u043F \u0432\u0438\u0442\u0440\u0430\u0442)." : "\u041F\u0440\u043E\u0454\u043A\u0446\u0456\u044F \u2014 \u043F\u0440\u044F\u043C\u0430 \u043B\u0456\u043D\u0456\u044F \u0447\u0435\u0440\u0435\u0437 \u0434\u043E\u0441\u0456 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u0435."}`,
+          line: (used, elapsed, projected) => `\u0412\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E ${used}% \xB7 \u043C\u0438\u043D\u0443\u043B\u043E ${pct(elapsed)} \u0442\u0438\u0436\u043D\u044F \xB7 \u2248 ${projected}% \u043D\u0430 \u043C\u043E\u043C\u0435\u043D\u0442 \u0441\u043A\u0438\u0434\u0430\u043D\u043D\u044F`
+        }
       }
     }
   };
@@ -2293,12 +2492,21 @@ function uk() {
 function insightText(lang) {
   return cache[lang] ??= lang === "uk" ? uk() : en();
 }
-var pct, cache;
+var pct, when, pp, cache;
 var init_insights_text = __esm({
   "server/insights-text.ts"() {
     "use strict";
     init_i18n();
     pct = (x) => `${(x * 100).toFixed(x < 0.1 ? 1 : 0)}%`;
+    when = (ts) => {
+      const d = new Date(ts);
+      const p2 = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    };
+    pp = (x, lang) => {
+      const v = x < 10 ? x.toFixed(1) : String(Math.round(x));
+      return lang === "uk" ? v.replace(".", ",") : v;
+    };
     cache = {};
   }
 });
@@ -2404,10 +2612,12 @@ function homeDisplay(p) {
 }
 function defaultEnv(o) {
   const skills = path5.join(CLAUDE_DIR, "skills");
+  const settings2 = readSettings();
   return {
     now: o.now ?? Date.now(),
     unusedDays: o.unusedDays,
-    enabledPlugins: readSettings().enabledPlugins,
+    enabledPlugins: settings2.enabledPlugins,
+    autoCompactPct: settings2.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE,
     settingsFile: homeDisplay(SETTINGS_FILE),
     skillsDir: homeDisplay(skills),
     ownSkillExists: (name) => /^[\w.-]+$/.test(name) && fs4.existsSync(path5.join(skills, name)),
@@ -3708,12 +3918,12 @@ function mcpRecommendations(store2, range, lang, env2, covered) {
     }
   };
   const fails = /* @__PURE__ */ new Map();
-  const inRange = (ts) => {
+  const inRange2 = (ts) => {
     const d = localDate(ts);
     return d >= range.from && d <= range.to;
   };
   for (const s of store2.files.values()) {
-    if (!s.firstTs || !inRange(s.firstTs)) continue;
+    if (!s.firstTs || !inRange2(s.firstTs)) continue;
     for (const k of s.mcpSeen) {
       const f = fails.get(k) ?? { failed: 0, auth: 0, seen: /* @__PURE__ */ new Set(), err: null, errLast: 0 };
       f.seen.add(s.sessionId);
@@ -3863,7 +4073,7 @@ function mcpRecommendations(store2, range, lang, env2, covered) {
     for (const s of store2.files.values()) {
       for (const r of s.bigResults) {
         const m = mcpSplit(r.tool);
-        if (!m || !inRange(r.ts)) continue;
+        if (!m || !inRange2(r.ts)) continue;
         const a = heavy.get(m.server) ?? { n: 0, sum: 0, max: 0, tools: /* @__PURE__ */ new Map(), ex: [] };
         a.n++;
         a.sum += r.tokens;
@@ -3873,7 +4083,7 @@ function mcpRecommendations(store2, range, lang, env2, covered) {
         heavy.set(m.server, a);
       }
     }
-    const rangeDays3 = Math.max(1, Math.round(((/* @__PURE__ */ new Date(`${range.to}T00:00:00`)).getTime() - (/* @__PURE__ */ new Date(`${range.from}T00:00:00`)).getTime()) / DAY_MS) + 1);
+    const rangeDays4 = Math.max(1, Math.round(((/* @__PURE__ */ new Date(`${range.to}T00:00:00`)).getTime() - (/* @__PURE__ */ new Date(`${range.from}T00:00:00`)).getTime()) / DAY_MS) + 1);
     for (const [key, a] of [...heavy.entries()].sort((x, y) => y[1].sum - x[1].sum).slice(0, HEAVY_MAX)) {
       const label = labelOf(key, disp.get(key));
       const tools = [...a.tools.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]));
@@ -3888,7 +4098,7 @@ function mcpRecommendations(store2, range, lang, env2, covered) {
         estSavingTokens: period || void 0,
         pages: ["mcp", "tools"],
         scope: "range",
-        saving: period ? { period, days: rangeDays3, basis: "range" } : void 0,
+        saving: period ? { period, days: rangeDays4, basis: "range" } : void 0,
         targets: tools.map(([t, n]) => ({ key: `mcp__${key}__${t}`, label: t, kind: "mcp", note: `${n}\xD7 > 20K` })),
         prompts: buildPrompts({
           lang,
@@ -4434,7 +4644,7 @@ function startupRecommendations(store2, range, lang, env2, o) {
       const top = [...rows].sort((a, b) => Number(b.extra?.perSession ?? 0) - Number(a.extra?.perSession ?? 0)).slice(0, 5);
       out.push({
         id: "startup-total",
-        pages: ["startup", "overview"],
+        pages: ["startup"],
         severity: heavySubs ? "warn" : "info",
         title: heavySubs ? T.startupTotal.titleSubs(subs, subTotal) : TT.startupTotal.title(perMain, perSub),
         detail: TT.startupTotal.detail(startupTotal),
@@ -4470,235 +4680,6 @@ var init_recommend_startup = __esm({
       for (const k of Object.keys(out)) if (out[k] === void 0) delete out[k];
       return out;
     };
-  }
-});
-
-// server/insights.ts
-function filesActiveIn2(store2, range) {
-  const out = [];
-  for (const s of store2.files.values()) {
-    if (Object.keys(s.days).some((d) => d >= range.from && d <= range.to)) out.push(s);
-  }
-  return out;
-}
-function insights(store2, range, hookLog2, lang = "en", opts = {}) {
-  const env2 = { ...defaultEnv({ unusedDays: opts.unusedDays ?? DEFAULT_SETTINGS.recommendations.unusedDays }), ...opts.env };
-  const key = `ins:${lang}:${range.from}:${range.to}:${env2.unusedDays}:${localDate(env2.now)}:${hash8(JSON.stringify([env2.enabledPlugins, env2.mcp.user, env2.mcp.local]))}`;
-  const base = opts.env ? compute(store2, range, lang, env2) : memoize(store2, key, () => compute(store2, range, lang, env2));
-  const extra = hookLog2 ? waitInsights(store2, hookLog2, range, lang, env2) : [];
-  const all = extra.length ? [...base, ...extra].sort(bySaving) : base;
-  return opts.page ? all.filter((i) => i.pages?.includes(opts.page)) : all;
-}
-function rangeMs(range) {
-  const at = (d, plus) => {
-    const [y, m, dd] = d.split("-").map(Number);
-    return new Date(y, m - 1, dd + plus).getTime();
-  };
-  return { from: at(range.from, 0), to: at(range.to, 1) };
-}
-function waitInsights(store2, hookLog2, range, lang = "en", env2) {
-  const { from, to } = rangeMs(range);
-  if (!hookLog2.hasEvents(from, to)) return [];
-  const e = env2 ?? defaultEnv({ unusedDays: DEFAULT_SETTINGS.recommendations.unusedDays });
-  const memoKey = `${hookLog2.version}:${store2.version}:${e.settingsFile}:${localDate(e.now)}`;
-  const cacheKey = `${lang}:${range.from}:${range.to}`;
-  const hit = waitMemo.get(cacheKey);
-  if (hit && hit.key === memoKey) return hit.v;
-  const T = insightText(lang);
-  const waits = deriveWaits(hookLog2.waitEvents(from - WAIT_CAP_MS, to + WAIT_CAP_MS)).filter((w) => w.start >= from && w.start < to && w.end > w.start);
-  const v = [];
-  const allow = permissionRecommendation(hookLog2.permissionEvents(from - WAIT_CAP_MS, to + WAIT_CAP_MS), range, lang, e, { from, to });
-  if (allow) v.push(allow);
-  if (waits.length) {
-    const ctx = new Ctx(store2);
-    const total = waits.reduce((n, w) => n + (w.end - w.start), 0);
-    const perm = waits.filter((w) => w.kind === "permission");
-    const input = waits.filter((w) => w.kind === "input");
-    const permMs = perm.reduce((n, w) => n + (w.end - w.start), 0);
-    const inputMs = total - permMs;
-    const longest = waits.reduce((a, b) => b.end - b.start > a.end - a.start ? b : a);
-    const where = (sid) => {
-      const main = store2.mainOf(sid);
-      const project = ctx.projectOfSession.get(sid);
-      return main?.title ? `${T.quote(main.title)}${project ? ` (${project})` : ""}` : project ?? sid.slice(0, 8);
-    };
-    const UNKNOWN = "\0unknown";
-    const byTool = /* @__PURE__ */ new Map();
-    for (const w of perm) {
-      const k = w.tool ?? UNKNOWN;
-      const a = byTool.get(k) ?? { n: 0, ms: 0 };
-      a.n++;
-      a.ms += w.end - w.start;
-      byTool.set(k, a);
-    }
-    const tools = [...byTool.entries()].sort((a, b) => b[1].n - a[1].n || b[1].ms - a[1].ms);
-    const allowed = tools.map(([t]) => t).filter((t) => t !== UNKNOWN).slice(0, 4);
-    const capH = WAIT_CAP_MS / 36e5;
-    v.push({
-      id: "hook-waits",
-      pages: ["sessions", "overview"],
-      severity: total > 60 * 6e4 ? "warn" : "info",
-      title: T.waits.title(total, longest.end - longest.start),
-      detail: T.waits.detail(
-        waits.length,
-        perm.length ? { n: perm.length, ms: permMs } : null,
-        input.length ? { n: input.length, ms: inputMs } : null,
-        where(longest.sessionId),
-        localDate(longest.start),
-        capH
-      ),
-      evidence: [
-        ...tools.slice(0, 6).map(([t, a]) => T.waits.toolLine(t === UNKNOWN ? T.unknownTool : t, a.n, a.ms)),
-        ...input.length ? [T.waits.inputLine(input.length, inputMs)] : []
-      ],
-      // The allow rules are the Tools card's (one card per issue); without one, the generic advice stays here.
-      fix: perm.length && !allow ? T.waits.fixPerm(allowed.map((t) => `"${t === "Bash" ? "Bash(pnpm test *)" : t}"`).join(", ")) : T.waits.fixInput,
-      ...allow ? { seeAlso: "tools" } : {}
-    });
-  }
-  waitMemo.set(cacheKey, { key: memoKey, v });
-  if (waitMemo.size > 50) waitMemo.delete(waitMemo.keys().next().value);
-  return v;
-}
-function compute(store2, range, lang, env2) {
-  const T = insightText(lang);
-  const skills = skillRecommendations(store2, range, lang, env2);
-  const attr = attribution(store2, range, lang);
-  const coveredPlugins = new Set(skills.filter((i) => i.id.startsWith("unused-plugins:")).flatMap((i) => (i.targets ?? []).map((t) => t.label)));
-  const out = [
-    ...skills,
-    ...mcpRecommendations(store2, range, lang, env2, { plugins: coveredPlugins }),
-    ...startupRecommendations(store2, range, lang, env2, { attr, skillCards: skills }),
-    // Tools: repeated reads, huge built-in tool results, failing tools (permission prompts come from hooks: waitInsights).
-    ...toolRecommendations(store2, range, lang, env2),
-    // Subagents: cheaper models for read-only agents, startup overhead, bursts / deep nesting, failing agents.
-    ...agentRecommendations(store2, range, lang, env2)
-  ];
-  const ov = overview(store2, range);
-  const grand = ov.totals.total || 1;
-  const settings2 = readSettings();
-  const ctx = new Ctx(store2);
-  const pluginKey = (name) => Object.keys(settings2.enabledPlugins).find((k) => k.split("@")[0] === name) ?? `${name}@\u2026`;
-  const filesInRange = filesActiveIn2(store2, range);
-  const compacted = [];
-  for (const s of filesInRange) {
-    if (s.agentId !== null) continue;
-    let n = 0;
-    for (const [d, b] of Object.entries(s.days)) if (d >= range.from && d <= range.to) n += b.autoCompactions;
-    if (n > 0) compacted.push({ s, n });
-  }
-  if (compacted.length) {
-    compacted.sort((a, b) => b.n - a.n);
-    const total = compacted.reduce((n, c) => n + c.n, 0);
-    out.push({
-      id: "auto-compactions",
-      pages: ["sessions"],
-      severity: total >= 10 ? "warn" : "info",
-      title: T.autoCompactions.title(total, compacted.length),
-      detail: T.autoCompactions.detail,
-      evidence: compacted.slice(0, 8).map((c) => `${c.s.title ?? ctx.project(c.s)} \u2014 ${c.n}\xD7 (${ctx.project(c.s)})`),
-      fix: T.autoCompactions.fix(settings2.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)
-    });
-  }
-  const skillsSorted = attr.skills.filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
-  for (const r of skillsSorted.slice(0, 3)) {
-    const share = r.total / grand;
-    if (share < 0.03) continue;
-    const loads = Number(r.extra?.loads ?? 0);
-    out.push({
-      id: `skill-share-${r.key}`,
-      pages: ["skills"],
-      severity: share >= 0.15 ? "warn" : "info",
-      title: T.skillShare.title(r.key, share, loads),
-      detail: T.skillShare.detail(r.key, r.total, r.sessions, loads ? r.total / loads : null),
-      evidence: [T.skillShare.turns(r.turns, r.sessions), T.skillShare.tokens(r.tokens.output, r.tokens.cacheWrite)],
-      fix: T.skillShare.fix
-    });
-  }
-  const oftenLoaded = attr.skills.filter((r) => Number(r.extra?.loads ?? 0) >= 10).sort((a, b) => Number(b.extra.loads) - Number(a.extra.loads));
-  if (oftenLoaded.length) {
-    out.push({
-      id: "skills-loads",
-      pages: [],
-      severity: "info",
-      title: T.skillLoads.title,
-      detail: T.skillLoads.detail,
-      evidence: oftenLoaded.slice(0, 8).map((r) => T.skillLoads.evidence(r.key, r.extra.loads, r.total / grand))
-    });
-  }
-  const rates = ov.daily.map((d) => {
-    const denom = d.tokens.input + d.tokens.cacheRead + d.tokens.cacheWrite;
-    return { d, denom, rate: denom ? d.tokens.cacheRead / denom : 1 };
-  }).filter((x) => x.denom > 1e6);
-  if (rates.length) {
-    const sumDen = rates.reduce((n, x) => n + x.denom, 0);
-    const avg = rates.reduce((n, x) => n + x.d.tokens.cacheRead, 0) / sumDen;
-    const low = rates.filter((x) => x.rate < Math.min(0.85, avg - 0.05)).sort((a, b) => a.rate - b.rate);
-    if (low.length) {
-      const saving = low.reduce((n, x) => n + Math.max(0, (avg - x.rate) * x.denom), 0);
-      out.push({
-        id: "low-cache-days",
-        pages: ["overview"],
-        severity: low.some((x) => x.rate < 0.7) ? "warn" : "info",
-        title: T.lowCache.title(low.length, avg),
-        detail: T.lowCache.detail,
-        evidence: low.slice(0, 8).map((x) => T.lowCache.evidence(x.d.date, x.rate, x.d.tokens.cacheWrite, x.d.tokens.input)),
-        fix: T.lowCache.fix,
-        estSavingTokens: Math.round(saving)
-      });
-    }
-  }
-  const hookAgg = /* @__PURE__ */ new Map();
-  for (const s of filesInRange) {
-    for (const [d, b] of Object.entries(s.days)) {
-      if (d < range.from || d > range.to) continue;
-      for (const [k, h] of Object.entries(b.hooks)) {
-        const [plugin, name] = k.split("|");
-        const a = hookAgg.get(plugin) ?? { n: 0, ms: 0, err: 0, names: /* @__PURE__ */ new Set() };
-        a.n += h.n;
-        a.ms += h.ms;
-        a.err += h.err;
-        a.names.add(name.split(":")[0]);
-        hookAgg.set(plugin, a);
-      }
-    }
-  }
-  for (const [plugin, a] of [...hookAgg.entries()].sort((x, y) => y[1].ms - x[1].ms)) {
-    if (a.n < 200 && a.err < 50) continue;
-    const errShare = a.err / a.n;
-    const min = Math.round(a.ms / 6e4);
-    out.push({
-      id: `hooks-${plugin || "none"}`,
-      pages: ["startup"],
-      severity: errShare > 0.5 && a.n > 500 ? "warn" : "info",
-      title: T.hooks.title(plugin || null, a.n, min, errShare > 0.5 ? errShare : null),
-      detail: T.hooks.detail([...a.names].join(", "), min, a.err ? errShare : null),
-      evidence: [T.hooks.runs(a.n), T.hooks.time(Math.round(a.ms / 1e3)), T.hooks.errors(a.err)],
-      fix: plugin ? T.hooks.fix(plugin, pluginKey(plugin)) : T.hooks.fixNoPlugin
-    });
-  }
-  out.sort(bySaving);
-  return out;
-}
-var sevRank, bySaving, waitMemo;
-var init_insights = __esm({
-  "server/insights.ts"() {
-    "use strict";
-    init_api();
-    init_analytics();
-    init_config();
-    init_hook_log();
-    init_util();
-    init_insights_text();
-    init_recommend();
-    init_recommend_agents();
-    init_recommend_mcp();
-    init_recommend_skills();
-    init_recommend_startup();
-    init_recommend_tools();
-    sevRank = { high: 0, warn: 1, info: 2 };
-    bySaving = (a, b) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity];
-    waitMemo = /* @__PURE__ */ new Map();
   }
 });
 
@@ -4888,148 +4869,146 @@ var init_forecast = __esm({
   }
 });
 
-// server/limits-forecast.ts
-function usageBuckets(files, from, now) {
-  const cut = now - H2;
-  const cutMin = Math.floor(cut / MIN2);
-  const byStart = /* @__PURE__ */ new Map();
-  const add = (start, end, tokens) => {
-    if (!(tokens > 0) || end <= start) return;
-    const b = byStart.get(start);
-    if (b) b.tokens += tokens;
-    else byStart.set(start, { end, tokens });
-  };
+// server/recommend-limits.ts
+function windowUsage(store2, from, now) {
+  const ctx = new Ctx(store2);
   const fromDate = localDate(from);
-  for (const s of files) {
+  const proj = /* @__PURE__ */ new Map(), agent = /* @__PURE__ */ new Map(), model = /* @__PURE__ */ new Map();
+  let total = 0, modelTotal = 0, raw = 0;
+  const add = (m, k, v) => m.set(k, (m.get(k) ?? 0) + v);
+  for (const s of store2.files.values()) {
     if (s.lastTs < from) continue;
-    for (const [date, day] of Object.entries(s.days)) {
+    let w = 0;
+    for (const [date, b] of Object.entries(s.days)) {
       if (date < fromDate) continue;
-      const [y, m, d] = date.split("-").map(Number);
-      for (const [h, t] of Object.entries(day.hours)) {
-        const start = new Date(y, m - 1, d, Number(h)).getTime();
-        const end = start + H2;
-        if (end <= from || start >= cut) continue;
-        const keep = end > cut ? (cut - start) / H2 : 1;
-        add(start, Math.min(end, cut), weightT4(t) * keep);
+      const [y, mo, d] = date.split("-").map(Number);
+      for (const [h, t] of Object.entries(b.hours)) {
+        const start = new Date(y, mo - 1, d, Number(h)).getTime();
+        if (start + H2 <= from || start > now) continue;
+        w += weight(t);
+        raw += t[0] + t[1] + t[2] + t[3];
+      }
+      for (const [m, u] of Object.entries(b.models)) {
+        const v = weight(u.t);
+        add(model, m, v);
+        modelTotal += v;
       }
     }
-    const total = sumT4(s.total);
-    const mix = total > 0 ? weightT4(s.total) / total : 1;
-    for (const [k, v] of Object.entries(s.minutes)) {
-      const mk = Number(k);
-      if (mk < cutMin || mk * MIN2 > now) continue;
-      const start = Math.max(mk * MIN2, cut);
-      add(start, mk * MIN2 + MIN2, v * mix);
+    if (!w) continue;
+    total += w;
+    add(proj, ctx.project(s), w);
+    add(agent, s.agentId === null ? "" : s.meta?.agentType ?? "general-purpose", w);
+  }
+  const top = (m, of) => [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 3).map(([k, v]) => ({ key: k, share: of ? v / of : 0 }));
+  return { total, mix: raw ? total / raw : 1, projects: top(proj, total), agents: top(agent, total), models: top(model, modelTotal) };
+}
+function uncapped(w, now) {
+  if (w.pct == null || w.resetsAt == null) return null;
+  return w.pct + w.ratePerHour * Math.max(0, w.resetsAt - now) / H2;
+}
+function limitRecommendations(store2, f, lang, leversFor) {
+  const TT = insightText(lang);
+  const T = TT.rec.limits;
+  const now = f.now;
+  if (f.source !== "statusline") {
+    return [{
+      id: "limits-connect",
+      severity: "info",
+      title: T.connect.title,
+      detail: T.connect.detail,
+      evidence: T.connect.evidence,
+      fix: "/clorbit statusline",
+      pages: ["limits"]
+    }];
+  }
+  const startOf = (w2) => Math.min(now, w2.window === "7d" && w2.resetsAt != null ? w2.resetsAt - WINDOW_MS["7d"] : now - WINDOW_MS[w2.window]);
+  const consumers = (w2) => {
+    const u = windowUsage(store2, startOf(w2), now);
+    if (!u.total) return [];
+    const pct3 = (x) => `${Math.round(x * 100)}%`;
+    return [
+      T.eat.projects(u.projects.map((p) => `${p.key} ${pct3(p.share)}`).join(", ")),
+      T.eat.agents(u.agents.map((a) => `${a.key ? a.key : T.eat.main} ${pct3(a.share)}`).join(", ")),
+      ...u.models.length ? [T.eat.models(u.models.map((m) => `${shortModel2(m.key)} ${pct3(m.share)}`).join(", "))] : []
+    ];
+  };
+  const out = [];
+  const w = runsOut(f.sevenDay) ? f.sevenDay : runsOut(f.fiveHour) ? f.fiveHour : null;
+  if (w) {
+    const total = uncapped(w, now) ?? 100;
+    const leverRows = [];
+    const levers = leversFor(startOf(w));
+    const use = windowUsage(store2, startOf(w), now);
+    if (levers && use.total > 0) {
+      const spanDays = Math.max(1, Math.round(((/* @__PURE__ */ new Date(`${levers.range.to}T00:00:00`)).getTime() - (/* @__PURE__ */ new Date(`${levers.range.from}T00:00:00`)).getTime()) / 864e5) + 1);
+      for (const ins of levers.cards) {
+        const est = ins.estSavingTokens ?? 0;
+        if (est <= 0 || ins.pages?.includes("limits")) continue;
+        const tokens = ins.saving?.basis === "projection" ? est * spanDays / (ins.saving.days ?? 30) : est;
+        const weighted = tokens * (ins.saving?.costShare ? use.mix : TOKEN_WEIGHTS.cacheWrite);
+        const share = Math.min(1, weighted / use.total);
+        if (share >= 2e-3) leverRows.push({ ins, page: homePage(ins), pct: share * total });
+      }
+    }
+    leverRows.sort((a, b) => b.pct - a.pct || a.ins.id.localeCompare(b.ins.id));
+    const shown = leverRows.slice(0, LEVERS_MAX);
+    const leverPct = Math.min(total * LEVERS_CAP, shown.reduce((n, r) => n + r.pct, 0));
+    const early = w.exhausted ? null : (w.resetsAt ?? now) - (w.hitsAt ?? now);
+    const pageName = (p) => p ? T.page[p] : "";
+    out.push({
+      id: stableId("limits-runout", [w.window, String(w.resetsAt ? Math.round(w.resetsAt / H2) : 0)]),
+      severity: w.exhausted || w.window === "7d" && (early ?? 0) >= 24 * H2 ? "high" : "warn",
+      title: w.exhausted ? T.runout.titleExhausted(w.window, w.resetsAt ? w.resetsAt - now : null) : T.runout.title(w.window, early ?? 0),
+      detail: T.runout.detail(w.window, shown.length > 0),
+      evidence: [
+        T.runout.now(w.window, Math.round(w.pct ?? 0), w.ratePerHour, w.hitsAt, w.resetsAt, Math.round(total)),
+        ...consumers(w),
+        ...shown.map((r) => T.runout.lever(r.ins.title, r.pct, w.window, pageName(r.page)))
+      ],
+      fix: shown.length ? void 0 : T.runout.fixNone,
+      pages: ["limits"],
+      ...leverPct >= 0.5 ? { saving: { windowPct: Math.round(leverPct * 10) / 10, window: w.window } } : {},
+      targets: shown.length ? shown.map((r) => ({ key: r.ins.id, label: r.ins.title, kind: "other", note: T.runout.leverNote(r.pct, w.window, pageName(r.page)) })) : void 0,
+      ...shown[0]?.page ? { seeAlso: shown[0].page } : {}
+    });
+    return out;
+  }
+  const s = f.sevenDay;
+  if (!s.noWindow && s.pct != null && s.resetsAt != null && !s.reset) {
+    const elapsed = Math.min(1, Math.max(0, 1 - (s.resetsAt - now) / WINDOW_MS["7d"]));
+    if (elapsed >= PACE_MIN_ELAPSED) {
+      const line = s.pct / elapsed;
+      const projected = s.pctAtReset ?? Math.min(100, line);
+      const room = projected < 80;
+      out.push({
+        id: stableId("limits-pace", [String(Math.round(s.resetsAt / H2))]),
+        severity: room ? "info" : "warn",
+        title: room ? T.pace.titleRoom(Math.round(projected)) : s.pctAtReset == null && line >= 100 ? T.pace.titleOver(Math.round(line)) : T.pace.titleTight(Math.round(projected)),
+        detail: T.pace.detail(Math.round(s.pct), elapsed, s.resetsAt - now, s.pctAtReset != null),
+        evidence: [T.pace.line(Math.round(s.pct), elapsed, Math.round(projected)), ...consumers(s)],
+        pages: ["limits"]
+      });
     }
   }
-  return [...byStart].map(([start, b]) => ({ start, end: b.end, tokens: b.tokens })).sort((a, b) => a.start - b.start);
+  return out;
 }
-var H2, MIN2, FORECAST_LOOKBACK_MS, FORECAST_TTL_MS, weightT4, LimitsForecaster;
-var init_limits_forecast = __esm({
-  "server/limits-forecast.ts"() {
+var H2, LEVERS_MAX, LEVERS_CAP, PACE_MIN_ELAPSED, weight, shortModel2, runsOut;
+var init_recommend_limits = __esm({
+  "server/recommend-limits.ts"() {
     "use strict";
     init_forecast();
+    init_insights();
+    init_analytics();
+    init_insights_text();
+    init_recommend();
     init_util();
     H2 = 36e5;
-    MIN2 = 6e4;
-    FORECAST_LOOKBACK_MS = 8 * 24 * H2;
-    FORECAST_TTL_MS = 15e3;
-    weightT4 = (t) => t[0] * TOKEN_WEIGHTS.input + t[1] * TOKEN_WEIGHTS.output + t[2] * TOKEN_WEIGHTS.cacheRead + t[3] * TOKEN_WEIGHTS.cacheWrite;
-    LimitsForecaster = class {
-      constructor(history, files) {
-        this.history = history;
-        this.files = files;
-      }
-      history;
-      files;
-      cache = null;
-      get(limits, now = Date.now()) {
-        const key = JSON.stringify(limits);
-        const c = this.cache;
-        if (c && c.key === key && now - c.at < FORECAST_TTL_MS && now >= c.at) return c.v;
-        let v;
-        if (!limits || limits.fiveHourPct == null && limits.sevenDayPct == null) {
-          v = forecastLimits({ now, limits: null, history: [] });
-        } else {
-          const from = now - FORECAST_LOOKBACK_MS;
-          v = forecastLimits({ now, limits, history: this.history(from, now), usage: usageBuckets(this.files(), from, now) });
-        }
-        this.cache = { at: now, key, v };
-        return v;
-      }
-    };
-  }
-});
-
-// server/limits-log.ts
-function parseTsRange(q, now = Date.now()) {
-  const parse = (v, end) => {
-    if (!v) return null;
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
-    if (m) {
-      const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + (end ? 1 : 0)).getTime();
-      return end ? d - 1 : d;
-    }
-    const n = Number(v);
-    return Number.isFinite(n) && n >= 0 ? n : null;
-  };
-  let to = parse(q.get("to"), true) ?? now;
-  let from = parse(q.get("from"), false) ?? to - 7 * 24 * 36e5;
-  if (from > to) [from, to] = [to, from];
-  return { from, to };
-}
-var LIMITS_POLL_MS, keyOf, sameKey, LimitsLog;
-var init_limits_log = __esm({
-  "server/limits-log.ts"() {
-    "use strict";
-    LIMITS_POLL_MS = 3e4;
-    keyOf = (l) => [l.fiveHourPct, l.fiveHourResetsAt, l.sevenDayPct, l.sevenDayResetsAt];
-    sameKey = (a, b) => a.every((v, i) => v === b[i]);
-    LimitsLog = class {
-      constructor(db2, read) {
-        this.db = db2;
-        this.read = read;
-        if (!db2) return;
-        const r = db2.stmt("SELECT ts, five_pct, five_resets_at, week_pct, week_resets_at FROM limits ORDER BY ts DESC LIMIT 1").get();
-        if (r) this.last = { ts: r.ts, key: [r.five_pct, r.five_resets_at, r.week_pct, r.week_resets_at] };
-      }
-      db;
-      read;
-      last = null;
-      timer = null;
-      start(intervalMs = LIMITS_POLL_MS) {
-        this.poll();
-        this.timer = setInterval(() => this.poll(), intervalMs);
-        this.timer.unref?.();
-      }
-      stop() {
-        if (this.timer) clearInterval(this.timer);
-      }
-      poll() {
-        try {
-          return this.record(this.read());
-        } catch (e) {
-          console.error("[clorbit] could not record limits:", e.message);
-          return false;
-        }
-      }
-      /** Inserts a row only when any of the four values differs from the last recorded row. */
-      record(l) {
-        if (!this.db || !l) return false;
-        if (l.fiveHourPct === null && l.sevenDayPct === null) return false;
-        const key = keyOf(l);
-        if (this.last && sameKey(this.last.key, key)) return false;
-        const ts = Math.max(Math.round(l.updatedAt || Date.now()), (this.last?.ts ?? 0) + 1);
-        this.db.stmt("INSERT OR IGNORE INTO limits(ts, five_pct, five_resets_at, week_pct, week_resets_at) VALUES(?, ?, ?, ?, ?)").run(ts, ...key);
-        this.last = { ts, key };
-        return true;
-      }
-      history(from, to) {
-        if (!this.db) return [];
-        const rows = this.db.stmt("SELECT ts, five_pct, five_resets_at, week_pct, week_resets_at FROM limits WHERE ts >= ? AND ts <= ? ORDER BY ts").all(from, to);
-        return rows.map((r) => ({ ts: r.ts, fiveHourPct: r.five_pct, sevenDayPct: r.week_pct, fiveHourResetsAt: r.five_resets_at, sevenDayResetsAt: r.week_resets_at }));
-      }
-    };
+    LEVERS_MAX = 4;
+    LEVERS_CAP = 0.9;
+    PACE_MIN_ELAPSED = 0.05;
+    weight = (t) => t[0] * TOKEN_WEIGHTS.input + t[1] * TOKEN_WEIGHTS.output + t[2] * TOKEN_WEIGHTS.cacheRead + t[3] * TOKEN_WEIGHTS.cacheWrite;
+    shortModel2 = (m) => m.replace(/^claude-/, "").replace(/-(\d+)-(\d+)(\[1m\])?$/, " $1.$2").replace(/-(\d+)$/, " $1").replace(/^\w/, (c) => c.toUpperCase());
+    runsOut = (w) => !w.noWindow && w.pct != null && (!!w.exhausted || w.hitsAt != null && w.resetsAt != null && w.hitsAt < w.resetsAt);
   }
 });
 
@@ -5055,65 +5034,8 @@ var init_automation = __esm({
   }
 });
 
-// server/plan.ts
-import fs5 from "node:fs";
-function str2(v, max = 40) {
-  if (typeof v !== "string") return null;
-  const s = v.trim();
-  return s && s.length <= max && !/[\u0000-\u001f]/.test(s) ? s : null;
-}
-function tierOf(rateLimitTier) {
-  const m = typeof rateLimitTier === "string" ? /(?:^|_)(\d{1,3})x$/i.exec(rateLimitTier) : null;
-  return m ? `${Number(m[1])}\xD7` : null;
-}
-function planFrom(account) {
-  if (!account || typeof account !== "object" || Array.isArray(account)) return null;
-  const a = account;
-  const type = str2(a.organizationType);
-  const name = str2(a.planDisplayName) ?? (type ? NAMES[type] ?? null : null);
-  const tier = tierOf(a.userRateLimitTier) ?? tierOf(a.organizationRateLimitTier);
-  const sinceRaw = str2(a.subscriptionCreatedAt, 64);
-  const since = sinceRaw && Number.isFinite(Date.parse(sinceRaw)) ? sinceRaw : null;
-  if (!name && !tier && !type) return null;
-  return { name, tier, type, since };
-}
-function readPlan(files = CLAUDE_JSON_FILES) {
-  for (const file of files) {
-    let st;
-    try {
-      st = fs5.statSync(file);
-    } catch {
-      continue;
-    }
-    if (cache3 && cache3.file === file && cache3.mtime === st.mtimeMs && cache3.size === st.size) return cache3.plan;
-    let plan = null;
-    try {
-      plan = planFrom(JSON.parse(fs5.readFileSync(file, "utf8"))?.oauthAccount);
-    } catch {
-      if (cache3 && cache3.file === file) return cache3.plan;
-    }
-    cache3 = { file, mtime: st.mtimeMs, size: st.size, plan };
-    return plan;
-  }
-  return null;
-}
-var NAMES, cache3;
-var init_plan = __esm({
-  "server/plan.ts"() {
-    "use strict";
-    init_config();
-    NAMES = {
-      claude_pro: "Pro",
-      claude_max: "Max",
-      claude_team: "Team",
-      claude_enterprise: "Enterprise"
-    };
-    cache3 = null;
-  }
-});
-
 // server/lines.ts
-import fs6 from "node:fs/promises";
+import fs5 from "node:fs/promises";
 function classifyPrefix(head) {
   if (head[0] !== 123 || head[1] !== 34) return null;
   const p = head.subarray(0, 24).toString("latin1");
@@ -5121,7 +5043,7 @@ function classifyPrefix(head) {
   return null;
 }
 async function readLines(file, start, sink, maxBytes = Infinity) {
-  const fh = await fs6.open(file, "r");
+  const fh = await fs5.open(file, "r");
   try {
     const buf = Buffer.allocUnsafe(CHUNK);
     let pos = start;
@@ -5222,7 +5144,7 @@ var init_lines = __esm({
 });
 
 // server/scanner.ts
-import fs7 from "node:fs";
+import fs6 from "node:fs";
 import path8 from "node:path";
 function emptyCarry() {
   return {
@@ -5315,7 +5237,7 @@ function newSummary(file, id) {
 function readMeta(file) {
   const metaPath = file.replace(/\.jsonl$/, ".meta.json");
   try {
-    const m = JSON.parse(fs7.readFileSync(metaPath, "utf8"));
+    const m = JSON.parse(fs6.readFileSync(metaPath, "utf8"));
     const wf = path8.basename(path8.dirname(file));
     return {
       agentType: m.agentType || "general-purpose",
@@ -5388,7 +5310,7 @@ function taskNotification(text) {
 async function scanFile(projectsDir, file, prev, opts, onEvent) {
   let st;
   try {
-    st = fs7.statSync(file);
+    st = fs6.statSync(file);
   } catch {
     return null;
   }
@@ -5417,7 +5339,7 @@ async function scanFile(projectsDir, file, prev, opts, onEvent) {
   s.mtimeMs = st.mtimeMs;
   return { summary: s, changed: true, resumed, bytes: s.offset - start };
 }
-var RECENT_REQ, MAX_PENDING, MAX_TOOLNAMES, BIG_RESULT, MAX_BIG, LABELS, ENV_TYPES, textOf, ERROR_KINDS, MAX_TASK_ENDS, FileScanner;
+var RECENT_REQ, MAX_PENDING, MAX_TOOLNAMES, BIG_RESULT, MAX_BIG, REBUILD_MIN_CTX, REBUILD_SHARE, IDLE_GAP_MS, IDLE_LONG_MS, CTX_HI, SIMPLE_MAX_REQS, SIMPLE_MAX_OUT, LABELS, ENV_TYPES, textOf, ERROR_KINDS, MAX_TASK_ENDS, FileScanner;
 var init_scanner = __esm({
   "server/scanner.ts"() {
     "use strict";
@@ -5430,6 +5352,13 @@ var init_scanner = __esm({
     MAX_TOOLNAMES = 400;
     BIG_RESULT = 2e4;
     MAX_BIG = 30;
+    REBUILD_MIN_CTX = 2e4;
+    REBUILD_SHARE = 0.5;
+    IDLE_GAP_MS = 5 * 6e4;
+    IDLE_LONG_MS = 60 * 6e4;
+    CTX_HI = [17e4, 85e4];
+    SIMPLE_MAX_REQS = 2;
+    SIMPLE_MAX_OUT = 1e3;
     LABELS = STARTUP;
     ENV_TYPES = /* @__PURE__ */ new Set([
       "environment",
@@ -5570,8 +5499,18 @@ var init_scanner = __esm({
           }
           if (!attributed) b.unattributed += total;
           if (!sidechain) {
-            c.lastCtx = t[0] + t[2] + t[3];
+            const ctx = t[0] + t[2] + t[3];
+            if (this.isMain) this.cacheFacts(b, ts, t, ctx, model ?? null);
+            c.lastCtx = ctx;
             if (c.lastCtx > c.maxCtx) c.maxCtx = c.lastCtx;
+          }
+          if (this.isMain && !sidechain && c.round) {
+            const r = c.round;
+            r.reqs++;
+            r.out += t[1];
+            r.tok += total;
+            const eff = d.perTurnEffort ?? d.effort;
+            if (eff) r.effort = String(eff).slice(0, 16);
           }
         }
         if (!sidechain) {
@@ -5584,14 +5523,62 @@ var init_scanner = __esm({
         const content = Array.isArray(msg.content) ? msg.content : [];
         for (const blk of content) {
           if (!blk || typeof blk !== "object") continue;
-          if (blk.type === "tool_use") this.toolUse(blk, ts, sidechain);
-          else if (blk.type === "text" && typeof blk.text === "string" && blk.text.trim() && !sidechain) {
+          if (blk.type === "tool_use") {
+            this.toolUse(blk, ts, sidechain);
+            if (this.isMain && !sidechain && c.round) c.round.tools++;
+          } else if (blk.type === "text" && typeof blk.text === "string" && blk.text.trim() && !sidechain) {
             c.lastText = trimText(blk.text, 240);
             c.lastTextTs = ts;
             this.onEvent?.({ kind: "text", ts, text: c.lastText });
           }
         }
-        if (!sidechain && msg.stop_reason === "end_turn") this.onEvent?.({ kind: "end", ts });
+        if (!sidechain && msg.stop_reason === "end_turn") {
+          if (this.isMain) this.closeRound(ts);
+          this.onEvent?.({ kind: "end", ts });
+        }
+      }
+      /**
+       * Cache facts of one main-chain request (v9): a turn that writes most of the previous context to the cache again
+       * after an idle gap (the prompt cache expired) or right after a model switch (the cache is per model), and turns
+       * with a nearly full context. Measured, not inferred: a gap whose next turn reads the cache is not counted.
+       */
+      cacheFacts(b, ts, t, ctx, model) {
+        const c = this.s.carry;
+        const prevCtx = c.lastCtx;
+        const prevTs = c.lastTurnTs ?? 0;
+        const rebuilt = prevTs > 0 && prevCtx >= REBUILD_MIN_CTX && t[3] >= prevCtx * REBUILD_SHARE;
+        if (rebuilt && ts - prevTs > IDLE_GAP_MS) {
+          const r = b.rebuilds ??= { n: 0, n60: 0, write: 0 };
+          r.n++;
+          r.write += t[3];
+          if (ts - prevTs > IDLE_LONG_MS) r.n60++;
+        } else if (rebuilt && model && c.lastModel && model !== c.lastModel) {
+          const w = b.switches ??= { n: 0, write: 0 };
+          w.n++;
+          w.write += t[3];
+        }
+        if (ctx >= CTX_HI[0]) {
+          const h = b.ctxHi ??= [0, 0];
+          h[0]++;
+          if (ctx >= CTX_HI[1]) h[1]++;
+        }
+        if (ts > prevTs) c.lastTurnTs = ts;
+        if (model) c.lastModel = model;
+      }
+      /** Ends the open prompt round (at the main agent's end_turn) and counts it by effort level (v9). */
+      closeRound(ts) {
+        const c = this.s.carry;
+        const r = c.round;
+        if (!r || !r.reqs) return;
+        c.round = null;
+        const { b } = this.day(ts);
+        const k = r.effort ?? "default";
+        const e = (b.effort ??= {})[k] ??= { rounds: 0, simple: 0, tok: 0 };
+        e.rounds++;
+        if (r.reqs <= SIMPLE_MAX_REQS && r.tools === 0 && r.out <= SIMPLE_MAX_OUT) {
+          e.simple++;
+          e.tok += r.tok;
+        }
       }
       toolUse(blk, ts, sidechain) {
         const s = this.s;
@@ -5697,6 +5684,7 @@ var init_scanner = __esm({
             }
             c.lastPromptTs = ts;
             c.lastStop = null;
+            if (this.isMain) c.round = { reqs: 0, out: 0, tools: 0, tok: 0, effort: null };
             this.onEvent?.({ kind: "prompt", ts });
           }
         }
@@ -5712,6 +5700,9 @@ var init_scanner = __esm({
           const { b } = this.day(ts || Date.now());
           b.compactions++;
           if (auto) b.autoCompactions++;
+          const pre = d.compactMetadata?.preTokens;
+          if (auto && typeof pre === "number" && pre > 0) b.compactPre = (b.compactPre ?? 0) + pre;
+          if (this.isMain) s.carry.lastTurnTs = 0;
           this.onEvent?.({ kind: "compact", ts });
         }
       }
@@ -5869,7 +5860,7 @@ var init_scanner = __esm({
 
 // server/store.ts
 import { EventEmitter } from "node:events";
-import fs8 from "node:fs";
+import fs7 from "node:fs";
 import os4 from "node:os";
 import path9 from "node:path";
 import { Worker } from "node:worker_threads";
@@ -5877,7 +5868,7 @@ function listTranscripts(projectsDir) {
   const out = [];
   let dirs = [];
   try {
-    dirs = fs8.readdirSync(projectsDir);
+    dirs = fs7.readdirSync(projectsDir);
   } catch {
     return out;
   }
@@ -5885,7 +5876,7 @@ function listTranscripts(projectsDir) {
     const pd = path9.join(projectsDir, d);
     let entries;
     try {
-      entries = fs8.readdirSync(pd, { withFileTypes: true });
+      entries = fs7.readdirSync(pd, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -5895,7 +5886,7 @@ function listTranscripts(projectsDir) {
         const sub = path9.join(pd, e.name, "subagents");
         let se;
         try {
-          se = fs8.readdirSync(sub, { withFileTypes: true });
+          se = fs7.readdirSync(sub, { withFileTypes: true });
         } catch {
           continue;
         }
@@ -5904,14 +5895,14 @@ function listTranscripts(projectsDir) {
           else if (x.isDirectory() && x.name === "workflows") {
             let wfs = [];
             try {
-              wfs = fs8.readdirSync(path9.join(sub, "workflows"));
+              wfs = fs7.readdirSync(path9.join(sub, "workflows"));
             } catch {
               continue;
             }
             for (const wf of wfs) {
               let af = [];
               try {
-                af = fs8.readdirSync(path9.join(sub, "workflows", wf));
+                af = fs7.readdirSync(path9.join(sub, "workflows", wf));
               } catch {
                 continue;
               }
@@ -6075,7 +6066,7 @@ var init_store = __esm({
         const list = listTranscripts(this.projectsDir);
         const withM = list.map((f) => {
           try {
-            const s = fs8.statSync(f);
+            const s = fs7.statSync(f);
             return { f, m: s.mtimeMs, size: s.size };
           } catch {
             return null;
@@ -6140,7 +6131,7 @@ var init_store = __esm({
       refresh(file) {
         return this.enqueue(file, async () => {
           if (!identify(this.projectsDir, file)) return;
-          if (!fs8.existsSync(file)) {
+          if (!fs7.existsSync(file)) {
             this.markMissing(file);
             return;
           }
@@ -6230,6 +6221,727 @@ var init_store = __esm({
         return this.dirtyPaths.size > 0;
       }
     };
+  }
+});
+
+// server/recommend-sessions.ts
+function daysOf(s, range) {
+  const out = [];
+  for (const [d, b] of Object.entries(s.days)) if (inRange(d, range)) out.push(b);
+  return out;
+}
+function sessionView(store2, sessionId) {
+  const v = new Store(store2.projectsDir, null, store2.opts);
+  const files = store2.sessionFiles(sessionId);
+  for (const s of files) v.files.set(s.path, s);
+  v.bySession.set(sessionId, new Set(files.map((s) => s.path)));
+  v.version = store2.version;
+  return v;
+}
+function sessionRange(store2, sessionId) {
+  const days = store2.sessionFiles(sessionId).flatMap((s) => Object.keys(s.days)).sort();
+  return days.length ? { from: days[0], to: days[days.length - 1] } : null;
+}
+function sessionRecommendations(store2, range, lang, env2, o = {}) {
+  const scope = o.scope ?? "all";
+  const th = TH[scope];
+  const one = scope === "session";
+  const TT = insightText(lang);
+  const T = TT.rec.sessions;
+  const ctx = new Ctx(store2);
+  const days = rangeDays3(range);
+  const mains = [];
+  for (const s of store2.files.values()) if (s.agentId === null && Object.keys(s.days).some((d) => inRange(d, range))) mains.push(s);
+  if (!mains.length) return [];
+  const name = (s) => s.title ? TT.quote(s.title) : s.sessionId.slice(0, 8);
+  const where = (s) => `${name(s)} (${ctx.project(s)})`;
+  const sessionTarget = (s, note) => ({ key: s.sessionId, label: s.title ?? s.sessionId.slice(0, 8), kind: "session", note });
+  const out = [];
+  {
+    const rows = [];
+    for (const s of mains) {
+      let n = 0, pre = 0;
+      for (const b of daysOf(s, range)) {
+        n += b.autoCompactions;
+        pre += b.compactPre ?? 0;
+      }
+      if (n > 0) rows.push({ s, n, pre });
+    }
+    const total = rows.reduce((n, r) => n + r.n, 0);
+    if (rows.length && (total >= th.compactTotal || rows.some((r) => r.n >= 2))) {
+      rows.sort((a, b) => b.n - a.n || a.s.sessionId.localeCompare(b.s.sessionId));
+      const withPre = rows.filter((r) => r.pre > 0);
+      const avgPre = withPre.length ? Math.round(withPre.reduce((n, r) => n + r.pre, 0) / withPre.reduce((n, r) => n + r.n, 0)) : 0;
+      const facts = (r) => T.compact.facts(r.n, r.pre ? Math.round(r.pre / r.n) : 0);
+      out.push({
+        id: stableId("auto-compactions", rows.slice(0, MAX_ITEMS).map((r) => r.s.sessionId)),
+        severity: total >= 10 ? "warn" : "info",
+        title: one ? T.compact.titleOne(total) : T.compact.title(total, rows.length),
+        detail: T.compact.detail,
+        evidence: [
+          ...one ? [] : rows.slice(0, MAX_ITEMS).map((r) => `${where(r.s)}: ${facts(r)}`),
+          ...avgPre ? [T.compact.avg(avgPre)] : [],
+          ...env2.autoCompactPct ? [T.compact.pctEnv(env2.autoCompactPct)] : []
+        ],
+        pages: ["sessions"],
+        scope: "range",
+        targets: one ? void 0 : rows.slice(0, MAX_ITEMS).map((r) => sessionTarget(r.s, facts(r))),
+        prompts: buildPrompts({
+          lang,
+          summary: one ? T.compact.summaryOne(total) : T.compact.summary(total, rows.length),
+          items: [instructionNoteItem(lang, { name: T.compact.name, file: env2.userClaudeMd, section: T.compact.section, text: T.compact.noteText, why: T.compact.why(total, rows.length) })],
+          notes: [...PROMPT_NOTES[lang].note(env2.userClaudeMd), T.compact.noteRule]
+        })
+      });
+    }
+  }
+  {
+    const rows = [];
+    for (const s of mains) {
+      let n2 = 0, n60 = 0, write = 0;
+      for (const b of daysOf(s, range)) if (b.rebuilds) {
+        n2 += b.rebuilds.n;
+        n60 += b.rebuilds.n60;
+        write += b.rebuilds.write;
+      }
+      if (n2) rows.push({ s, n: n2, n60, write, save: Math.max(0, write - n2 * startupTok(s)) });
+    }
+    const n = rows.reduce((a, r) => a + r.n, 0);
+    const period = Math.round(rows.reduce((a, r) => a + r.save, 0));
+    if (n >= th.rebuildN && period >= th.rebuildSave) {
+      rows.sort((a, b) => b.save - a.save || a.s.sessionId.localeCompare(b.s.sessionId));
+      const n60 = rows.reduce((a, r) => a + r.n60, 0);
+      const write = rows.reduce((a, r) => a + r.write, 0);
+      const facts = (r) => T.idle.facts(r.n, r.n60, r.write);
+      out.push({
+        id: stableId("idle-rebuilds", rows.slice(0, MAX_ITEMS).map((r) => r.s.sessionId)),
+        severity: period >= 2e7 ? "high" : period >= 2e6 ? "warn" : "info",
+        title: one ? T.idle.titleOne(n, write) : T.idle.title(n, rows.length, write),
+        detail: T.idle.detail,
+        evidence: [
+          T.idle.total(n, n60, write),
+          ...one ? [] : rows.slice(0, MAX_ITEMS).map((r) => `${where(r.s)}: ${facts(r)}`)
+        ],
+        fix: T.idle.fix,
+        estSavingTokens: period,
+        pages: ["sessions"],
+        scope: "range",
+        saving: { period, days, basis: "range" },
+        targets: one ? void 0 : rows.slice(0, MAX_ITEMS).map((r) => sessionTarget(r.s, facts(r)))
+      });
+    }
+  }
+  {
+    const rows = [];
+    for (const s of mains) {
+      const limit = contextLimitFor(s.model, s.requestedModel, s.carry.maxCtx) ?? 2e5;
+      let hi = 0, turns = 0, compactions = 0;
+      for (const b of daysOf(s, range)) {
+        turns += b.turns;
+        compactions += b.autoCompactions;
+        hi += b.ctxHi ? b.ctxHi[limit > 2e5 ? 1 : 0] : 0;
+      }
+      if (turns && hi >= th.hiTurns && hi / turns >= th.hiShare) rows.push({ s, hi, turns, share: hi / turns, limit, compactions });
+    }
+    if (rows.length >= th.hiSessions) {
+      rows.sort((a, b) => b.hi - a.hi || a.s.sessionId.localeCompare(b.s.sessionId));
+      const facts = (r) => T.full.facts(r.share, r.hi, r.limit, r.compactions);
+      out.push({
+        id: stableId("context-full", rows.slice(0, MAX_ITEMS).map((r) => r.s.sessionId)),
+        severity: rows.length >= 5 ? "warn" : "info",
+        title: one ? T.full.titleOne(rows[0].share) : T.full.title(rows.length),
+        detail: T.full.detail,
+        evidence: one ? [facts(rows[0])] : rows.slice(0, MAX_ITEMS).map((r) => `${where(r.s)}: ${facts(r)}`),
+        fix: T.full.fix,
+        pages: ["sessions"],
+        scope: "range",
+        targets: one ? void 0 : rows.slice(0, MAX_ITEMS).map((r) => sessionTarget(r.s, facts(r)))
+      });
+    }
+  }
+  if (one) return out;
+  {
+    const by = /* @__PURE__ */ new Map();
+    for (const s of mains) {
+      for (const b of daysOf(s, range)) {
+        for (const [lvl, e] of Object.entries(b.effort ?? {})) {
+          if (!RAISED_EFFORT.has(lvl)) continue;
+          const a = by.get(lvl) ?? { rounds: 0, simple: 0, tok: 0, sessions: /* @__PURE__ */ new Set() };
+          a.rounds += e.rounds;
+          a.simple += e.simple;
+          a.tok += e.tok;
+          if (e.simple) a.sessions.add(s.sessionId);
+          by.set(lvl, a);
+        }
+      }
+    }
+    const rounds = [...by.values()].reduce((n, a) => n + a.rounds, 0);
+    const simple = [...by.values()].reduce((n, a) => n + a.simple, 0);
+    if (rounds >= EFFORT_MIN_ROUNDS && simple >= EFFORT_MIN_SIMPLE && simple / rounds >= EFFORT_MIN_SHARE) {
+      const levels = [...by.entries()].sort((a, b) => b[1].simple - a[1].simple || a[0].localeCompare(b[0]));
+      out.push({
+        id: stableId("effort-simple", levels.map(([l]) => l)),
+        severity: "info",
+        title: T.effort.title(simple, rounds, levels.map(([l]) => l).join(" / ")),
+        detail: T.effort.detail,
+        evidence: levels.map(([l, a]) => T.effort.evidence(l, a.simple, a.rounds, a.tok, a.sessions.size)),
+        fix: T.effort.fix,
+        pages: ["sessions"],
+        scope: "range"
+      });
+    }
+  }
+  {
+    let all = 0;
+    const tokOf = /* @__PURE__ */ new Map();
+    for (const s of store2.files.values()) {
+      let t = 0;
+      for (const b of daysOf(s, range)) t += sumT4(b.t);
+      if (!t) continue;
+      all += t;
+      tokOf.set(s.sessionId, (tokOf.get(s.sessionId) ?? 0) + t);
+    }
+    const groups = /* @__PURE__ */ new Map();
+    for (const s of mains) {
+      if (sessionKind({ entrypoint: s.entrypoint, promptOrigin: s.promptOrigin }) !== "automated") continue;
+      const via = s.entrypoint && s.entrypoint !== "cli" ? s.entrypoint : s.promptOrigin || "sdk";
+      const project = ctx.project(s);
+      const k = `${project}${via}`;
+      const g = groups.get(k) ?? { project, via, runs: 0, tok: 0, models: /* @__PURE__ */ new Map(), last: 0 };
+      const t = tokOf.get(s.sessionId) ?? 0;
+      g.runs++;
+      g.tok += t;
+      g.last = Math.max(g.last, s.lastTs);
+      if (s.model) g.models.set(s.model, (g.models.get(s.model) ?? 0) + t);
+      groups.set(k, g);
+    }
+    const tok = [...groups.values()].reduce((n, g) => n + g.tok, 0);
+    const share = all ? tok / all : 0;
+    if (groups.size && (share >= AUTO_MIN_SHARE && tok >= AUTO_MIN_TOKENS || tok >= AUTO_ALWAYS_TOKENS)) {
+      const list = [...groups.values()].sort((a, b) => b.tok - a.tok || a.project.localeCompare(b.project));
+      const runs = list.reduce((n, g) => n + g.runs, 0);
+      const topModel = (g) => [...g.models.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "\u2014";
+      const facts = (g) => T.auto.facts(g.runs, g.tok, all ? g.tok / all : 0, topModel(g), localDate(g.last));
+      out.push({
+        id: stableId("automated-sessions", list.slice(0, MAX_ITEMS).map((g) => `${g.project}|${g.via}`)),
+        severity: share >= 0.3 ? "warn" : "info",
+        title: T.auto.title(runs, share),
+        detail: T.auto.detail,
+        evidence: list.slice(0, MAX_ITEMS).map((g) => `${g.project} \xB7 ${g.via}: ${facts(g)}`),
+        fix: T.auto.fix,
+        pages: ["sessions"],
+        scope: "range",
+        targets: list.slice(0, MAX_ITEMS).map((g) => ({ key: `${g.project}|${g.via}`, label: `${g.project} \xB7 ${g.via}`, kind: "other", note: facts(g) }))
+      });
+    }
+  }
+  {
+    const byDay = /* @__PURE__ */ new Map();
+    const at = (d) => {
+      let x = byDay.get(d);
+      if (!x) byDay.set(d, x = { input: 0, read: 0, write: 0, rebuildN: 0, rebuildW: 0, switchN: 0, switchW: 0, compactions: 0, starts: 0, startW: 0 });
+      return x;
+    };
+    for (const s of store2.files.values()) {
+      for (const [d, b] of Object.entries(s.days)) {
+        if (!inRange(d, range)) continue;
+        const x = at(d);
+        x.input += b.t[0];
+        x.read += b.t[2];
+        x.write += b.t[3];
+        if (b.rebuilds) {
+          x.rebuildN += b.rebuilds.n;
+          x.rebuildW += b.rebuilds.write;
+        }
+        if (b.switches) {
+          x.switchN += b.switches.n;
+          x.switchW += b.switches.write;
+        }
+        x.compactions += b.compactions;
+      }
+      if (s.firstTs && Object.keys(s.startup).length) {
+        const d = localDate(s.firstTs);
+        if (inRange(d, range)) {
+          const x = at(d);
+          x.starts++;
+          x.startW += startupTok(s);
+        }
+      }
+    }
+    const rates = [...byDay.entries()].map(([date, x]) => ({ date, x, denom: x.input + x.read + x.write })).filter((r) => r.denom > CACHE_DAY_MIN).map((r) => ({ ...r, rate: r.x.read / r.denom }));
+    if (rates.length) {
+      const avg = rates.reduce((n, r) => n + r.x.read, 0) / rates.reduce((n, r) => n + r.denom, 0);
+      const low = rates.filter((r) => r.rate < Math.min(0.85, avg - 0.05)).sort((a, b) => a.rate - b.rate);
+      if (low.length) {
+        const causes = (x) => [
+          x.rebuildN ? T.cache.causeIdle(x.rebuildN, x.rebuildW) : "",
+          x.switchN ? T.cache.causeSwitch(x.switchN, x.switchW) : "",
+          x.compactions ? T.cache.causeCompact(x.compactions) : "",
+          x.starts && x.startW >= x.write * 0.2 ? T.cache.causeStarts(x.starts, x.startW) : ""
+        ].filter(Boolean);
+        out.push({
+          id: stableId("low-cache-days", low.map((r) => r.date)),
+          severity: low.some((r) => r.rate < 0.7) ? "warn" : "info",
+          title: TT.lowCache.title(low.length, avg),
+          detail: T.cache.detail,
+          evidence: low.slice(0, 8).map((r) => {
+            const c = causes(r.x);
+            return `${TT.lowCache.evidence(r.date, r.rate, r.x.write, r.x.input)} \u2014 ${c.length ? T.cache.likely(c.join(", ")) : T.cache.unknown}`;
+          }),
+          fix: TT.lowCache.fix,
+          pages: ["sessions"],
+          // No saving of its own: the measurable part (the cache rebuilt after idle gaps) is the idle-gap card's.
+          scope: "range"
+        });
+      }
+    }
+  }
+  return out;
+}
+var RAISED_EFFORT, TH, EFFORT_MIN_ROUNDS, EFFORT_MIN_SIMPLE, EFFORT_MIN_SHARE, AUTO_MIN_SHARE, AUTO_MIN_TOKENS, AUTO_ALWAYS_TOKENS, CACHE_DAY_MIN, MAX_ITEMS, inRange, rangeDays3, startupTok;
+var init_recommend_sessions = __esm({
+  "server/recommend-sessions.ts"() {
+    "use strict";
+    init_automation();
+    init_prompts();
+    init_analytics();
+    init_insights_text();
+    init_recommend();
+    init_store();
+    init_util();
+    RAISED_EFFORT = /* @__PURE__ */ new Set(["xhigh", "max"]);
+    TH = {
+      all: { compactTotal: 3, rebuildN: 3, rebuildSave: 2e5, hiTurns: 10, hiShare: 0.25, hiSessions: 2 },
+      session: { compactTotal: 1, rebuildN: 1, rebuildSave: 2e4, hiTurns: 5, hiShare: 0.2, hiSessions: 1 }
+    };
+    EFFORT_MIN_ROUNDS = 20;
+    EFFORT_MIN_SIMPLE = 10;
+    EFFORT_MIN_SHARE = 0.3;
+    AUTO_MIN_SHARE = 0.1;
+    AUTO_MIN_TOKENS = 1e6;
+    AUTO_ALWAYS_TOKENS = 5e7;
+    CACHE_DAY_MIN = 1e6;
+    MAX_ITEMS = 6;
+    inRange = (d, r) => d >= r.from && d <= r.to;
+    rangeDays3 = (range) => Math.max(1, Math.round(((/* @__PURE__ */ new Date(`${range.to}T00:00:00`)).getTime() - (/* @__PURE__ */ new Date(`${range.from}T00:00:00`)).getTime()) / 864e5) + 1);
+    startupTok = (s) => estTokens(Object.values(s.startup).reduce((n, c) => n + c, 0));
+  }
+});
+
+// server/insights.ts
+function filesActiveIn2(store2, range) {
+  const out = [];
+  for (const s of store2.files.values()) {
+    if (Object.keys(s.days).some((d) => d >= range.from && d <= range.to)) out.push(s);
+  }
+  return out;
+}
+function insights(store2, range, hookLog2, lang = "en", opts = {}) {
+  const env2 = { ...defaultEnv({ unusedDays: opts.unusedDays ?? DEFAULT_SETTINGS.recommendations.unusedDays }), ...opts.env };
+  if (opts.page === "session") return opts.session ? sessionInsights(store2, opts.session, lang, env2) : [];
+  const base = baseInsights(store2, range, lang, env2, !!opts.env);
+  const extra = hookLog2 ? waitInsights(store2, hookLog2, range, lang, env2) : [];
+  const forecast = opts.limits && (!opts.page || opts.page === "limits") ? opts.limits() : null;
+  const lim = forecast ? limitRecommendations(store2, forecast, lang, (from) => {
+    const r = { from: localDate(from), to: localDate(env2.now) };
+    return { cards: baseInsights(store2, r, lang, env2, !!opts.env), range: r };
+  }) : [];
+  const all = extra.length || lim.length ? [...base, ...extra, ...lim].sort(bySaving) : base;
+  if (opts.page === "overview") return pickOverview(all);
+  return opts.page ? all.filter((i) => i.pages?.includes(opts.page)) : all;
+}
+function baseInsights(store2, range, lang, env2, noMemo) {
+  const key = `ins:${lang}:${range.from}:${range.to}:${env2.unusedDays}:${localDate(env2.now)}:${hash8(JSON.stringify([env2.enabledPlugins, env2.mcp.user, env2.mcp.local, env2.autoCompactPct]))}`;
+  return noMemo ? compute(store2, range, lang, env2) : memoize(store2, key, () => compute(store2, range, lang, env2));
+}
+function sessionInsights(store2, sessionId, lang = "en", env2) {
+  const range = sessionRange(store2, sessionId);
+  if (!range) return [];
+  const e = env2 ?? defaultEnv({ unusedDays: DEFAULT_SETTINGS.recommendations.unusedDays });
+  const view = sessionView(store2, sessionId);
+  const cards = [
+    ...sessionRecommendations(view, range, lang, e, { scope: "session" }),
+    ...toolRecommendations(view, range, lang, e).filter((i) => /^(repeated-reads|big-outputs):/.test(i.id)),
+    ...agentRecommendations(view, range, lang, e).filter((i) => i.id.startsWith("agent-model:"))
+  ];
+  return cards.map((i) => {
+    const home = homePage(i);
+    return { ...i, id: i.id.replace(/^([^:]+)/, "$1@session"), pages: ["session"], ...home && home !== "session" ? { seeAlso: home } : {} };
+  }).sort(bySavings);
+}
+function rangeMs(range) {
+  const at = (d, plus) => {
+    const [y, m, dd] = d.split("-").map(Number);
+    return new Date(y, m - 1, dd + plus).getTime();
+  };
+  return { from: at(range.from, 0), to: at(range.to, 1) };
+}
+function waitInsights(store2, hookLog2, range, lang = "en", env2) {
+  const { from, to } = rangeMs(range);
+  if (!hookLog2.hasEvents(from, to)) return [];
+  const e = env2 ?? defaultEnv({ unusedDays: DEFAULT_SETTINGS.recommendations.unusedDays });
+  const memoKey = `${hookLog2.version}:${store2.version}:${e.settingsFile}:${localDate(e.now)}`;
+  const cacheKey = `${lang}:${range.from}:${range.to}`;
+  const hit = waitMemo.get(cacheKey);
+  if (hit && hit.key === memoKey) return hit.v;
+  const T = insightText(lang);
+  const waits = deriveWaits(hookLog2.waitEvents(from - WAIT_CAP_MS, to + WAIT_CAP_MS)).filter((w) => w.start >= from && w.start < to && w.end > w.start);
+  const v = [];
+  const allow = permissionRecommendation(hookLog2.permissionEvents(from - WAIT_CAP_MS, to + WAIT_CAP_MS), range, lang, e, { from, to });
+  if (allow) v.push(allow);
+  if (waits.length) {
+    const ctx = new Ctx(store2);
+    const total = waits.reduce((n, w) => n + (w.end - w.start), 0);
+    const perm = waits.filter((w) => w.kind === "permission");
+    const input = waits.filter((w) => w.kind === "input");
+    const permMs = perm.reduce((n, w) => n + (w.end - w.start), 0);
+    const inputMs = total - permMs;
+    const longest = waits.reduce((a, b) => b.end - b.start > a.end - a.start ? b : a);
+    const where = (sid) => {
+      const main = store2.mainOf(sid);
+      const project = ctx.projectOfSession.get(sid);
+      return main?.title ? `${T.quote(main.title)}${project ? ` (${project})` : ""}` : project ?? sid.slice(0, 8);
+    };
+    const UNKNOWN = "\0unknown";
+    const byTool = /* @__PURE__ */ new Map();
+    for (const w of perm) {
+      const k = w.tool ?? UNKNOWN;
+      const a = byTool.get(k) ?? { n: 0, ms: 0 };
+      a.n++;
+      a.ms += w.end - w.start;
+      byTool.set(k, a);
+    }
+    const tools = [...byTool.entries()].sort((a, b) => b[1].n - a[1].n || b[1].ms - a[1].ms);
+    const allowed = tools.map(([t]) => t).filter((t) => t !== UNKNOWN).slice(0, 4);
+    const capH = WAIT_CAP_MS / 36e5;
+    v.push({
+      id: "hook-waits",
+      pages: ["sessions"],
+      severity: total > 60 * 6e4 ? "warn" : "info",
+      title: T.waits.title(total, longest.end - longest.start),
+      detail: T.waits.detail(
+        waits.length,
+        perm.length ? { n: perm.length, ms: permMs } : null,
+        input.length ? { n: input.length, ms: inputMs } : null,
+        where(longest.sessionId),
+        localDate(longest.start),
+        capH
+      ),
+      evidence: [
+        ...tools.slice(0, 6).map(([t, a]) => T.waits.toolLine(t === UNKNOWN ? T.unknownTool : t, a.n, a.ms)),
+        ...input.length ? [T.waits.inputLine(input.length, inputMs)] : []
+      ],
+      // The allow rules are the Tools card's (one card per issue); without one, the generic advice stays here.
+      fix: perm.length && !allow ? T.waits.fixPerm(allowed.map((t) => `"${t === "Bash" ? "Bash(pnpm test *)" : t}"`).join(", ")) : T.waits.fixInput,
+      ...allow ? { seeAlso: "tools" } : {}
+    });
+  }
+  waitMemo.set(cacheKey, { key: memoKey, v });
+  if (waitMemo.size > 50) waitMemo.delete(waitMemo.keys().next().value);
+  return v;
+}
+function compute(store2, range, lang, env2) {
+  const T = insightText(lang);
+  const skills = skillRecommendations(store2, range, lang, env2);
+  const attr = attribution(store2, range, lang);
+  const coveredPlugins = new Set(skills.filter((i) => i.id.startsWith("unused-plugins:")).flatMap((i) => (i.targets ?? []).map((t) => t.label)));
+  const out = [
+    ...skills,
+    ...mcpRecommendations(store2, range, lang, env2, { plugins: coveredPlugins }),
+    ...startupRecommendations(store2, range, lang, env2, { attr, skillCards: skills }),
+    // Tools: repeated reads, huge built-in tool results, failing tools (permission prompts come from hooks: waitInsights).
+    ...toolRecommendations(store2, range, lang, env2),
+    // Subagents: cheaper models for read-only agents, startup overhead, bursts / deep nesting, failing agents.
+    ...agentRecommendations(store2, range, lang, env2)
+  ];
+  const settings2 = readSettings();
+  out.push(...sessionRecommendations(store2, range, lang, env2));
+  const ov = overview(store2, range);
+  const grand = ov.totals.total || 1;
+  const pluginKey = (name) => Object.keys(settings2.enabledPlugins).find((k) => k.split("@")[0] === name) ?? `${name}@\u2026`;
+  const filesInRange = filesActiveIn2(store2, range);
+  const skillsSorted = attr.skills.filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
+  for (const r of skillsSorted.slice(0, 3)) {
+    const share = r.total / grand;
+    if (share < 0.03) continue;
+    const loads = Number(r.extra?.loads ?? 0);
+    out.push({
+      id: `skill-share-${r.key}`,
+      pages: ["skills"],
+      severity: share >= 0.15 ? "warn" : "info",
+      title: T.skillShare.title(r.key, share, loads),
+      detail: T.skillShare.detail(r.key, r.total, r.sessions, loads ? r.total / loads : null),
+      evidence: [T.skillShare.turns(r.turns, r.sessions), T.skillShare.tokens(r.tokens.output, r.tokens.cacheWrite)],
+      fix: T.skillShare.fix
+    });
+  }
+  const oftenLoaded = attr.skills.filter((r) => Number(r.extra?.loads ?? 0) >= 10).sort((a, b) => Number(b.extra.loads) - Number(a.extra.loads));
+  if (oftenLoaded.length) {
+    out.push({
+      id: "skills-loads",
+      pages: [],
+      severity: "info",
+      title: T.skillLoads.title,
+      detail: T.skillLoads.detail,
+      evidence: oftenLoaded.slice(0, 8).map((r) => T.skillLoads.evidence(r.key, r.extra.loads, r.total / grand))
+    });
+  }
+  const hookAgg = /* @__PURE__ */ new Map();
+  for (const s of filesInRange) {
+    for (const [d, b] of Object.entries(s.days)) {
+      if (d < range.from || d > range.to) continue;
+      for (const [k, h] of Object.entries(b.hooks)) {
+        const [plugin, name] = k.split("|");
+        const a = hookAgg.get(plugin) ?? { n: 0, ms: 0, err: 0, names: /* @__PURE__ */ new Set() };
+        a.n += h.n;
+        a.ms += h.ms;
+        a.err += h.err;
+        a.names.add(name.split(":")[0]);
+        hookAgg.set(plugin, a);
+      }
+    }
+  }
+  for (const [plugin, a] of [...hookAgg.entries()].sort((x, y) => y[1].ms - x[1].ms)) {
+    if (a.n < 200 && a.err < 50) continue;
+    const errShare = a.err / a.n;
+    const min = Math.round(a.ms / 6e4);
+    out.push({
+      id: `hooks-${plugin || "none"}`,
+      pages: ["startup"],
+      severity: errShare > 0.5 && a.n > 500 ? "warn" : "info",
+      title: T.hooks.title(plugin || null, a.n, min, errShare > 0.5 ? errShare : null),
+      detail: T.hooks.detail([...a.names].join(", "), min, a.err ? errShare : null),
+      evidence: [T.hooks.runs(a.n), T.hooks.time(Math.round(a.ms / 1e3)), T.hooks.errors(a.err)],
+      fix: plugin ? T.hooks.fix(plugin, pluginKey(plugin)) : T.hooks.fixNoPlugin
+    });
+  }
+  out.sort(bySaving);
+  return out;
+}
+var sevRank, bySaving, waitMemo;
+var init_insights2 = __esm({
+  "server/insights.ts"() {
+    "use strict";
+    init_api();
+    init_insights();
+    init_analytics();
+    init_config();
+    init_hook_log();
+    init_util();
+    init_insights_text();
+    init_recommend();
+    init_recommend_agents();
+    init_recommend_mcp();
+    init_recommend_skills();
+    init_recommend_startup();
+    init_recommend_tools();
+    init_recommend_limits();
+    init_recommend_sessions();
+    sevRank = { high: 0, warn: 1, info: 2 };
+    bySaving = (a, b) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity];
+    waitMemo = /* @__PURE__ */ new Map();
+  }
+});
+
+// server/limits-forecast.ts
+function usageBuckets(files, from, now) {
+  const cut = now - H3;
+  const cutMin = Math.floor(cut / MIN2);
+  const byStart = /* @__PURE__ */ new Map();
+  const add = (start, end, tokens) => {
+    if (!(tokens > 0) || end <= start) return;
+    const b = byStart.get(start);
+    if (b) b.tokens += tokens;
+    else byStart.set(start, { end, tokens });
+  };
+  const fromDate = localDate(from);
+  for (const s of files) {
+    if (s.lastTs < from) continue;
+    for (const [date, day] of Object.entries(s.days)) {
+      if (date < fromDate) continue;
+      const [y, m, d] = date.split("-").map(Number);
+      for (const [h, t] of Object.entries(day.hours)) {
+        const start = new Date(y, m - 1, d, Number(h)).getTime();
+        const end = start + H3;
+        if (end <= from || start >= cut) continue;
+        const keep = end > cut ? (cut - start) / H3 : 1;
+        add(start, Math.min(end, cut), weightT4(t) * keep);
+      }
+    }
+    const total = sumT4(s.total);
+    const mix = total > 0 ? weightT4(s.total) / total : 1;
+    for (const [k, v] of Object.entries(s.minutes)) {
+      const mk = Number(k);
+      if (mk < cutMin || mk * MIN2 > now) continue;
+      const start = Math.max(mk * MIN2, cut);
+      add(start, mk * MIN2 + MIN2, v * mix);
+    }
+  }
+  return [...byStart].map(([start, b]) => ({ start, end: b.end, tokens: b.tokens })).sort((a, b) => a.start - b.start);
+}
+var H3, MIN2, FORECAST_LOOKBACK_MS, FORECAST_TTL_MS, weightT4, LimitsForecaster;
+var init_limits_forecast = __esm({
+  "server/limits-forecast.ts"() {
+    "use strict";
+    init_forecast();
+    init_util();
+    H3 = 36e5;
+    MIN2 = 6e4;
+    FORECAST_LOOKBACK_MS = 8 * 24 * H3;
+    FORECAST_TTL_MS = 15e3;
+    weightT4 = (t) => t[0] * TOKEN_WEIGHTS.input + t[1] * TOKEN_WEIGHTS.output + t[2] * TOKEN_WEIGHTS.cacheRead + t[3] * TOKEN_WEIGHTS.cacheWrite;
+    LimitsForecaster = class {
+      constructor(history, files) {
+        this.history = history;
+        this.files = files;
+      }
+      history;
+      files;
+      cache = null;
+      get(limits, now = Date.now()) {
+        const key = JSON.stringify(limits);
+        const c = this.cache;
+        if (c && c.key === key && now - c.at < FORECAST_TTL_MS && now >= c.at) return c.v;
+        let v;
+        if (!limits || limits.fiveHourPct == null && limits.sevenDayPct == null) {
+          v = forecastLimits({ now, limits: null, history: [] });
+        } else {
+          const from = now - FORECAST_LOOKBACK_MS;
+          v = forecastLimits({ now, limits, history: this.history(from, now), usage: usageBuckets(this.files(), from, now) });
+        }
+        this.cache = { at: now, key, v };
+        return v;
+      }
+    };
+  }
+});
+
+// server/limits-log.ts
+function parseTsRange(q, now = Date.now()) {
+  const parse = (v, end) => {
+    if (!v) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    if (m) {
+      const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + (end ? 1 : 0)).getTime();
+      return end ? d - 1 : d;
+    }
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  let to = parse(q.get("to"), true) ?? now;
+  let from = parse(q.get("from"), false) ?? to - 7 * 24 * 36e5;
+  if (from > to) [from, to] = [to, from];
+  return { from, to };
+}
+var LIMITS_POLL_MS, keyOf, sameKey, LimitsLog;
+var init_limits_log = __esm({
+  "server/limits-log.ts"() {
+    "use strict";
+    LIMITS_POLL_MS = 3e4;
+    keyOf = (l) => [l.fiveHourPct, l.fiveHourResetsAt, l.sevenDayPct, l.sevenDayResetsAt];
+    sameKey = (a, b) => a.every((v, i) => v === b[i]);
+    LimitsLog = class {
+      constructor(db2, read) {
+        this.db = db2;
+        this.read = read;
+        if (!db2) return;
+        const r = db2.stmt("SELECT ts, five_pct, five_resets_at, week_pct, week_resets_at FROM limits ORDER BY ts DESC LIMIT 1").get();
+        if (r) this.last = { ts: r.ts, key: [r.five_pct, r.five_resets_at, r.week_pct, r.week_resets_at] };
+      }
+      db;
+      read;
+      last = null;
+      timer = null;
+      start(intervalMs = LIMITS_POLL_MS) {
+        this.poll();
+        this.timer = setInterval(() => this.poll(), intervalMs);
+        this.timer.unref?.();
+      }
+      stop() {
+        if (this.timer) clearInterval(this.timer);
+      }
+      poll() {
+        try {
+          return this.record(this.read());
+        } catch (e) {
+          console.error("[clorbit] could not record limits:", e.message);
+          return false;
+        }
+      }
+      /** Inserts a row only when any of the four values differs from the last recorded row. */
+      record(l) {
+        if (!this.db || !l) return false;
+        if (l.fiveHourPct === null && l.sevenDayPct === null) return false;
+        const key = keyOf(l);
+        if (this.last && sameKey(this.last.key, key)) return false;
+        const ts = Math.max(Math.round(l.updatedAt || Date.now()), (this.last?.ts ?? 0) + 1);
+        this.db.stmt("INSERT OR IGNORE INTO limits(ts, five_pct, five_resets_at, week_pct, week_resets_at) VALUES(?, ?, ?, ?, ?)").run(ts, ...key);
+        this.last = { ts, key };
+        return true;
+      }
+      history(from, to) {
+        if (!this.db) return [];
+        const rows = this.db.stmt("SELECT ts, five_pct, five_resets_at, week_pct, week_resets_at FROM limits WHERE ts >= ? AND ts <= ? ORDER BY ts").all(from, to);
+        return rows.map((r) => ({ ts: r.ts, fiveHourPct: r.five_pct, sevenDayPct: r.week_pct, fiveHourResetsAt: r.five_resets_at, sevenDayResetsAt: r.week_resets_at }));
+      }
+    };
+  }
+});
+
+// server/plan.ts
+import fs8 from "node:fs";
+function str2(v, max = 40) {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s && s.length <= max && !/[\u0000-\u001f]/.test(s) ? s : null;
+}
+function tierOf(rateLimitTier) {
+  const m = typeof rateLimitTier === "string" ? /(?:^|_)(\d{1,3})x$/i.exec(rateLimitTier) : null;
+  return m ? `${Number(m[1])}\xD7` : null;
+}
+function planFrom(account) {
+  if (!account || typeof account !== "object" || Array.isArray(account)) return null;
+  const a = account;
+  const type = str2(a.organizationType);
+  const name = str2(a.planDisplayName) ?? (type ? NAMES[type] ?? null : null);
+  const tier = tierOf(a.userRateLimitTier) ?? tierOf(a.organizationRateLimitTier);
+  const sinceRaw = str2(a.subscriptionCreatedAt, 64);
+  const since = sinceRaw && Number.isFinite(Date.parse(sinceRaw)) ? sinceRaw : null;
+  if (!name && !tier && !type) return null;
+  return { name, tier, type, since };
+}
+function readPlan(files = CLAUDE_JSON_FILES) {
+  for (const file of files) {
+    let st;
+    try {
+      st = fs8.statSync(file);
+    } catch {
+      continue;
+    }
+    if (cache3 && cache3.file === file && cache3.mtime === st.mtimeMs && cache3.size === st.size) return cache3.plan;
+    let plan = null;
+    try {
+      plan = planFrom(JSON.parse(fs8.readFileSync(file, "utf8"))?.oauthAccount);
+    } catch {
+      if (cache3 && cache3.file === file) return cache3.plan;
+    }
+    cache3 = { file, mtime: st.mtimeMs, size: st.size, plan };
+    return plan;
+  }
+  return null;
+}
+var NAMES, cache3;
+var init_plan = __esm({
+  "server/plan.ts"() {
+    "use strict";
+    init_config();
+    NAMES = {
+      claude_pro: "Pro",
+      claude_max: "Max",
+      claude_team: "Team",
+      claude_enterprise: "Enterprise"
+    };
+    cache3 = null;
   }
 });
 
@@ -8418,7 +9130,7 @@ var init_index = __esm({
     init_hook_log();
     init_hooks();
     init_i18n();
-    init_insights();
+    init_insights2();
     init_limits_forecast();
     init_limits_log();
     init_live();
@@ -8559,7 +9271,14 @@ var init_index = __esm({
           if (page !== null && !INSIGHT_PAGES.includes(page)) return json(res, 200, []);
           const nd = Number(url.searchParams.get("unusedDays"));
           const unusedDays = Number.isFinite(nd) && nd > 0 ? Math.round(Math.min(RECOMMEND_DAYS.max, Math.max(RECOMMEND_DAYS.min, nd))) : settings.get().recommendations.unusedDays;
-          return json(res, 200, insights(store, parseRange(url.searchParams), hookLog, lang, { page: page ?? void 0, unusedDays }));
+          const session = url.searchParams.get("session");
+          if (session !== null && !/^[\w-]{8,64}$/.test(session)) return json(res, 400, { error: err.badSession });
+          return json(res, 200, insights(store, parseRange(url.searchParams), hookLog, lang, {
+            page: page ?? void 0,
+            unusedDays,
+            session: session ?? void 0,
+            limits: () => forecaster.get(readLimits().limits)
+          }));
         }
         if (p === "/api/limits/history") {
           const r = parseTsRange(url.searchParams);

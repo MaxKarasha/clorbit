@@ -442,6 +442,11 @@ export interface InsightSaving {
   /** Share (0..1) of the targets' cost the change would save, from relative model prices (a cheaper subagent model);
    *  `period` is then that share of their tokens ("tokens' worth"), not tokens removed. Additive (0.4+). */
   costShare?: number;
+  /** Percentage points (0..100) of a subscription window the levers would free by its reset (the limits panel;
+   *  an estimate that re-expresses other cards' savings, so it never adds to the Insights total). Additive (0.4+). */
+  windowPct?: number;
+  /** The window `windowPct` is about. Additive (0.4+). */
+  window?: LimitWindow;
 }
 
 /** One concrete item of a recommendation. */
@@ -565,8 +570,12 @@ export interface AboutInfo {
 //   /api/session/:id                            → SessionDetail
 //   /api/session/:id/replay                     → SessionReplay (time-ordered replay events; archived sessions: structure only)
 //   /api/session/:id/agent/:agentId/changes     → AgentChanges (files changed + recent steps; agentId 'main', a subagent id or 'all')
-//   /api/insights?from&to[&page][&unusedDays]   → Insight[] (page: an InsightPage — only cards for that tab, unknown → [];
-//                                                 unusedDays: overrides Settings.recommendations.unusedDays, 7..365)
+//   /api/insights?from&to[&page][&unusedDays][&session]
+//                                               → Insight[] (page: an InsightPage — only cards for that tab, unknown → [];
+//                                                 'overview': the best cards of every tab, ranked by savings (pickOverview);
+//                                                 'session' with session=<id>: that session's own cards over its whole
+//                                                 span (from/to ignored); unusedDays: overrides
+//                                                 Settings.recommendations.unusedDays, 7..365)
 //   /api/limits/history?from&to                 → LimitsPoint[] (from/to: 'YYYY-MM-DD' or epoch ms; default last 7 days)
 //   /api/limits/forecast                        → LimitsForecast (source 'none' without the status-line capture)
 //   /api/debug/scan, /api/debug/db              → diagnostics (scan stats; SQLite row counts, size, archived files)

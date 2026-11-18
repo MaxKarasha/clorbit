@@ -5,6 +5,7 @@ import { branchColor, modelColor } from '../lib/colors';
 import { fmtDateTime, fmtDuration, fmtInt, fmtModel, fmtTokens } from '../lib/format';
 import { href, setQuery, useRoute } from '../lib/router';
 import { CometBar, cx, Empty, PageHeader, Panel } from '../components/ui';
+import Recommendations from '../components/Recommendations';
 import { Eyebrow, Guard, useRangeApi } from './common';
 
 type Key = 'project' | 'title' | 'startedAt' | 'durationMs' | 'model' | 'total' | 'subagents' | 'toolCalls' | 'compactions';
@@ -28,6 +29,7 @@ export default function Sessions() {
   return (
     <>
       <PageHeader eyebrow={<Eyebrow section={t('nav.sessions')} range={q.range} />} title={t('sessions.title')} lede={t('sessions.lede')} />
+      <Recommendations page="sessions" />
       <Guard state={q} label={t('sessions.loading')}>
         {(d) => <Body list={d} />}
       </Guard>

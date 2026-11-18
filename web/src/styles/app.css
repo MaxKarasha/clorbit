@@ -2104,8 +2104,15 @@
 }
 
 /* ---------- Recommendations (strip on analytics tabs + the Insights cards) ---------- */
+/* A card's fix is usually advice in prose (a command fits on one line anyway): wrap it. */
+.rec .copyblock__code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .recs {
   display: grid;
+  /* One column that never grows past the page: a long line in a card's fix block must not widen the strip. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   margin-bottom: 22px;
   animation: row-in 0.5s var(--ease-out) both;
@@ -2207,6 +2214,48 @@
   font-size: 11.5px;
   white-space: nowrap;
   cursor: help;
+}
+.rec__tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.rec__page {
+  padding: 2px 9px;
+  border-radius: 99px;
+  border: 1px solid rgba(92, 200, 255, 0.35);
+  background: rgba(92, 200, 255, 0.07);
+  color: var(--b1);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.rec__page:hover {
+  border-color: var(--b1);
+}
+/* The Overview's picks: up to three side by side. */
+.recs__grid--top {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+/* The limits panel's strip sits inside the panel. */
+.recs--limits {
+  margin: 18px 0 0;
+}
+/* Insights page: one chip per tab. */
+.ins-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ins-filter__n {
+  color: var(--muted);
+  font-size: 11px;
+}
+.chip--filter.is-active {
+  border-color: var(--b1);
+  color: var(--text);
+  background: rgba(92, 200, 255, 0.12);
 }
 .rec__save {
   display: grid;

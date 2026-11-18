@@ -3,10 +3,21 @@ import { fmtDuration, fmtNum, plural, type Lang } from './i18n';
 
 const pct = (x: number) => `${(x * 100).toFixed(x < 0.1 ? 1 : 0)}%`;
 
+/** Local 'YYYY-MM-DD HH:MM'. */
+const when = (ts: number) => {
+  const d = new Date(ts);
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+};
+/** Percentage points with one decimal under 10 ('2.5', uk '2,5'). */
+const pp = (x: number, lang: Lang) => { const v = x < 10 ? x.toFixed(1) : String(Math.round(x)); return lang === 'uk' ? v.replace('.', ',') : v; };
+
 function en() {
   const N = (n: number) => fmtNum(n, 'en');
   const D = (ms: number) => fmtDuration(ms, 'en');
   const times = (n: number) => `${n} ${plural(n, 'en', ['time', 'times'])}`;
+  /** Durations over two days in days and hours. */
+  const long = (ms: number) => (ms >= 48 * 3_600_000 ? `${Math.floor(ms / 86_400_000)} d ${Math.round((ms % 86_400_000) / 3_600_000)} h` : D(ms));
   return {
     pct,
     unknownTool: 'unknown tool',
@@ -357,6 +368,96 @@ function en() {
           why: (facts: string, errors: boolean) => `${facts}. ${errors ? 'Look at a few failed runs (their transcripts are in the sessions\' subagents folders) and tell me the common cause: a tool that keeps failing, a too-broad task, a timeout' : 'Mostly stopped by me: maybe the task given to them is too broad or they take too long — suggest a narrower brief'}; do not change anything unless I agree`,
         },
       },
+
+      // ---------- Sessions (recommend-sessions.ts) ----------
+      sessions: {
+        compact: {
+          facts: (n: number, avgPre: number) => `${n} auto-${plural(n, 'en', ['compaction', 'compactions'])}${avgPre ? ` at ≈ ${N(avgPre)} tokens of context` : ''}`,
+          title: (total: number, sessions: number) => `${total} auto-${plural(total, 'en', ['compaction', 'compactions'])} in ${sessions} ${plural(sessions, 'en', ['session', 'sessions'])}`,
+          titleOne: (total: number) => `This session auto-compacted ${times(total)}`,
+          detail: 'Auto-compaction kicks in when the context is nearly full: Claude summarizes the conversation and loses details, and the summary is one more large request over the whole context. Split long tasks into stages, run /compact with a focus (what to keep) before the context fills up, and /clear between unrelated tasks.',
+          avg: (n: number) => `Average context at an auto-compaction: ≈ ${N(n)} tokens`,
+          pctEnv: (v: string) => `Your auto-compaction threshold: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=${v}`,
+          summary: (total: number, sessions: number) => `${total} auto-${plural(total, 'en', ['compaction', 'compactions'])} in ${sessions} ${plural(sessions, 'en', ['session', 'sessions'])}: long tasks keep filling the context.`,
+          summaryOne: (total: number) => `one of my sessions auto-compacted ${times(total)}: a long task kept filling the context.`,
+          name: 'Long tasks: compact on purpose',
+          section: 'Long tasks',
+          noteText: 'For a long multi-step task, keep a short plan/progress file and update it after each step; when a step is done and the context is large, suggest that I run /compact with a focus (or /clear and continue from the plan file) instead of waiting for auto-compaction.',
+          why: (total: number, sessions: number) => `${total} auto-${plural(total, 'en', ['compaction', 'compactions'])} in ${sessions} ${plural(sessions, 'en', ['session', 'sessions'])}`,
+          noteRule: 'That line is the only change: do not touch autoCompactEnabled or any other setting.',
+        },
+        idle: {
+          facts: (n: number, n60: number, write: number) => `${n} cache ${plural(n, 'en', ['rebuild', 'rebuilds'])} after a break${n60 ? ` (${n60} after more than an hour)` : ''}, ≈ ${N(write)} tokens written again`,
+          title: (n: number, sessions: number, write: number) => `Resuming after breaks re-wrote ≈ ${N(write)} tokens of context to the cache (${times(n)} in ${sessions} ${plural(sessions, 'en', ['session', 'sessions'])})`,
+          titleOne: (n: number, write: number) => `After breaks, this session re-wrote ≈ ${N(write)} tokens of context to the cache (${times(n)})`,
+          detail: 'The prompt cache keeps the context for a limited time (5 minutes by default, an hour on some plans). After a longer break the next turn writes the whole context to the cache again, and cache writes cost more than reads and count against your limits. Only turns that really did that are counted (a break after which the cache was still warm is not). The saving leaves out the startup context a fresh session writes anyway.',
+          total: (n: number, n60: number, write: number) => `In total: ${n} ${plural(n, 'en', ['rebuild', 'rebuilds'])}${n60 ? `, ${n60} after more than an hour` : ''}; ≈ ${N(write)} tokens written again`,
+          fix: 'Before stepping away from a large session, run /compact with what to keep (or ask for a short summary and /clear); after a long break, start a new session from that summary instead of continuing the old one. Small sessions are cheap to resume: this matters only for large contexts.',
+        },
+        full: {
+          facts: (share: number, hi: number, limit: number, compactions: number) => `${pct(share)} of turns above 85% of the ${limit > 200_000 ? '1M' : '200K'} window (${hi})${compactions ? `, ${compactions} auto-${plural(compactions, 'en', ['compaction', 'compactions'])}` : ''}`,
+          title: (n: number) => `${n} sessions keep running with a nearly full context`,
+          titleOne: (share: number) => `This session ran ${pct(share)} of its turns with the context over 85% full`,
+          detail: 'Every turn re-reads the whole context, so a nearly full window makes each turn expensive, and answers get worse as old details pile up; auto-compaction comes next.',
+          fix: 'Run /compact with a focus at around 60–70% instead of waiting for auto-compaction; /clear between unrelated tasks; hand bulk reads and searches to subagents (Explore) so raw results stay out of the main context; read large files in parts.',
+        },
+        effort: {
+          title: (simple: number, rounds: number, levels: string) => `${simple} of ${rounds} prompts at ${levels} effort were simple`,
+          detail: 'A raised effort (xhigh, max) lets the model think longer on every prompt. These prompts were answered in at most two requests, without tools and with a short answer: lookups, small edits, questions. How much less a lower effort would have thought cannot be measured, so there is no saving estimate; "high", the usual default, is not counted.',
+          evidence: (lvl: string, simple: number, rounds: number, tok: number, sessions: number) => `${lvl}: ${simple} of ${rounds} prompts simple, ≈ ${N(tok)} tokens, in ${sessions} ${plural(sessions, 'en', ['session', 'sessions'])}`,
+          fix: 'Keep the default effort for routine work and raise it for hard problems only: the effort level can be changed in the middle of a session.',
+        },
+        auto: {
+          facts: (runs: number, tok: number, share: number, model: string, last: string) => `${runs} ${plural(runs, 'en', ['run', 'runs'])}, ≈ ${N(tok)} tokens (${pct(share)} of all), mostly ${model}, last ${last}`,
+          title: (runs: number, share: number) => `Automated runs (scripts, SDK, schedules) used ${pct(share)} of your tokens (${runs} ${plural(runs, 'en', ['session', 'sessions'])})`,
+          detail: 'Sessions nobody sits in front of: claude -p from scripts or CI, the Agent SDK, scheduled routines, the GitHub Action. They often run on the default top model with no turn limit, and a busy pipeline repeats them many times a day.',
+          fix: 'Check what starts them (cron, CI, scripts, scheduled routines) and whether each needs the top model (--model sonnet), a --max-turns limit or a lower frequency.',
+        },
+        cache: {
+          detail: 'On these days a large part of the context was written to the cache again instead of being read from it. Cache writes cost more than reads and burn through limits faster. The likely causes are what the transcripts show; CLAUDE.md edits or MCP changes in the middle of a session are not visible in them.',
+          likely: (list: string) => `likely: ${list}`,
+          unknown: 'no cause visible in the data',
+          causeIdle: (n: number, w: number) => `${n} ${plural(n, 'en', ['rebuild', 'rebuilds'])} after breaks (≈ ${N(w)})`,
+          causeSwitch: (n: number, w: number) => `${n} model ${plural(n, 'en', ['switch', 'switches'])} (≈ ${N(w)})`,
+          causeCompact: (n: number) => `${n} ${plural(n, 'en', ['compaction', 'compactions'])}`,
+          causeStarts: (n: number, w: number) => `${n} new sessions and subagents (≈ ${N(w)} of startup context)`,
+        },
+      },
+
+      // ---------- Subscription limits (recommend-limits.ts) ----------
+      limits: {
+        page: { skills: 'Skills & plugins', mcp: 'MCP', startup: 'Startup context', tools: 'Tools', subagents: 'Subagents', sessions: 'Sessions', overview: 'Overview', limits: 'Limits', session: 'Session' } as Record<string, string>,
+        connect: {
+          title: 'Subscription limits are not connected',
+          detail: 'Clorbit reads your 5-hour and weekly limits from Claude Code\'s status line. Once connected, this panel shows how fast you use them, whether a window runs out before it resets, and what eats it.',
+          evidence: [
+            'In Claude Code, type /clorbit statusline: a dry run that shows exactly what would change in ~/.claude/settings.json and changes nothing.',
+            'If the preview looks right, run /clorbit statusline --apply yourself: it backs up settings.json and changes only the status-line command (--remove restores it).',
+          ],
+        },
+        eat: {
+          projects: (list: string) => `Projects in this window: ${list}`,
+          agents: (list: string) => `Who: ${list}`,
+          main: 'main sessions',
+          models: (list: string) => `Models: ${list}`,
+        },
+        runout: {
+          title: (w: '5h' | '7d', early: number) => `At this pace the ${w === '7d' ? 'weekly' : '5-hour'} limit runs out ≈ ${long(early)} before it resets`,
+          titleExhausted: (w: '5h' | '7d', left: number | null) => `The ${w === '7d' ? 'weekly' : '5-hour'} limit is used up${left ? `; it resets in ${long(left)}` : ''}`,
+          detail: (w: '5h' | '7d', levers: boolean) => `The forecast extends the recent burn rate to the reset. Below: what used this window so far (weighted the way limits roughly count: output and cache writes more than cache reads)${levers ? ', and the recommendations that would free the most of it: their savings as a share of the window, assuming the saved tokens have your usual mix (an estimate)' : ''}.`,
+          now: (w: '5h' | '7d', used: number, rate: number, hitsAt: number | null, resetsAt: number | null, projected: number) => `Now ${used}% used, ≈ ${pp(rate, 'en')}%/h${hitsAt ? `; runs out ≈ ${when(hitsAt)}` : ''}${resetsAt ? `; resets ${when(resetsAt)}` : ''}; ≈ ${projected}% by the reset at this pace`,
+          lever: (title: string, p: number, w: '5h' | '7d', page: string) => `${page ? `${page}: ` : ''}${title} — ≈ −${pp(p, 'en')}% of the ${w === '7d' ? 'weekly' : '5-hour'} limit`,
+          leverNote: (p: number, w: '5h' | '7d', page: string) => `≈ −${pp(p, 'en')}% of the ${w === '7d' ? 'weekly' : '5-hour'} limit${page ? ` · ${page}` : ''}`,
+          fixNone: 'No single recommendation stands out. The usual levers: subagents that only search on a cheaper model, a smaller startup context, shorter tool outputs, fewer automated runs.',
+        },
+        pace: {
+          titleRoom: (p: number) => `On pace to finish the week at ≈ ${p}% of the weekly limit: you have room`,
+          titleTight: (p: number) => `On pace to finish the week at ≈ ${p}% of the weekly limit`,
+          titleOver: (p: number) => `On a straight line the weekly limit runs out before it resets (≈ ${p}% by then)`,
+          detail: (used: number, elapsed: number, left: number, forecast: boolean) => `${used}% used with ${pct(elapsed)} of the 7-day window gone; it resets in ${long(left)}. ${forecast ? 'The projection is the forecast (the recent burn rate).' : 'The projection is a straight line through the use so far.'}`,
+          line: (used: number, elapsed: number, projected: number) => `Used ${used}% · ${pct(elapsed)} of the week gone · ≈ ${projected}% at the reset`,
+        },
+      },
     },
   };
 }
@@ -367,6 +468,7 @@ function uk(): InsightText {
   const N = (n: number) => fmtNum(n, 'uk');
   const D = (ms: number) => fmtDuration(ms, 'uk');
   const times = (n: number) => `${n} ${plural(n, 'uk', ['раз', 'рази', 'разів'])}`;
+  const long = (ms: number) => (ms >= 48 * 3_600_000 ? `${Math.floor(ms / 86_400_000)} дн. ${Math.round((ms % 86_400_000) / 3_600_000)} год` : D(ms));
   return {
     pct,
     unknownTool: 'невідомий інструмент',
@@ -712,6 +814,94 @@ function uk(): InsightText {
           summary: (n) => `${n} ${plural(n, 'uk', ['тип субагентів часто падає', 'типи субагентів часто падають', 'типів субагентів часто падають'])} або зупиняються.`,
           action: (type) => `З'ясувати, чому субагенти ${type} падають або зупиняються`,
           why: (facts, errors) => `${facts}. ${errors ? 'Подивись кілька невдалих запусків (їхні транскрипти — у теках subagents сесій) і скажи спільну причину: інструмент, що постійно падає, надто широка задача, тайм-аут' : 'Здебільшого їх зупиняв я: можливо, задача надто широка або вони працюють задовго — запропонуй вужче формулювання'}; нічого не змінюй без моєї згоди`,
+        },
+      },
+
+      sessions: {
+        compact: {
+          facts: (n, avgPre) => `${n} ${plural(n, 'uk', ['автокомпакція', 'автокомпакції', 'автокомпакцій'])}${avgPre ? ` при ≈ ${N(avgPre)} токенів контексту` : ''}`,
+          title: (total, sessions) => `${total} ${plural(total, 'uk', ['автокомпакція', 'автокомпакції', 'автокомпакцій'])} у ${sessions} ${plural(sessions, 'uk', ['сесії', 'сесіях', 'сесіях'])}`,
+          titleOne: (total) => `Ця сесія автоматично стискалася ${times(total)}`,
+          detail: 'Автокомпакція вмикається, коли контекст майже повний: Claude підсумовує розмову й губить подробиці, а сам підсумок — ще один великий запит по всьому контексту. Розбивай довгі задачі на етапи, запускай /compact із фокусом (що зберегти) до того, як контекст заповниться, і /clear між непов\'язаними задачами.',
+          avg: (n) => `Середній контекст на момент автокомпакції: ≈ ${N(n)} токенів`,
+          pctEnv: (v) => `Твій поріг автокомпакції: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=${v}`,
+          summary: (total, sessions) => `${total} ${plural(total, 'uk', ['автокомпакція', 'автокомпакції', 'автокомпакцій'])} у ${sessions} ${plural(sessions, 'uk', ['сесії', 'сесіях', 'сесіях'])}: довгі задачі раз у раз заповнюють контекст.`,
+          summaryOne: (total) => `одна з моїх сесій автоматично стискалася ${times(total)}: довга задача заповнювала контекст.`,
+          name: 'Довгі задачі: стискати свідомо',
+          section: 'Довгі задачі',
+          noteText: 'Для довгої багатокрокової задачі веди короткий файл плану й прогресу та оновлюй його після кожного кроку; коли крок завершено, а контекст великий, запропонуй мені /compact із фокусом (або /clear і продовження з файлу плану), а не чекай автокомпакції.',
+          why: (total, sessions) => `${total} ${plural(total, 'uk', ['автокомпакція', 'автокомпакції', 'автокомпакцій'])} у ${sessions} ${plural(sessions, 'uk', ['сесії', 'сесіях', 'сесіях'])}`,
+          noteRule: 'Цей рядок — єдина зміна: не чіпай autoCompactEnabled та інші налаштування.',
+        },
+        idle: {
+          facts: (n, n60, write) => `${n} ${plural(n, 'uk', ['перезапис', 'перезаписи', 'перезаписів'])} кешу після перерви${n60 ? ` (${n60} — після понад години)` : ''}, ≈ ${N(write)} токенів записано знову`,
+          title: (n, sessions, write) => `Продовження після перерв знову записало в кеш ≈ ${N(write)} токенів контексту (${times(n)} у ${sessions} ${plural(sessions, 'uk', ['сесії', 'сесіях', 'сесіях'])})`,
+          titleOne: (n, write) => `Після перерв ця сесія знову записала в кеш ≈ ${N(write)} токенів контексту (${times(n)})`,
+          detail: 'Кеш промпта тримає контекст обмежений час (типово 5 хвилин, на деяких планах годину). Після довшої перерви наступний хід записує в кеш увесь контекст заново, а запис у кеш дорожчий за читання і рахується в ліміти. Враховано лише ходи, які справді це зробили (перерва, після якої кеш був ще теплим, не рахується). Економія не включає стартовий контекст, який нова сесія все одно запише.',
+          total: (n, n60, write) => `Разом: ${n} ${plural(n, 'uk', ['перезапис', 'перезаписи', 'перезаписів'])}${n60 ? `, ${n60} — після понад години` : ''}; ≈ ${N(write)} токенів записано знову`,
+          fix: 'Перш ніж відійти від великої сесії, запусти /compact із тим, що зберегти (або попроси короткий підсумок і зроби /clear); після довгої перерви почни нову сесію з цього підсумку, а не продовжуй стару. Малі сесії продовжувати дешево: це важливо лише для великих контекстів.',
+        },
+        full: {
+          facts: (share, hi, limit, compactions) => `${pct(share)} ходів понад 85% вікна ${limit > 200_000 ? '1 млн' : '200 тис.'} (${hi})${compactions ? `, ${compactions} ${plural(compactions, 'uk', ['автокомпакція', 'автокомпакції', 'автокомпакцій'])}` : ''}`,
+          title: (n) => `${n} ${plural(n, 'uk', ['сесія постійно працює', 'сесії постійно працюють', 'сесій постійно працюють'])} з майже повним контекстом`,
+          titleOne: (share) => `Ця сесія провела ${pct(share)} ходів із контекстом, заповненим понад 85%`,
+          detail: 'Кожен хід перечитує весь контекст, тож майже повне вікно робить кожен хід дорогим, а відповіді гіршають, коли накопичуються старі подробиці; далі — автокомпакція.',
+          fix: 'Запускай /compact із фокусом десь на 60–70%, не чекаючи автокомпакції; /clear між непов\'язаними задачами; масові читання й пошуки віддавай субагентам (Explore), щоб сирі результати не потрапляли в головний контекст; великі файли читай частинами.',
+        },
+        effort: {
+          title: (simple, rounds, levels) => `${simple} з ${rounds} промптів із зусиллям ${levels} були простими`,
+          detail: 'Підвищене зусилля (xhigh, max) дає моделі довше думати над кожним промптом. На ці промпти вистачило не більше двох запитів, без інструментів і з короткою відповіддю: довідки, дрібні правки, запитання. Наскільки менше модель думала б із нижчим зусиллям, виміряти не можна, тож оцінки економії немає; «high», звичне типове значення, не враховується.',
+          evidence: (lvl, simple, rounds, tok, sessions) => `${lvl}: ${simple} з ${rounds} промптів прості, ≈ ${N(tok)} токенів, у ${sessions} ${plural(sessions, 'uk', ['сесії', 'сесіях', 'сесіях'])}`,
+          fix: 'Для звичайної роботи лишай типове зусилля, а підвищуй його лише для складних задач: рівень зусилля можна змінити посеред сесії.',
+        },
+        auto: {
+          facts: (runs, tok, share, model, last) => `${runs} ${plural(runs, 'uk', ['запуск', 'запуски', 'запусків'])}, ≈ ${N(tok)} токенів (${pct(share)} усіх), здебільшого ${model}, останній ${last}`,
+          title: (runs, share) => `Автоматичні запуски (скрипти, SDK, розклад) використали ${pct(share)} твоїх токенів (${runs} ${plural(runs, 'uk', ['сесія', 'сесії', 'сесій'])})`,
+          detail: 'Сесії, перед якими ніхто не сидить: claude -p зі скриптів чи CI, Agent SDK, заплановані запуски, GitHub Action. Вони часто працюють на типовій топовій моделі без ліміту ходів, а завантажений конвеєр повторює їх багато разів на день.',
+          fix: 'Перевір, що їх запускає (cron, CI, скрипти, заплановані запуски) і чи потрібні кожному топова модель (--model sonnet), ліміт --max-turns або менша частота.',
+        },
+        cache: {
+          detail: 'У ці дні значна частина контексту записувалась у кеш заново замість читання з нього. Запис у кеш дорожчий за читання і швидше з\'їдає ліміти. Імовірні причини — те, що видно в транскриптах; зміни CLAUDE.md чи MCP посеред сесії в них не видно.',
+          likely: (list) => `імовірно: ${list}`,
+          unknown: 'причини в даних не видно',
+          causeIdle: (n, w) => `${n} ${plural(n, 'uk', ['перезапис', 'перезаписи', 'перезаписів'])} після перерв (≈ ${N(w)})`,
+          causeSwitch: (n, w) => `${n} ${plural(n, 'uk', ['зміна', 'зміни', 'змін'])} моделі (≈ ${N(w)})`,
+          causeCompact: (n) => `${n} ${plural(n, 'uk', ['компакція', 'компакції', 'компакцій'])}`,
+          causeStarts: (n, w) => `${n} нових сесій і субагентів (≈ ${N(w)} стартового контексту)`,
+        },
+      },
+
+      limits: {
+        page: { skills: 'Скіли й плагіни', mcp: 'MCP', startup: 'Стартовий контекст', tools: 'Інструменти', subagents: 'Субагенти', sessions: 'Сесії', overview: 'Огляд', limits: 'Ліміти', session: 'Сесія' },
+        connect: {
+          title: 'Ліміти підписки не підключені',
+          detail: 'Clorbit читає твої 5-годинний і тижневий ліміти зі статус-рядка Claude Code. Після підключення ця панель покаже, як швидко ти їх витрачаєш, чи закінчиться вікно до скидання і що його з\'їдає.',
+          evidence: [
+            'У Claude Code введи /clorbit statusline: це пробний запуск, який показує, що саме зміниться в ~/.claude/settings.json, і нічого не змінює.',
+            'Якщо попередній перегляд виглядає правильно, сам запусти /clorbit statusline --apply: він зробить копію settings.json і змінить лише команду статус-рядка (--remove повертає як було).',
+          ],
+        },
+        eat: {
+          projects: (list) => `Проєкти в цьому вікні: ${list}`,
+          agents: (list) => `Хто: ${list}`,
+          main: 'головні сесії',
+          models: (list) => `Моделі: ${list}`,
+        },
+        runout: {
+          title: (w, early) => `З таким темпом ${w === '7d' ? 'тижневий' : '5-годинний'} ліміт закінчиться ≈ за ${long(early)} до скидання`,
+          titleExhausted: (w, left) => `${w === '7d' ? 'Тижневий' : '5-годинний'} ліміт вичерпано${left ? `; скинеться через ${long(left)}` : ''}`,
+          detail: (w, levers) => `Прогноз продовжує недавній темп витрат до скидання. Нижче — що з\'їло це вікно досі (з вагами, приблизно як рахують ліміти: вихід і запис у кеш важать більше, ніж читання з кешу)${levers ? ', і рекомендації, які звільнили б найбільше: їхня економія як частка вікна, якщо зекономлені токени мають твій звичний склад (оцінка)' : ''}.`,
+          now: (w, used, rate, hitsAt, resetsAt, projected) => `Зараз використано ${used}%, ≈ ${pp(rate, 'uk')}%/год${hitsAt ? `; закінчиться ≈ ${when(hitsAt)}` : ''}${resetsAt ? `; скидання ${when(resetsAt)}` : ''}; з таким темпом ≈ ${projected}% до скидання`,
+          lever: (title, p, w, page) => `${page ? `${page}: ` : ''}${title} — ≈ −${pp(p, 'uk')}% ${w === '7d' ? 'тижневого' : '5-годинного'} ліміту`,
+          leverNote: (p, w, page) => `≈ −${pp(p, 'uk')}% ${w === '7d' ? 'тижневого' : '5-годинного'} ліміту${page ? ` · ${page}` : ''}`,
+          fixNone: 'Жодна окрема рекомендація не виділяється. Звичні важелі: субагенти, що лише шукають, на дешевшій моделі, менший стартовий контекст, коротші виводи інструментів, менше автоматичних запусків.',
+        },
+        pace: {
+          titleRoom: (p) => `З таким темпом тиждень завершиться на ≈ ${p}% тижневого ліміту: запас є`,
+          titleTight: (p) => `З таким темпом тиждень завершиться на ≈ ${p}% тижневого ліміту`,
+          titleOver: (p) => `За прямою лінією тижневий ліміт закінчиться до скидання (≈ ${p}% на той момент)`,
+          detail: (used, elapsed, left, forecast) => `Використано ${used}%, а минуло ${pct(elapsed)} 7-денного вікна; скидання через ${long(left)}. ${forecast ? 'Проєкція — це прогноз (недавній темп витрат).' : 'Проєкція — пряма лінія через досі використане.'}`,
+          line: (used, elapsed, projected) => `Використано ${used}% · минуло ${pct(elapsed)} тижня · ≈ ${projected}% на момент скидання`,
         },
       },
     },

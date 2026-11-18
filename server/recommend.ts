@@ -40,6 +40,8 @@ export interface RecommendEnv {
   /** The definition file of a user or project subagent (display path), or null: a project's .claude/agents/<name>.md
    *  (projects in `dirs`, which take precedence) or ~/.claude/agents/<name>.md, also matched by the frontmatter name. */
   agentFile: (name: string, dirs: string[]) => string | null;
+  /** CLAUDE_AUTOCOMPACT_PCT_OVERRIDE from the user settings' env, when set (shown with the compaction cards). */
+  autoCompactPct?: string;
 }
 
 /** `name:` of a subagent file's frontmatter (only the first lines are read). */
@@ -75,10 +77,12 @@ export function homeDisplay(p: string): string {
 
 export function defaultEnv(o: { now?: number; unusedDays: number }): RecommendEnv {
   const skills = path.join(CLAUDE_DIR, 'skills');
+  const settings = readSettings();
   return {
     now: o.now ?? Date.now(),
     unusedDays: o.unusedDays,
-    enabledPlugins: readSettings().enabledPlugins,
+    enabledPlugins: settings.enabledPlugins,
+    autoCompactPct: settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE,
     settingsFile: homeDisplay(SETTINGS_FILE),
     skillsDir: homeDisplay(skills),
     ownSkillExists: (name) => /^[\w.-]+$/.test(name) && fs.existsSync(path.join(skills, name)),

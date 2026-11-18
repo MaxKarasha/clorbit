@@ -205,7 +205,7 @@ export function startupRecommendations(
       const top = [...rows].sort((a, b) => Number(b.extra?.perSession ?? 0) - Number(a.extra?.perSession ?? 0)).slice(0, 5);
       out.push({
         id: 'startup-total',
-        pages: ['startup', 'overview'],
+        pages: ['startup'],
         severity: heavySubs ? 'warn' : 'info',
         title: heavySubs ? T.startupTotal.titleSubs(subs, subTotal) : TT.startupTotal.title(perMain, perSub),
         detail: TT.startupTotal.detail(startupTotal),

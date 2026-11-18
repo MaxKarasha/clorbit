@@ -3,12 +3,14 @@
 // Clorbit never changes anything itself: a card offers a prompt to paste into a Claude Code session.
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import type { Insight, InsightPage, InsightPrompts, InsightSaving } from '@shared/api';
+import { homePage, OVERVIEW_MAX } from '@shared/insights';
 import { t, tp, type MsgKey } from '../i18n';
+import { useApi } from '../lib/api';
 import { BRANCH, STATUS } from '../lib/colors';
 import { fmtAgo, fmtDuration, fmtInt, fmtPct, fmtTokens } from '../lib/format';
-import { href, navigate } from '../lib/router';
+import { href, navigate, useRange } from '../lib/router';
 import { updateSettings, useSettings } from '../lib/settings';
-import { useRangeApi } from '../pages/common';
+import { rangeQs } from '../pages/common';
 import { CopyBlock, cx } from './ui';
 
 /** Severity accents. No orange: it is reserved for "waiting for you". */
@@ -18,21 +20,30 @@ export const REC_SEV: Record<Insight['severity'], { labelKey: MsgKey; color: str
   info: { labelKey: 'rec.sev.info', color: STATUS.working, rank: 2 },
 };
 
-/** Where a "see …" link of a card goes, and the tab's name. */
-const PAGE_LINK: Record<InsightPage, { path: string; labelKey: MsgKey }> = {
+/** Where a "see …" link or a page badge of a card goes, and the tab's name. */
+export const PAGE_LINK: Record<InsightPage, { path: string; labelKey: MsgKey }> = {
   skills: { path: '/analytics/attribution', labelKey: 'nav.attribution' },
   mcp: { path: '/analytics/mcp', labelKey: 'nav.mcp' },
   startup: { path: '/analytics/context', labelKey: 'nav.context' },
   tools: { path: '/analytics/tools', labelKey: 'nav.tools' },
   subagents: { path: '/analytics/subagents', labelKey: 'nav.subagents' },
   sessions: { path: '/analytics/sessions', labelKey: 'nav.sessions' },
-  session: { path: '/analytics/sessions', labelKey: 'nav.sessions' },
+  session: { path: '/analytics/sessions', labelKey: 'rec.page.session' },
   overview: { path: '/analytics/overview', labelKey: 'nav.overview' },
-  limits: { path: '/analytics/overview', labelKey: 'nav.overview' },
+  limits: { path: '/analytics/overview', labelKey: 'rec.page.limits' },
 };
 
 /** How many cards a tab's strip shows; the rest are on the Insights page. */
 const STRIP_MAX = 4;
+
+/** The strip's request: a tab's cards over the selected range, or one session's cards over its whole span. */
+function useInsights(page: InsightPage, session: string | undefined, days: number) {
+  const range = useRange();
+  const path = session
+    ? `/api/insights?page=session&session=${encodeURIComponent(session)}&unusedDays=${days}`
+    : `/api/insights?${rangeQs(range)}&page=${page}&unusedDays=${days}`;
+  return useApi<Insight[]>(path);
+}
 
 /** Hidden recommendation ids and the actions on them (saved with the settings; in-memory only in demo mode). */
 export function useDismissed() {
@@ -49,33 +60,39 @@ export function useDismissed() {
 export const recOrder = (a: Insight, b: Insight) =>
   REC_SEV[a.severity].rank - REC_SEV[b.severity].rank || (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0);
 
-/** The Recommendations strip of one analytics tab (respects the tab's date range). */
-export default function Recommendations({ page }: { page: InsightPage }) {
+/**
+ * The Recommendations strip of one analytics tab (respects the tab's date range). `page="overview"` shows the best
+ * cards of every tab (the server ranks them by savings), each with its tab's badge; `page="session"` with `session`
+ * shows that session's own cards.
+ */
+export default function Recommendations({ page, session }: { page: InsightPage; session?: string }) {
   const days = useSettings().recommendations.unusedDays;
-  const q = useRangeApi<Insight[]>('/api/insights', `&page=${page}&unusedDays=${days}`);
+  const q = useInsights(page, session, days);
   const dismissed = useDismissed();
   const [showHidden, setShowHidden] = useState(false);
   if (!q.data) return null;
-  // Actionable cards (with a prompt) first, then by severity and savings.
-  const ranked = [...q.data].sort((a, b) => Number(!!b.prompts) - Number(!!a.prompts) || recOrder(a, b));
+  const top = page === 'overview';
+  // The Overview keeps the server's ranking (by savings); a tab puts actionable cards (with a prompt) first.
+  const ranked = top ? q.data : [...q.data].sort((a, b) => Number(!!b.prompts) - Number(!!a.prompts) || recOrder(a, b));
   const visible = ranked.filter((i) => !dismissed.set.has(i.id));
   const hidden = ranked.filter((i) => dismissed.set.has(i.id));
   if (!visible.length && !hidden.length) return null;
-  const shown = visible.slice(0, STRIP_MAX);
+  const shown = visible.slice(0, top ? OVERVIEW_MAX : STRIP_MAX);
   const more = visible.length - shown.length;
+  const title = top ? t('rec.topTitle') : page === 'session' ? t('rec.sessionTitle') : page === 'limits' ? t('rec.limitsTitle') : t('rec.title');
   return (
-    <section className={cx('recs', q.refreshing && 'is-refreshing')} aria-labelledby={`recs-${page}`}>
+    <section className={cx('recs', `recs--${page}`, q.refreshing && 'is-refreshing')} aria-labelledby={`recs-${page}`} data-recs={page}>
       <div className="recs__head">
         <h2 className="recs__title" id={`recs-${page}`}>
-          {t('rec.title')}
-          {visible.length > 0 && <span className="recs__count mono">{fmtInt(visible.length)}</span>}
+          {title}
+          {!top && visible.length > 0 && <span className="recs__count mono">{fmtInt(visible.length)}</span>}
         </h2>
-        <p className="recs__hint">{t('rec.hint')}</p>
+        <p className="recs__hint">{t(top ? 'rec.topHint' : 'rec.hint')}</p>
       </div>
       {shown.length > 0 && (
-        <div className="recs__grid">
+        <div className={cx('recs__grid', top && 'recs__grid--top')}>
           {shown.map((ins, i) => (
-            <RecommendationCard key={ins.id} ins={ins} index={i} compact onHide={() => dismissed.hide(ins.id)} />
+            <RecommendationCard key={ins.id} ins={ins} index={i} compact showPage={top} onHide={() => dismissed.hide(ins.id)} />
           ))}
         </div>
       )}
@@ -86,9 +103,13 @@ export default function Recommendations({ page }: { page: InsightPage }) {
           ))}
         </div>
       )}
-      {(more > 0 || hidden.length > 0) && (
+      {(more > 0 || hidden.length > 0 || top) && (
         <div className="recs__foot">
-          {more > 0 && (
+          {top ? (
+            <button type="button" className="recs__link" onClick={() => navigate('/insights')}>
+              {t('rec.allLink')}
+            </button>
+          ) : more > 0 && (
             <button type="button" className="recs__link" onClick={() => navigate('/insights')}>
               {tp('rec.more', more)}
             </button>
@@ -118,6 +139,7 @@ export function RecommendationCard({
   index = 0,
   compact = false,
   hidden = false,
+  showPage = false,
   onHide,
   onShow,
 }: {
@@ -126,10 +148,14 @@ export function RecommendationCard({
   /** Strip variant: evidence folds into the item list. */
   compact?: boolean;
   hidden?: boolean;
+  /** A badge with the card's tab, linking there (the Overview strip and the Insights page). */
+  showPage?: boolean;
   onHide?: () => void;
   onShow?: () => void;
 }) {
   const sev = REC_SEV[ins.severity];
+  const home = showPage ? homePage(ins) : null;
+  const homeLink = home ? PAGE_LINK[home] : null;
   const targets = ins.targets ?? [];
   const [open, setOpen] = useState(!compact && targets.length > 0 && targets.length <= 3);
   const listId = useId();
@@ -145,9 +171,18 @@ export function RecommendationCard({
           <span className="dot" style={{ background: sev.color, boxShadow: `0 0 10px ${sev.color}` }} />
           {t(sev.labelKey)}
         </span>
-        {ins.scope && (
-          <span className="rec__scope" title={t(ins.scope === 'history' ? 'rec.scope.historyTip' : 'rec.scope.rangeTip')}>
-            {t(ins.scope === 'history' ? 'rec.scope.history' : 'rec.scope.range')}
+        {(homeLink || ins.scope) && (
+          <span className="rec__tags">
+            {homeLink && (
+              <a className="rec__page" href={href(homeLink.path)} title={t('rec.pageTip', { page: t(homeLink.labelKey) })}>
+                {t(homeLink.labelKey)}
+              </a>
+            )}
+            {ins.scope && (
+              <span className="rec__scope" title={t(ins.scope === 'history' ? 'rec.scope.historyTip' : 'rec.scope.rangeTip')}>
+                {t(ins.scope === 'history' ? 'rec.scope.history' : 'rec.scope.range')}
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -195,11 +230,15 @@ export function RecommendationCard({
       {!ins.prompts && ins.fix && <CopyBlock text={ins.fix} />}
       <div className="rec__actions">
         {ins.prompts && !hidden && <PromptButton prompts={ins.prompts} />}
-        {ins.seeAlso && PAGE_LINK[ins.seeAlso] && (
+        {ins.seeAlso && PAGE_LINK[ins.seeAlso] ? (
           <a className="recs__link rec__see" href={href(PAGE_LINK[ins.seeAlso].path)}>
             {t('rec.seeAlso', { page: t(PAGE_LINK[ins.seeAlso].labelKey) })}
           </a>
-        )}
+        ) : compact && homeLink ? (
+          <a className="recs__link rec__see" href={href(homeLink.path)}>
+            {t('rec.open', { page: t(homeLink.labelKey) })}
+          </a>
+        ) : null}
         {hidden ? (
           <button type="button" className="btn btn--ghost btn--sm" onClick={onShow}>
             {t('rec.unhide')}
@@ -229,6 +268,22 @@ function Evidence({ lines }: { lines: string[] }) {
 
 /** "−3.2K context tokens per session and per subagent · ≈ −41M over 30 days · 6% of the startup context". */
 export function Savings({ s }: { s: InsightSaving }) {
+  // The limits panel: other cards' savings as a share of a subscription window by its reset.
+  if (s.windowPct) {
+    return (
+      <div className="rec__save">
+        <div className="rec__save-main">
+          <span className="rec__save-big mono">≈ −{fmtPct(s.windowPct / 100, s.windowPct < 10 ? 1 : 0)}</span>
+          <span className="rec__save-cap">{t(s.window === '5h' ? 'rec.save.window5h' : 'rec.save.window7d')}</span>
+        </div>
+        <div className="rec__save-line">
+          <span className="rec__est" title={t('rec.save.windowTip')}>
+            {t('rec.save.estimate')}
+          </span>
+        </div>
+      </div>
+    );
+  }
   // Waiting time (permission prompts you always approve): minutes, not tokens.
   if (s.waitMs) {
     return (

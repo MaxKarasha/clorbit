@@ -9,6 +9,7 @@ import TurnsChart from '../components/charts/TurnsChart';
 import { Legend } from '../components/charts/small';
 import RankList from '../components/RankList';
 import { Chip, CometBar, cx, Empty, ErrorState, Loading, Panel, Segmented } from '../components/ui';
+import Recommendations from '../components/Recommendations';
 import { HEAVY_MAX } from './Tools';
 import { changesPath, FileList } from '../galaxy/AgentChanges';
 
@@ -90,6 +91,8 @@ function Body({ d }: { d: SessionDetail }) {
         </div>
         {d.archived && <p className="page-lede">{t('session.archivedNote')}</p>}
       </header>
+
+      <Recommendations page="session" session={s.sessionId} />
 
       <div className="grid grid--5-7">
         <Panel title={t('session.tree')} hint={t('session.treeHint')}>

@@ -6,6 +6,7 @@ import { href } from '../lib/router';
 import StackedDaily from '../components/charts/StackedDaily';
 import { Donut, Heatmap, Legend, Sparkline } from '../components/charts/small';
 import RankList from '../components/RankList';
+import Recommendations from '../components/Recommendations';
 import { Empty, PageHeader, Panel } from '../components/ui';
 import type { ActiveRange } from '../lib/router';
 import { Eyebrow, Guard, useRangeApi } from './common';
@@ -20,6 +21,7 @@ export default function Overview() {
         title={t('overview.title')}
         lede={t('overview.lede')}
       />
+      <Recommendations page="overview" />
       <Guard state={q} label={t('overview.loading')}>
         {(d) => <OverviewBody d={d} range={q.range} />}
       </Guard>

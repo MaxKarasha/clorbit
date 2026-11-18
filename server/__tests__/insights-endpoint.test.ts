@@ -75,6 +75,21 @@ function toolSession(n: number, daysAgo: number) {
   }
 }
 
+/** A session resumed three times after 20-minute breaks, each time re-writing its whole context to the cache. */
+function idleSession(n: number, daysAgo: number) {
+  const t0 = new Date(Date.now() - daysAgo * DAY).setHours(9, 0, 0, 0);
+  const lines: string[] = [];
+  for (let k = 0; k < 4; k++) {
+    const ts = new Date(t0 + k * 20 * 60_000).toISOString();
+    lines.push(JSON.stringify({ type: 'user', timestamp: ts, sessionId: sid(n), cwd: '/work/app', message: { role: 'user', content: 'continue' } }));
+    lines.push(JSON.stringify({
+      type: 'assistant', requestId: `ir${n}-${k}`, timestamp: ts, sessionId: sid(n), cwd: '/work/app',
+      message: { model: 'claude-opus-5-5', id: `im${n}-${k}`, stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 150_000 } },
+    }));
+  }
+  fs.writeFileSync(path.join(claude, 'projects', '-work-app', `${sid(n)}.jsonl`), lines.join('\n') + '\n');
+}
+
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
@@ -107,6 +122,7 @@ beforeAll(async () => {
   mcpSession(10, 45);
   mcpSession(11, 2);
   toolSession(20, 1);
+  idleSession(30, 2);
   // Claude Code's account file: only the MCP server names are read from it.
   fs.writeFileSync(path.join(tmp, 'claude.json'), JSON.stringify({ mcpServers: { pencil: { command: 'pencil-mcp', env: { TOKEN: 'secret' } } } }));
   const port = await freePort();
@@ -218,6 +234,38 @@ describe('GET /api/insights', () => {
     const uk = (await get(`${RANGE}&page=skills&lang=uk`)).find((i) => i.id.startsWith('unused-plugins:'))!;
     expect(uk.title).toMatch(/Плагін gamma/);
     expect(uk.prompts!.ask).toContain('Поки нічого не змінюй');
+  });
+
+  it('?page=sessions: the idle-gap card; ?page=overview: the best cards of every tab, by savings', async () => {
+    const sessions = await get(`${RANGE}&page=sessions`);
+    expect(sessions.every((i) => i.pages?.includes('sessions'))).toBe(true);
+    const idle = sessions.find((i) => i.id.startsWith('idle-rebuilds:'))!;
+    expect(idle.targets!.map((t) => t.key)).toEqual([sid(30)]);
+    expect(idle.estSavingTokens).toBeGreaterThan(400_000);
+    const top = await get(`${RANGE}&page=overview`);
+    expect(top.length).toBeGreaterThan(2);
+    expect(new Set(top.map((i) => i.pages?.[0])).size).toBeGreaterThan(1);
+    expect(top.some((i) => i.pages?.includes('limits'))).toBe(false);
+    for (let k = 1; k < top.length; k++) expect(top[k - 1].estSavingTokens ?? 0).toBeGreaterThanOrEqual(top[k].estSavingTokens ?? 0);
+  });
+
+  it('?page=session&session=<id>: that session\'s cards over its whole span, whatever the range; a bad id is a 400', async () => {
+    const list = await get(`page=session&session=${sid(30)}&from=2000-01-01&to=2000-01-02`);
+    expect(list.map((i) => i.id.split(':')[0])).toEqual(['idle-rebuilds@session']);
+    expect(list[0].pages).toEqual(['session']);
+    expect(list[0].seeAlso).toBe('sessions');
+    expect(list[0].title).toMatch(/this session re-wrote ≈ 450K tokens/);
+    expect(await get(`page=session&session=${sid(1)}`)).toEqual([]);
+    expect(await get(`${RANGE}&page=session`)).toEqual([]);
+    expect((await fetch(`${base}/api/insights?page=session&session=..%2Fx`)).status).toBe(400);
+  });
+
+  it('?page=limits without a status-line capture: how to connect it (a preview command, no prompt)', async () => {
+    const list = await get(`${RANGE}&page=limits`);
+    expect(list.map((i) => i.id)).toEqual(['limits-connect']);
+    expect(list[0].fix).toBe('/clorbit statusline');
+    expect(list[0].prompts).toBeUndefined();
+    expect((await get(RANGE)).some((i) => i.id === 'limits-connect')).toBe(true);
   });
 
   it('the threshold from the settings applies when the query has none', async () => {

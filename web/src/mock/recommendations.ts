@@ -1,13 +1,16 @@
-// Demo recommendations for the "Skills & plugins", "MCP", "Startup context", "Tools" and "Subagents" tabs. Same shape and prompt builder
-// as the server's rules (server/recommend-skills.ts, recommend-mcp.ts, recommend-startup.ts, recommend-tools.ts,
-// recommend-agents.ts); every plugin, skill,
+// Demo recommendations for every tab with a strip: Skills & plugins, MCP, Startup context, Tools, Subagents, Sessions,
+// the Session page and the limits panel (the Overview picks from them). Same shape and prompt builder as the server's
+// rules (server/recommend-*.ts); every plugin, skill,
 // server, file and project here is invented. Deterministic for a given range, threshold and day.
-import type { AttributionReport, Insight, InsightTarget, Range } from '@shared/api';
+import type { AttributionReport, Insight, InsightTarget, LimitsForecast, Range, Tokens } from '@shared/api';
+import { weightTokens } from '@shared/forecast';
+import { bySavings } from '@shared/insights';
 import {
   agentModelItem, allowRuleItem, buildPrompts, compressInstructionsItem, consolidateMemoryItem, disableMcpJsonServerItem, disablePluginItem,
   enablePluginInProjectItem, instructionNoteItem, moveMcpToProjectsItem, moveSkillItem, PROMPT_NOTES, removeMcpServerItem, reviewItem,
 } from '@shared/prompts';
-import { getLang, t } from '../i18n';
+import { getLang, t, tp } from '../i18n';
+import { rng } from './rng';
 import { fmtDuration, fmtPct, fmtTokens } from '../lib/format';
 
 const DAY = 86_400_000;
@@ -466,7 +469,7 @@ export function mockStartupRecommendations(range: Range, at: AttributionReport, 
         ...top.map((r) => t('mock.rec.ctx.total.row', { label: r.label, per: num(Number(r.extra?.perSession ?? 0)), sub: num(Number(r.extra?.perSubagent ?? 0)) })),
       ],
       fix: t('mock.rec.ctx.total.fix'),
-      pages: ['startup', 'overview'],
+      pages: ['startup'],
       scope: 'range',
     });
   }
@@ -738,4 +741,278 @@ export function mockAgentRecommendations(range: Range, at: AttributionReport, no
     });
   }
   return out;
+}
+
+// ---------- Sessions, the Session page and the limits panel (server/recommend-sessions.ts, recommend-limits.ts) ----------
+
+const SESSIONS = [
+  { sid: 'demo-s-dark', title: 'Dark mode for the settings page', project: 'aurora-web' },
+  { sid: 'demo-s-billing', title: 'Migrate billing webhooks to v2', project: 'ledger-api' },
+  { sid: 'demo-s-e2e', title: 'Flaky e2e tests in CI', project: 'aurora-web' },
+  { sid: 'demo-s-search', title: 'Full-text search for the docs site', project: 'atlas-docs' },
+];
+const sessionLabel = (s: (typeof SESSIONS)[number]) => `“${s.title}” (${s.project})`;
+
+/** Demo recommendations for the Sessions tab: idle-gap cache rebuilds, auto-compactions, a nearly full context,
+ *  automated runs, days with a low cache hit rate and a raised effort on simple prompts. */
+export function mockSessionRecommendations(range: Range, now = Date.now()): Insight[] {
+  const lang = getLang();
+  const d = days(range);
+  const out: Insight[] = [];
+
+  // B. Idle gaps that expired the cache (measured from cache writes after the break).
+  {
+    const rows = SESSIONS.slice(0, 3).map((s, i) => {
+      const n = Math.max(1, Math.round(d * [0.9, 0.6, 0.35][i]));
+      const write = n * [168_000, 142_000, 96_000][i];
+      return { s, n, n60: Math.max(0, n - 1 - i), write, save: Math.max(0, write - n * STARTUP_PER_SESSION) };
+    });
+    const n = rows.reduce((a, r) => a + r.n, 0);
+    const n60 = rows.reduce((a, r) => a + r.n60, 0);
+    const write = rows.reduce((a, r) => a + r.write, 0);
+    const period = rows.reduce((a, r) => a + r.save, 0);
+    const facts = (r: (typeof rows)[number]) => t('mock.rec.sess.idle.facts', { n: r.n, n60: r.n60, write: num(r.write) });
+    out.push({
+      id: 'idle-rebuilds:demo',
+      severity: period >= 20e6 ? 'high' : period >= 2e6 ? 'warn' : 'info',
+      title: t('mock.rec.sess.idle.title', { write: num(write), n, s: rows.length }),
+      detail: t('mock.rec.sess.idle.detail'),
+      evidence: [t('mock.rec.sess.idle.total', { n, n60, write: num(write) }), ...rows.map((r) => `${sessionLabel(r.s)}: ${facts(r)}`)],
+      fix: t('mock.rec.sess.idle.fix'),
+      estSavingTokens: period,
+      pages: ['sessions'],
+      scope: 'range',
+      saving: { period, days: d, basis: 'range' },
+      targets: rows.map((r): InsightTarget => ({ key: r.s.sid, label: r.s.title, kind: 'session', note: facts(r) })),
+    });
+  }
+
+  // A. Frequent auto-compactions: one CLAUDE.md line for long tasks.
+  {
+    const rows = [{ s: SESSIONS[1], n: 4, ctx: 171_000 }, { s: SESSIONS[0], n: 3, ctx: 166_000 }, { s: SESSIONS[3], n: 2, ctx: 158_000 }];
+    const total = rows.reduce((a, r) => a + r.n, 0);
+    const facts = (r: (typeof rows)[number]) => t('mock.rec.sess.compact.facts', { n: r.n, ctx: num(r.ctx) });
+    out.push({
+      id: 'auto-compactions:demo',
+      severity: 'info',
+      title: t('mock.rec.sess.compact.title', { total, s: rows.length }),
+      detail: t('mock.rec.sess.compact.detail'),
+      evidence: [...rows.map((r) => `${sessionLabel(r.s)}: ${facts(r)}`), t('mock.rec.sess.compact.avg', { n: num(166_000) })],
+      pages: ['sessions'],
+      scope: 'range',
+      targets: rows.map((r): InsightTarget => ({ key: r.s.sid, label: r.s.title, kind: 'session', note: facts(r) })),
+      prompts: buildPrompts({
+        lang,
+        summary: t('mock.rec.sess.compact.summary', { total, s: rows.length }),
+        items: [instructionNoteItem(lang, { name: t('mock.rec.sess.compact.name'), file: CLAUDE_MD, section: t('mock.rec.sess.compact.section'), text: t('mock.rec.sess.compact.noteText'), why: t('mock.rec.sess.compact.why', { total, s: rows.length }) })],
+        notes: [...PROMPT_NOTES[lang].note(CLAUDE_MD), t('mock.rec.sess.compact.noteRule')],
+      }),
+    });
+  }
+
+  // C. A nearly full context.
+  {
+    const rows = [{ s: SESSIONS[1], pct: '46%', hi: 118, c: 4 }, { s: SESSIONS[0], pct: '31%', hi: 64, c: 3 }];
+    const facts = (r: (typeof rows)[number]) => t('mock.rec.sess.full.facts', { pct: r.pct, hi: r.hi, c: r.c });
+    out.push({
+      id: 'context-full:demo',
+      severity: 'info',
+      title: t('mock.rec.sess.full.title', { n: rows.length }),
+      detail: t('mock.rec.sess.full.detail'),
+      evidence: rows.map((r) => `${sessionLabel(r.s)}: ${facts(r)}`),
+      fix: t('mock.rec.sess.full.fix'),
+      pages: ['sessions'],
+      scope: 'range',
+      targets: rows.map((r): InsightTarget => ({ key: r.s.sid, label: r.s.title, kind: 'session', note: facts(r) })),
+    });
+  }
+
+  // E. Automated runs.
+  {
+    const runs = Math.max(2, Math.round(d * 2));
+    const tok = runs * 1_350_000;
+    const facts = t('mock.rec.sess.auto.facts', { runs, tok: num(tok), pct: '12%', model: 'Opus 5.5', last: iso(now - DAY / 3) });
+    out.push({
+      id: 'automated-sessions:demo',
+      severity: 'info',
+      title: t('mock.rec.sess.auto.title', { pct: '12%', runs }),
+      detail: t('mock.rec.sess.auto.detail'),
+      evidence: [`ledger-api · sdk-cli: ${facts}`],
+      fix: t('mock.rec.sess.auto.fix'),
+      pages: ['sessions'],
+      scope: 'range',
+      targets: [{ key: 'ledger-api|sdk-cli', label: 'ledger-api · sdk-cli', kind: 'other', note: facts }],
+    });
+  }
+
+  // F. Days with a low cache hit rate, with their likely causes.
+  {
+    const day1 = iso(now - 2 * DAY);
+    const day2 = iso(now - 5 * DAY);
+    const list = [
+      t('mock.rec.sess.cache.evidence', { date: day1, rate: '71%', w: num(9_400_000), u: num(310_000), causes: `${t('mock.rec.sess.cache.idle', { n: 3, w: num(480_000) })}, ${t('mock.rec.sess.cache.switch', { n: 1, w: num(152_000) })}` }),
+      t('mock.rec.sess.cache.evidence', { date: day2, rate: '76%', w: num(7_100_000), u: num(240_000), causes: t('mock.rec.sess.cache.starts', { n: 41, w: num(1_900_000) }) }),
+    ].filter((_, i) => d >= (i ? 6 : 3));
+    if (list.length) {
+      out.push({
+        id: 'low-cache-days:demo',
+        severity: 'info',
+        title: t('mock.rec.sess.cache.title', { n: list.length, avg: '89%' }),
+        detail: t('mock.rec.sess.cache.detail'),
+        evidence: list,
+        fix: t('mock.rec.sess.cache.fix'),
+        pages: ['sessions'],
+        scope: 'range',
+      });
+    }
+  }
+
+  // D. A raised effort on simple prompts.
+  {
+    const rounds = Math.max(24, Math.round(d * 9));
+    const simple = Math.round(rounds * 0.42);
+    out.push({
+      id: 'effort-simple:demo',
+      severity: 'info',
+      title: t('mock.rec.sess.effort.title', { simple, rounds }),
+      detail: t('mock.rec.sess.effort.detail'),
+      evidence: [t('mock.rec.sess.effort.evidence', { simple, rounds, tok: num(simple * 31_000), s: Math.max(2, Math.round(d * 0.8)) })],
+      fix: t('mock.rec.sess.effort.fix'),
+      pages: ['sessions'],
+      scope: 'range',
+    });
+  }
+  return out;
+}
+
+/** Demo cards of one session's page: idle-gap rebuilds, auto-compactions (as many as the demo session has; none
+ *  without) and a file read again and again (deterministic per id). */
+export function mockSessionPageRecommendations(sessionId: string, compactions?: number): Insight[] {
+  const lang = getLang();
+  const r = rng(`session-recs:${sessionId}`);
+  const out: Insight[] = [];
+  const tag = sessionId.slice(0, 8);
+  {
+    const n = r.int(2, 4);
+    const write = n * r.int(90, 170) * 1000;
+    const period = Math.max(0, write - n * STARTUP_PER_SESSION);
+    out.push({
+      id: `idle-rebuilds@session:demo-${tag}`,
+      severity: period >= 2e6 ? 'warn' : 'info',
+      title: t('mock.rec.sp.idle.title', { write: num(write), n }),
+      detail: t('mock.rec.sess.idle.detail'),
+      evidence: [t('mock.rec.sess.idle.total', { n, n60: n - 1, write: num(write) })],
+      fix: t('mock.rec.sess.idle.fix'),
+      estSavingTokens: period,
+      pages: ['session'],
+      scope: 'range',
+      saving: { period, days: 1, basis: 'range' },
+      seeAlso: 'sessions',
+    });
+  }
+  {
+    const file = `${AURORA}/src/lib/api-client.ts`;
+    const n = r.int(4, 7);
+    const tokens = (n - 1) * 3_800;
+    out.push({
+      id: `repeated-reads@session:demo-${tag}`,
+      severity: 'info',
+      title: t('mock.rec.sp.reread.title', { file: 'api-client.ts', n }),
+      detail: t('mock.rec.tools.reread.detail', { extra: n - 1, avg: num(3_800) }),
+      evidence: [t('mock.rec.sp.reread.evidence', { file: 'api-client.ts', n })],
+      estSavingTokens: tokens,
+      pages: ['session'],
+      scope: 'range',
+      saving: { period: tokens, days: 1, basis: 'range' },
+      targets: [{ key: file, label: file, kind: 'file', note: t('mock.rec.sp.reread.note', { extra: n - 1 }) }],
+      prompts: buildPrompts({
+        lang,
+        summary: t('mock.rec.sp.reread.summary', { file: 'api-client.ts', n }),
+        items: [reviewItem({ name: file, action: t('mock.rec.tools.reread.action', { file }), why: t('mock.rec.sp.reread.why', { n }) })],
+      }),
+      seeAlso: 'tools',
+    });
+  }
+  const n = compactions ?? r.int(1, 3);
+  if (n > 0) {
+    out.push({
+      id: `auto-compactions@session:demo-${tag}`,
+      severity: 'info',
+      title: tp('mock.rec.sp.compact.title', n),
+      detail: t('mock.rec.sess.compact.detail'),
+      evidence: [t('mock.rec.sess.compact.avg', { n: num(164_000) })],
+      pages: ['session'],
+      scope: 'range',
+      prompts: buildPrompts({
+        lang,
+        summary: tp('mock.rec.sp.compact.summary', n),
+        items: [instructionNoteItem(lang, { name: t('mock.rec.sess.compact.name'), file: CLAUDE_MD, section: t('mock.rec.sess.compact.section'), text: t('mock.rec.sess.compact.noteText'), why: tp('mock.rec.sp.compact.why', n) })],
+        notes: [...PROMPT_NOTES[lang].note(CLAUDE_MD), t('mock.rec.sess.compact.noteRule')],
+      }),
+      seeAlso: 'sessions',
+    });
+  }
+  return out.sort(bySavings);
+}
+
+/**
+ * Demo cards of the limits panel, from the demo forecast: the weekly pace, or — when the week runs out before its
+ * reset — what eats it and the levers (the other demo cards' savings as a share of the window, weighted like the
+ * server does: context savings as cache writes, a cheaper model at the window's average mix).
+ */
+export function mockLimitsRecommendations(f: LimitsForecast, levers: Insight[], week: Tokens, now = f.now): Insight[] {
+  const s = f.sevenDay;
+  if (s.pct == null || s.resetsAt == null) return [];
+  const consumers = [
+    t('mock.rec.lim.eat.projects', { list: 'aurora-web 46%, ledger-api 31%, atlas-docs 14%' }),
+    t('mock.rec.lim.eat.agents', { list: `${t('mock.rec.lim.eat.main')} 58%, Explore 21%, web-fetch 9%` }),
+    t('mock.rec.lim.eat.models', { list: 'Opus 5.5 81%, Sonnet 5.5 15%, Haiku 4.5 4%' }),
+  ];
+  const fmt = (x: number) => fmtPct(x / 100, x < 10 ? 1 : 0);
+  const runsOut = s.exhausted || (s.hitsAt != null && s.hitsAt < s.resetsAt);
+  if (runsOut) {
+    const weighted = weightTokens(week);
+    const raw = week.input + week.output + week.cacheRead + week.cacheWrite;
+    const mix = raw ? weighted / raw : 1;
+    const total = s.pct + s.ratePerHour * Math.max(0, s.resetsAt - now) / 3_600_000;
+    const rows = levers
+      .filter((i) => (i.estSavingTokens ?? 0) > 0 && !i.pages?.includes('limits'))
+      .map((i) => {
+        const est = i.saving?.basis === 'projection' ? ((i.estSavingTokens ?? 0) * 7) / (i.saving.days ?? 30) : i.estSavingTokens ?? 0;
+        const pct = (Math.min(1, (est * (i.saving?.costShare ? mix : 1.25)) / Math.max(1, weighted)) * total);
+        return { i, pct, page: i.pages?.[0] ?? null };
+      })
+      .filter((x) => x.pct >= 0.2)
+      .sort((a, b) => b.pct - a.pct)
+      .slice(0, 4);
+    const sum = Math.min(total * 0.9, rows.reduce((n, x) => n + x.pct, 0));
+    const pageName = (p: string | null) => (p ? t(`mock.rec.lim.page.${p}` as 'mock.rec.lim.page.tools') : '');
+    return [{
+      id: 'limits-runout:demo',
+      severity: s.exhausted || s.resetsAt - (s.hitsAt ?? now) >= DAY ? 'high' : 'warn',
+      title: t('mock.rec.lim.runout.title', { early: fmtDuration(s.resetsAt - (s.hitsAt ?? now)) }),
+      detail: t('mock.rec.lim.runout.detail'),
+      evidence: [
+        t('mock.rec.lim.runout.now', { used: Math.round(s.pct), rate: s.ratePerHour.toFixed(1), p: Math.round(total) }),
+        ...consumers,
+        ...rows.map((x) => t('mock.rec.lim.runout.lever', { page: pageName(x.page), title: x.i.title, p: fmt(x.pct) })),
+      ],
+      pages: ['limits'],
+      ...(sum >= 0.5 ? { saving: { windowPct: Math.round(sum * 10) / 10, window: '7d' as const } } : {}),
+      targets: rows.map((x): InsightTarget => ({ key: x.i.id, label: x.i.title, kind: 'other', note: t('mock.rec.lim.runout.leverNote', { p: fmt(x.pct), page: pageName(x.page) }) })),
+      ...(rows[0]?.page ? { seeAlso: rows[0].page } : {}),
+    }];
+  }
+  const elapsed = Math.min(1, Math.max(0, 1 - (s.resetsAt - now) / (7 * DAY)));
+  if (elapsed < 0.05) return [];
+  const projected = Math.round(s.pctAtReset ?? Math.min(100, s.pct / elapsed));
+  const room = projected < 80;
+  return [{
+    id: 'limits-pace:demo',
+    severity: room ? 'info' : 'warn',
+    title: t(room ? 'mock.rec.lim.pace.titleRoom' : 'mock.rec.lim.pace.titleTight', { p: projected }),
+    detail: t('mock.rec.lim.pace.detail', { used: Math.round(s.pct), el: fmtPct(elapsed, 0), left: fmtDuration(s.resetsAt - now) }),
+    evidence: [t('mock.rec.lim.pace.line', { used: Math.round(s.pct), el: fmtPct(elapsed, 0), p: projected }), ...consumers],
+    pages: ['limits'],
+  }];
 }

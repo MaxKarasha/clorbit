@@ -17,6 +17,17 @@ const MAX_PENDING = 300;
 const MAX_TOOLNAMES = 400;
 const BIG_RESULT = 20_000;
 const MAX_BIG = 30;
+/** v9 cache facts: a rebuild writes at least this share of a previous context of at least this size; an idle gap is
+ *  longer than the default prompt-cache lifetime (5 min), a long one longer than the extended one (1 h). */
+const REBUILD_MIN_CTX = 20_000;
+const REBUILD_SHARE = 0.5;
+export const IDLE_GAP_MS = 5 * 60_000;
+export const IDLE_LONG_MS = 60 * 60_000;
+/** 85% of a 200K and of a 1M context window. */
+export const CTX_HI: [number, number] = [170_000, 850_000];
+/** A simple prompt round: at most this many requests, no tool calls, at most this many output tokens. */
+const SIMPLE_MAX_REQS = 2;
+const SIMPLE_MAX_OUT = 1000;
 
 // Startup-context keys (language-neutral; rendered by i18n.startupLabel).
 export const LABELS = STARTUP;
@@ -263,8 +274,16 @@ export class FileScanner {
       }
       if (!attributed) b.unattributed += total;
       if (!sidechain) {
-        c.lastCtx = t[0] + t[2] + t[3];
+        const ctx = t[0] + t[2] + t[3];
+        if (this.isMain) this.cacheFacts(b, ts, t, ctx, model ?? null);
+        c.lastCtx = ctx;
         if (c.lastCtx > c.maxCtx) c.maxCtx = c.lastCtx;
+      }
+      if (this.isMain && !sidechain && c.round) {
+        const r = c.round;
+        r.reqs++; r.out += t[1]; r.tok += total;
+        const eff = d.perTurnEffort ?? d.effort;
+        if (eff) r.effort = String(eff).slice(0, 16);
       }
     }
     if (!sidechain) {
@@ -277,14 +296,60 @@ export class FileScanner {
     const content = Array.isArray(msg.content) ? msg.content : [];
     for (const blk of content) {
       if (!blk || typeof blk !== 'object') continue;
-      if (blk.type === 'tool_use') this.toolUse(blk, ts, sidechain);
+      if (blk.type === 'tool_use') {
+        this.toolUse(blk, ts, sidechain);
+        if (this.isMain && !sidechain && c.round) c.round.tools++;
+      }
       else if (blk.type === 'text' && typeof blk.text === 'string' && blk.text.trim() && !sidechain) {
         c.lastText = trimText(blk.text, 240);
         c.lastTextTs = ts;
         this.onEvent?.({ kind: 'text', ts, text: c.lastText });
       }
     }
-    if (!sidechain && msg.stop_reason === 'end_turn') this.onEvent?.({ kind: 'end', ts });
+    if (!sidechain && msg.stop_reason === 'end_turn') {
+      if (this.isMain) this.closeRound(ts);
+      this.onEvent?.({ kind: 'end', ts });
+    }
+  }
+
+  /**
+   * Cache facts of one main-chain request (v9): a turn that writes most of the previous context to the cache again
+   * after an idle gap (the prompt cache expired) or right after a model switch (the cache is per model), and turns
+   * with a nearly full context. Measured, not inferred: a gap whose next turn reads the cache is not counted.
+   */
+  private cacheFacts(b: DayBucket, ts: number, t: T4, ctx: number, model: string | null) {
+    const c = this.s.carry;
+    const prevCtx = c.lastCtx;
+    const prevTs = c.lastTurnTs ?? 0;
+    const rebuilt = prevTs > 0 && prevCtx >= REBUILD_MIN_CTX && t[3] >= prevCtx * REBUILD_SHARE;
+    if (rebuilt && ts - prevTs > IDLE_GAP_MS) {
+      const r = (b.rebuilds ??= { n: 0, n60: 0, write: 0 });
+      r.n++; r.write += t[3];
+      if (ts - prevTs > IDLE_LONG_MS) r.n60++;
+    } else if (rebuilt && model && c.lastModel && model !== c.lastModel) {
+      const w = (b.switches ??= { n: 0, write: 0 });
+      w.n++; w.write += t[3];
+    }
+    if (ctx >= CTX_HI[0]) {
+      const h = (b.ctxHi ??= [0, 0]);
+      h[0]++;
+      if (ctx >= CTX_HI[1]) h[1]++;
+    }
+    if (ts > prevTs) c.lastTurnTs = ts;
+    if (model) c.lastModel = model;
+  }
+
+  /** Ends the open prompt round (at the main agent's end_turn) and counts it by effort level (v9). */
+  private closeRound(ts: number) {
+    const c = this.s.carry;
+    const r = c.round;
+    if (!r || !r.reqs) return;
+    c.round = null;
+    const { b } = this.day(ts);
+    const k = r.effort ?? 'default';
+    const e = ((b.effort ??= {})[k] ??= { rounds: 0, simple: 0, tok: 0 });
+    e.rounds++;
+    if (r.reqs <= SIMPLE_MAX_REQS && r.tools === 0 && r.out <= SIMPLE_MAX_OUT) { e.simple++; e.tok += r.tok; }
   }
 
   private toolUse(blk: any, ts: number, sidechain: boolean) {
@@ -383,6 +448,7 @@ export class FileScanner {
         }
         c.lastPromptTs = ts;
         c.lastStop = null;
+        if (this.isMain) c.round = { reqs: 0, out: 0, tools: 0, tok: 0, effort: null };
         this.onEvent?.({ kind: 'prompt', ts });
       }
     }
@@ -397,6 +463,10 @@ export class FileScanner {
       s.compactions++; if (auto) s.autoCompactions++;
       const { b } = this.day(ts || Date.now());
       b.compactions++; if (auto) b.autoCompactions++;
+      const pre = d.compactMetadata?.preTokens;
+      if (auto && typeof pre === 'number' && pre > 0) b.compactPre = (b.compactPre ?? 0) + pre;
+      // The turn after a compaction writes the new, short context: not an idle-gap rebuild.
+      if (this.isMain) s.carry.lastTurnTs = 0;
       this.onEvent?.({ kind: 'compact', ts });
     }
   }

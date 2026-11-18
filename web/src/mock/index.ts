@@ -1,4 +1,6 @@
 import { INSIGHT_PAGES, type InsightPage, type Range } from '@shared/api';
+import { pickOverview } from '@shared/insights';
+import { mockSessionPageRecommendations } from './recommendations';
 import { demoValue } from '../lib/demo';
 import { mockAttribution, mockInsights, mockLive, mockOverview, mockSessionDetail, mockSessions } from './fixtures';
 import { mockAbout, mockLimits, mockLimitsHistory } from './limits';
@@ -22,6 +24,12 @@ function today(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function last90(): Range {
+  const d = new Date();
+  d.setDate(d.getDate() - 89);
+  return { from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, to: today() };
+}
+
 function rangeOf(q: URLSearchParams): Range {
   const to = q.get('to') ?? today();
   const from = q.get('from') ?? to;
@@ -41,8 +49,13 @@ export function mockResolve(path: string): unknown {
   if (p === '/api/insights') {
     const page = q.get('page');
     const days = Number(q.get('unusedDays')) || undefined;
+    if (page === 'session') {
+      const sid = q.get('session');
+      return sid ? mockSessionPageRecommendations(sid, mockSessionDetail(sid, last90())?.summary.compactions) : [];
+    }
     const all = mockInsights(range, days);
     if (page === null) return all;
+    if (page === 'overview') return pickOverview(all);
     return INSIGHT_PAGES.includes(page as InsightPage) ? all.filter((i) => i.pages?.includes(page as InsightPage)) : [];
   }
   if (p === '/api/limits/forecast') return mockLimits().forecast;
@@ -57,13 +70,7 @@ export function mockResolve(path: string): unknown {
   const rp = p.match(/^\/api\/session\/([^/]+)\/replay$/);
   if (rp) return mockReplay(decodeURIComponent(rp[1]));
   const m = p.match(/^\/api\/session\/(.+)$/);
-  if (m) {
-    // Look the session up in the last 90 days so links from any range resolve.
-    const to = today();
-    const d = new Date();
-    d.setDate(d.getDate() - 89);
-    const from = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    return mockSessionDetail(decodeURIComponent(m[1]), { from, to });
-  }
+  // Look the session up in the last 90 days so links from any range resolve.
+  if (m) return mockSessionDetail(decodeURIComponent(m[1]), last90());
   throw new Error(`No demo data for ${p}`);
 }

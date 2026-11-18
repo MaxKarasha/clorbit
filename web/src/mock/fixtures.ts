@@ -15,7 +15,10 @@ import type {
 import { t, tp } from '../i18n';
 import type enMock from '../i18n/en/mock';
 import { MOCK_PLAN, mockLimits } from './limits';
-import { mockAgentRecommendations, mockMcpRecommendations, mockSkillRecommendations, mockStartupRecommendations, mockToolRecommendations } from './recommendations';
+import {
+  mockAgentRecommendations, mockLimitsRecommendations, mockMcpRecommendations, mockSessionRecommendations, mockSkillRecommendations,
+  mockStartupRecommendations, mockToolRecommendations,
+} from './recommendations';
 import { rng, type Rng } from './rng';
 
 // Demo data for `?mock=1`. Every project, path and task below is invented.
@@ -693,34 +696,37 @@ export function mockSessionDetail(id: string, range: Range): SessionDetail {
 
 // ---------- Insights ----------
 
+function rangeToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /** Demo insights; `unusedDays` is Settings.recommendations.unusedDays (the skills rules use it). */
 export function mockInsights(range: Range, unusedDays = 30): Insight[] {
   const at = mockAttribution(range);
   const skills = mockSkillRecommendations(range, unusedDays);
-  return [
+  const cards: Insight[] = [
     ...skills,
     ...mockMcpRecommendations(range, unusedDays),
     ...mockStartupRecommendations(range, at, skills),
     ...mockToolRecommendations(range),
     ...mockAgentRecommendations(range, at),
-    {
-      id: 'compactions',
-      pages: ['sessions'],
-      severity: 'warn',
-      title: t('mock.ins.compact.title', { project: 'aurora-web' }),
-      detail: t('mock.ins.compact.detail'),
-      evidence: [tp('mock.ins.compact.count', 9), t('mock.ins.compact.avg')],
-      fix: t('mock.ins.compact.fix'),
-    },
-    {
-      id: 'cache',
-      pages: ['overview'],
-      severity: 'info',
-      title: t('mock.ins.cache.title'),
-      detail: t('mock.ins.cache.detail'),
-      evidence: [t('mock.ins.cache.share')],
-    },
+    ...mockSessionRecommendations(range),
   ];
+  // The limits panel follows the current week, not the range: levers come from the last 7 days' cards.
+  const now = Date.now();
+  const d = new Date(now - 6 * 86_400_000);
+  const week: Range = { from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, to: rangeToday() };
+  const weekSkills = mockSkillRecommendations(week, unusedDays);
+  const weekCards = week.from === range.from && week.to === range.to ? cards : [
+    ...weekSkills,
+    ...mockMcpRecommendations(week, unusedDays),
+    ...mockStartupRecommendations(week, mockAttribution(week), weekSkills),
+    ...mockToolRecommendations(week),
+    ...mockAgentRecommendations(week, mockAttribution(week)),
+    ...mockSessionRecommendations(week),
+  ];
+  return [...cards, ...mockLimitsRecommendations(mockLimits(now).forecast, weekCards, mockOverview(week).totals, now)];
 }
 
 // ---------- Live snapshot ----------

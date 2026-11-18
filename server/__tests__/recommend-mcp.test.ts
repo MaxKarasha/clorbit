@@ -300,7 +300,7 @@ describe('Startup context', () => {
   });
   it('the startup total says what subagents pay again', () => {
     const card = list.find((i) => i.id === 'startup-total')!;
-    expect(card.pages).toEqual(['startup', 'overview']);
+    expect(card.pages).toEqual(['startup']);
     expect(card.evidence.join('\n')).toMatch(/Subagents start with their own startup context: 6 in this period ×/);
   });
   it('page filter: MCP and startup tabs get their cards only', () => {

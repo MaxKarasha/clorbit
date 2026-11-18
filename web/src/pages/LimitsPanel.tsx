@@ -13,6 +13,7 @@ import { openSettings } from '../lib/settings';
 import type { ActiveRange } from '../lib/router';
 import LimitsHowTo from '../components/LimitsHowTo';
 import PlanBadge from '../components/PlanBadge';
+import Recommendations from '../components/Recommendations';
 import { Legend } from '../components/charts/small';
 import { Panel, TipRow, Tooltip, useTip, useWidth } from '../components/ui';
 import { rangeQs } from './common';
@@ -58,6 +59,9 @@ export default function LimitsPanel({ range }: { range: ActiveRange }) {
           {hasSource && f && <Summary f={f} no5h={no5h} />}
           {no5hNote}
           {points.length ? <LimitsChart points={points} forecast={hasSource ? f : null} range={range} no5h={no5h} /> : <p className="lim-note">{t('limits.noPoints')}</p>}
+          {/* Pace, a window that runs out and its levers. Without a source the how-to is the explanation
+              (the "not connected" card is on the Insights page). */}
+          {hasSource && <Recommendations page="limits" />}
         </>
       )}
     </Panel>
