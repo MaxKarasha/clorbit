@@ -2103,6 +2103,326 @@
   white-space: pre;
 }
 
+/* ---------- Recommendations (strip on analytics tabs + the Insights cards) ---------- */
+.recs {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 22px;
+  animation: row-in 0.5s var(--ease-out) both;
+}
+.recs__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.recs__title {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font: 500 12px var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.recs__count {
+  padding: 1px 8px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  letter-spacing: 0;
+  color: var(--text);
+}
+.recs__hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.recs__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .recs__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.recs__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.recs__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--b1);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(92, 200, 255, 0.35);
+  text-underline-offset: 3px;
+}
+.recs__link:hover {
+  text-decoration-color: currentColor;
+}
+.rec {
+  /* The prompt menu must not be clipped by the card. */
+  overflow: visible;
+}
+.rec::after {
+  border-radius: inherit;
+}
+/* An open prompt menu stays above the neighbouring cards. */
+.rec:has(.rec__menu),
+.rec:focus-within {
+  z-index: 5;
+}
+.rec--compact {
+  padding: 18px 20px 18px 24px;
+}
+.rec--compact .insight__title {
+  margin-top: 10px;
+  font-size: 16px;
+}
+.rec--compact .insight__detail {
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.rec--hidden {
+  opacity: 0.62;
+}
+.rec--hidden:hover {
+  opacity: 0.9;
+}
+.rec__scope {
+  padding: 2px 9px;
+  border-radius: 99px;
+  border: 1px dashed var(--border-strong);
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: help;
+}
+.rec__save {
+  display: grid;
+  gap: 4px;
+  margin: 2px 0 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(79, 224, 176, 0.28);
+  background: rgba(79, 224, 176, 0.06);
+}
+.rec__save--plain {
+  display: block;
+  color: #4fe0b0;
+  font-size: 12.5px;
+}
+.rec__save-main {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.rec__save-big {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #4fe0b0;
+  text-shadow: 0 0 18px rgba(79, 224, 176, 0.35);
+}
+.rec__save-cap {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.rec__save-sub {
+  color: var(--muted);
+}
+.rec__save-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.rec__est {
+  color: var(--muted);
+  font-style: italic;
+  cursor: help;
+}
+.rec__items {
+  margin: 4px 0 2px;
+}
+.rec__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.rec__toggle:hover {
+  color: var(--text);
+}
+.rec__chev {
+  display: inline-block;
+  transition: transform 0.2s var(--ease-out);
+}
+.rec__chev.is-open {
+  transform: rotate(90deg);
+}
+.rec__list {
+  margin: 8px 0 4px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 1px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+}
+.rec__list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 7px 12px;
+  background: rgba(10, 14, 26, 0.55);
+  font-size: 12.5px;
+}
+.rec__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.rec__meta {
+  display: inline-flex;
+  gap: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rec__never {
+  color: var(--b3);
+}
+.rec__note {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+}
+.rec__items .insight__evidence {
+  margin-top: 10px;
+}
+.rec__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+.rec__hide {
+  margin-left: auto;
+  color: var(--muted);
+}
+.rec__copy {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.rec__pasted {
+  font-size: 12px;
+  color: #4fe0b0;
+  animation: fade-in 0.3s both;
+}
+.splitbtn {
+  display: inline-flex;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: rgba(92, 200, 255, 0.1);
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+.splitbtn:hover {
+  border-color: rgba(92, 200, 255, 0.6);
+  box-shadow: 0 0 20px rgba(92, 200, 255, 0.2);
+}
+.splitbtn button {
+  padding: 7px 12px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.splitbtn__more {
+  border-left: 1px solid var(--border-strong) !important;
+  padding: 7px 10px !important;
+}
+.splitbtn.is-done {
+  border-color: rgba(79, 224, 176, 0.5);
+  box-shadow: 0 0 16px rgba(79, 224, 176, 0.18);
+}
+.splitbtn.is-done .splitbtn__main {
+  color: #4fe0b0;
+}
+.rec__menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(340px, 80vw);
+  padding: 6px;
+  border-radius: 12px;
+  display: grid;
+  gap: 2px;
+  /* Opaque: a backdrop blur does not work inside the card's own blurred layer. */
+  background: #0b1020;
+  border-color: var(--border-strong);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.7);
+  animation: fade-in 0.15s both;
+}
+.rec__menu-item {
+  display: grid;
+  gap: 2px;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.rec__menu-item:hover,
+.rec__menu-item:focus-visible {
+  background: var(--glass-hover);
+}
+.rec__menu-item b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.rec__menu-item span {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.rec__menu-item.is-default b::after {
+  content: ' ·  ✓';
+  color: #4fe0b0;
+}
+.insights__foot {
+  margin-top: 16px;
+}
+
 /* ---------- Animations ---------- */
 @keyframes page-in {
   from {

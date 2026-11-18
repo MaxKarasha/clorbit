@@ -2,6 +2,20 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Recommendations on the Skills & plugins tab.** A strip of up to four cards at the top of the tab: enabled plugins you have not used for 30+ days (by their last use across the whole stored history, archived sessions included; never-used plugins count from when they first appeared), plugins whose SessionStart hook loads context into every session while they are used in only some projects (disable globally, enable locally where used), plugins most of whose skills are unused, your own skills unused for 30+ days (moved to `~/.claude/skills-disabled/`, never deleted) and skill names listed more than once. Each card shows the evidence, the items with their last use, and the estimated savings: context tokens per session and per subagent, ≈ tokens over 30 days and the share of the startup context, computed from measured listing sizes and your observed sessions and subagents. **Copy prompt** has two variants to paste into a Claude Code session: **Ask me** (Claude asks about each item, one at a time, ideally with AskUserQuestion) and **Do it all**; both name the exact plugins, skills and commands (`claude plugin disable <name>@<marketplace> --scope user`), ask Claude to back up every settings file it edits and to report how to undo, and follow the UI language. Clorbit itself still changes nothing. **Hide** dismisses a card (saved with the settings; "N hidden · show" brings it back). Settings → Recommendations: "Consider unused after N days" (default 30) and "Show all again". Demo mode has a believable set.
+- The scanner records the skill listing per skill (`FileSummary.skillsByName`); the summary version is now 6, so transcripts are re-parsed once on the next start. Archived summaries of the previous version keep working as they are.
+- API (additive): `Insight.pages`, `scope`, `saving`, `targets`, `prompts`; `InsightPage`, `INSIGHT_PAGES`; `GET /api/insights?page=<tab>&unusedDays=<n>`; `Settings.recommendations` (`unusedDays`, `dismissed`).
+
+### Changed
+
+- The Insights page uses the same cards as the tabs (with Hide and the prompts where a rule has them). Its "worth a look" accent is violet instead of orange, which stays reserved for "waiting for you".
+- The "plugin unused in this period" and "plugin hook adds tokens to every session" insights became the recommendations above (whole history, one card per issue).
+- A wrapped line of a skill description now counts toward the skill it belongs to, not toward your own skills.
+
 ## 0.3.0
 
 ### Added

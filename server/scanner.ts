@@ -58,7 +58,7 @@ export function newSummary(file: string, id: { sessionId: string; agentId: strin
     cwd: null, gitBranch: null, title: null, permissionMode: null, model: null, requestedModel: null, effort: null,
     entrypoint: null, promptOrigin: null,
     firstTs: 0, lastTs: 0, lastAssistantTs: 0, total: zeroT4(), turns: 0, toolCalls: 0, compactions: 0,
-    autoCompactions: 0, turnDurMs: 0, days: {}, minutes: {}, startup: {}, skillsByPlugin: {}, mcpBlocks: {},
+    autoCompactions: 0, turnDurMs: 0, days: {}, minutes: {}, startup: {}, skillsByPlugin: {}, skillsByName: {}, mcpBlocks: {},
     mcpSeen: [], spawns: {}, reads: {}, bigResults: [], carry: emptyCarry(),
   };
 }
@@ -357,10 +357,20 @@ export class FileScanner {
       case 'skill_listing': {
         this.addStartup(LABELS.skills, size);
         if (!c.startupDone && typeof a.content === 'string') {
+          // '- plugin:skill: description' or '- skill: description'; a wrapped line belongs to the entry above it,
+          // lines before the first entry (a header) count as own skills, as before.
+          const byName = (s.skillsByName ??= {});
+          let plugin = OWN_SKILLS;
+          let name: string | null = null;
           for (const ln of a.content.split('\n')) {
-            const m = /^- ([^:\s]+):([^:\s]+):/.exec(ln);
-            const key = m ? m[1] : OWN_SKILLS;
-            s.skillsByPlugin[key] = (s.skillsByPlugin[key] ?? 0) + ln.length + 1;
+            const m = /^- ([^:\s]+)(?::([^:\s]+))?:/.exec(ln);
+            if (m) {
+              plugin = m[2] ? m[1] : OWN_SKILLS;
+              name = m[2] ? `${m[1]}:${m[2]}` : m[1];
+            }
+            const n = ln.length + 1;
+            s.skillsByPlugin[plugin] = (s.skillsByPlugin[plugin] ?? 0) + n;
+            if (name) byName[name] = (byName[name] ?? 0) + n;
           }
         }
         return;

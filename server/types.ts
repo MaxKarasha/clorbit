@@ -1,7 +1,13 @@
 // Internal server types: the summary of one .jsonl file, persisted in SQLite.
 import type { T4 } from './util';
 
-export const SUMMARY_VERSION = 5;
+export const SUMMARY_VERSION = 6;
+/**
+ * The oldest summary version that is still loaded. Older-but-compatible rows of transcripts that still exist are
+ * re-parsed on the next scan; archived ones (transcript gone) are kept as they are, so every field added since
+ * this version must be optional in FileSummary.
+ */
+export const MIN_SUMMARY_VERSION = 5;
 
 export interface UsageAgg { t: T4; turns: number; last: number }
 export interface ToolAgg { calls: number; res: number; resN: number; max: number; last: number }
@@ -94,6 +100,8 @@ export interface FileSummary {
   minutes: Record<string, number>;      // epoch minute → tokens (last hour of activity only)
   startup: Record<string, number>;      // startup key (see i18n.ts STARTUP) → chars, until the first assistant reply
   skillsByPlugin: Record<string, number>; // chars in the skill listing per plugin ('~own' = not from a plugin)
+  /** Chars in the skill listing per skill: 'plugin:skill' or an own skill's name. Optional: absent before v6. */
+  skillsByName?: Record<string, number>;
   mcpBlocks: Record<string, number>;      // chars of MCP instructions per server
   mcpSeen: string[];                      // MCP server keys (as in mcp__<key>__)
   spawns: Record<string, SpawnInfo>;      // toolUseId of an Agent call → info

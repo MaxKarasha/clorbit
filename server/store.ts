@@ -8,7 +8,7 @@ import { Worker } from 'node:worker_threads';
 import { BUNDLED } from './config';
 import { scanFile, identify } from './scanner';
 import type { ClorbitDb, StoredSummary } from './db';
-import type { FileSummary, ScanEvent, ScanOptions } from './types';
+import { SUMMARY_VERSION, type FileSummary, type ScanEvent, type ScanOptions } from './types';
 import { migrateSummaryKeys } from './i18n';
 
 export interface ScanStats { startedAt: number; finishedAt: number | null; filesTotal: number; filesDone: number; filesParsed: number; bytesParsed: number; fromCache: number; loadMs: number }
@@ -185,7 +185,7 @@ export class Store extends EventEmitter {
     const todo: typeof withM = [];
     for (const x of withM) {
       const prev = this.files.get(x.f);
-      if (prev && prev.size === x.size && prev.mtimeMs === x.m) {
+      if (prev && prev.v === SUMMARY_VERSION && prev.size === x.size && prev.mtimeMs === x.m) {
         st.filesDone++; st.fromCache++;
         // The file is back (restored from a backup, say) and unchanged: just clear the flag.
         if (this.missing.delete(x.f)) { this.dirtyPaths.add(x.f); this.version++; }

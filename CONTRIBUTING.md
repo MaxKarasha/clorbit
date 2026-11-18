@@ -45,7 +45,7 @@ To try the plugin from your clone without installing it: `claude --plugin-dir ./
 - **Translations:** every user-visible string goes through `t()`/`tp()` on the web (`web/src/i18n/en/*` and `web/src/i18n/uk/*`; the Ukrainian files are type-checked against the English keys) or through `server/i18n.ts` / `server/insights-text.ts` on the server. If you do not speak Ukrainian, add the English text and leave a `TODO(uk)` in the Ukrainian file — a maintainer will translate it.
 - **Tests use synthetic data.** Never commit real transcripts, real project names or paths. Build small fake records like `server/__tests__/scanner.test.ts` does.
 - **Code comments and docs are in English.** Keep comments short and explain *why*, not *what*.
-- **Schema changes** go into a new entry of `MIGRATIONS` in `server/db.ts`; never edit a shipped migration. Changing the shape of `FileSummary` requires bumping `SUMMARY_VERSION`, which re-parses existing transcripts on the next start (archived ones keep their old summaries).
+- **Schema changes** go into a new entry of `MIGRATIONS` in `server/db.ts`; never edit a shipped migration. Changing the shape of `FileSummary` requires bumping `SUMMARY_VERSION`, which re-parses existing transcripts on the next start (archived ones keep their old summaries, so a new field must be optional; raise `MIN_SUMMARY_VERSION` only for an incompatible change).
 
 ## Pull requests
 

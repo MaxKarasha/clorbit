@@ -192,4 +192,13 @@ export default {
   'cl.autoEvents': '{n} подія|{n} події|{n} подій',
   'cl.autoExpand': 'Показати ці події',
   'cl.autoCollapse': 'Сховати ці події',
+  // Recommendations
+  'set.sec.recommendations': 'Рекомендації',
+  'rec.set.days': 'Вважати невикористаним після',
+  'rec.set.days.d': 'Плагіни й скіли, якими ти не користувався стільки днів (за всю історію), отримають рекомендацію.',
+  'rec.set.daysUnit': 'днів',
+  'rec.set.hidden': 'Приховані рекомендації',
+  'rec.set.hidden.d': 'Рекомендації, які ти сховав кнопкою «Сховати». Прихована картка повернеться сама, якщо зміняться її пункти.',
+  'rec.set.hiddenNone': 'немає',
+  'rec.set.showAll': 'Показати всі знову',
 } satisfies Record<keyof typeof en, string>;

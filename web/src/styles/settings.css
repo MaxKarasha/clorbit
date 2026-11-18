@@ -968,3 +968,26 @@ th.nmx__ev {
 .set-plan__none {
   color: var(--muted);
 }
+
+/* "Consider unused after N days" */
+.set-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.set-num input {
+  width: 86px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: rgba(10, 14, 26, 0.7);
+  color: var(--text);
+  font: 500 13px var(--font-mono);
+  text-align: right;
+}
+.set-num input:focus-visible {
+  outline: 2px solid var(--c-working);
+  outline-offset: 1px;
+}

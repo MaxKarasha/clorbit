@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
-import { SUMMARY_VERSION, type FileSummary } from './types';
+import { MIN_SUMMARY_VERSION, SUMMARY_VERSION, type FileSummary } from './types';
 
 type SqliteModule = typeof import('node:sqlite');
 let sqliteMod: SqliteModule | null = null;
@@ -166,9 +166,13 @@ export class ClorbitDb {
 
   // ---------- file summaries ----------
 
-  /** Loads summaries of the current SUMMARY_VERSION; rows of other versions stay in the DB untouched. */
+  /**
+   * Loads summaries of versions MIN_SUMMARY_VERSION..SUMMARY_VERSION; rows of other versions stay in the DB untouched.
+   * Older compatible rows of transcripts still on disk are re-parsed by the next scan (Store.coldScan); archived
+   * ones keep their old summary, since there is nothing left to re-parse.
+   */
   loadSummaries(): StoredSummary[] {
-    const rows = this.stmt('SELECT summary_json, missing_since FROM file_summaries WHERE version = ?').all(SUMMARY_VERSION) as { summary_json: string; missing_since: number | null }[];
+    const rows = this.stmt('SELECT summary_json, missing_since FROM file_summaries WHERE version BETWEEN ? AND ?').all(MIN_SUMMARY_VERSION, SUMMARY_VERSION) as { summary_json: string; missing_since: number | null }[];
     const out: StoredSummary[] = [];
     for (const r of rows) {
       try { out.push({ summary: JSON.parse(r.summary_json) as FileSummary, missingSince: r.missing_since ?? null }); } catch { /* corrupt row — will be rescanned if the file exists */ }

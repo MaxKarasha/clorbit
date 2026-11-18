@@ -779,6 +779,154 @@ var init_analytics = __esm({
   }
 });
 
+// shared/api.ts
+var INSIGHT_PAGES, NOTIFY_EVENTS, SOUND_THEMES, rule, DEFAULT_SETTINGS;
+var init_api = __esm({
+  "shared/api.ts"() {
+    "use strict";
+    INSIGHT_PAGES = ["skills", "mcp", "startup", "tools", "subagents", "sessions", "overview", "limits", "session"];
+    NOTIFY_EVENTS = ["session_waiting", "session_done", "subagent_finished", "subagent_spawned", "compaction", "context_high", "limit_high", "limit_forecast"];
+    SOUND_THEMES = ["orbit", "minimal", "retro"];
+    rule = (sound, browser, toast, browserHiddenOnly = false) => ({ sound, browser, browserHiddenOnly, toast, system: false });
+    DEFAULT_SETTINGS = {
+      notifications: {
+        session_waiting: rule(true, true, true),
+        session_done: rule(true, true, true, true),
+        subagent_finished: rule(true, false, false),
+        subagent_spawned: rule(false, false, false),
+        compaction: rule(false, false, false),
+        context_high: rule(false, false, false),
+        limit_high: rule(false, false, false),
+        limit_forecast: rule(true, false, true)
+      },
+      sound: { enabled: true, volume: 0.6, theme: "orbit" },
+      dnd: { enabled: false, quietHours: { enabled: false, from: "22:00", to: "08:00" }, mutedUntil: null },
+      interface: { lang: "en", autoTour: false, reduceMotion: false, showAutomated: false },
+      layout: { gravity: true, pins: {} },
+      recommendations: { unusedDays: 30, dismissed: [] }
+    };
+  }
+});
+
+// shared/settings.ts
+function normalizeDismissed(v) {
+  if (!Array.isArray(v)) return null;
+  const seen = /* @__PURE__ */ new Set();
+  for (const x of v) if (typeof x === "string" && DISMISS_ID.test(x)) {
+    seen.delete(x);
+    seen.add(x);
+  }
+  return [...seen].slice(-MAX_DISMISSED);
+}
+function normalizePins(v) {
+  if (!isObj(v)) return null;
+  const ok = [];
+  for (const [k, p] of Object.entries(v)) {
+    if (!PIN_KEY.test(k) || !isObj(p)) continue;
+    const x = unit(p.x), y = unit(p.y);
+    if (x !== null && y !== null) ok.push([k, { x, y }]);
+  }
+  return Object.fromEntries(ok.slice(-MAX_PINS));
+}
+function cloneSettings(s) {
+  return JSON.parse(JSON.stringify(s));
+}
+function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
+  const out = cloneSettings(base);
+  if (!isObj(out.recommendations)) out.recommendations = cloneSettings(DEFAULT_SETTINGS).recommendations;
+  if (!isObj(patch)) return out;
+  const n = patch.notifications;
+  if (isObj(n)) {
+    for (const ev of NOTIFY_EVENTS) {
+      const r2 = n[ev];
+      if (!isObj(r2)) continue;
+      const cur = out.notifications[ev];
+      out.notifications[ev] = {
+        sound: bool(r2.sound, cur.sound),
+        browser: bool(r2.browser, cur.browser),
+        browserHiddenOnly: bool(r2.browserHiddenOnly, cur.browserHiddenOnly),
+        toast: bool(r2.toast, cur.toast),
+        system: bool(r2.system, cur.system)
+      };
+    }
+  }
+  const s = patch.sound;
+  if (isObj(s)) {
+    out.sound.enabled = bool(s.enabled, out.sound.enabled);
+    if (typeof s.volume === "number" && Number.isFinite(s.volume)) out.sound.volume = Math.round(Math.min(1, Math.max(0, s.volume)) * 100) / 100;
+    if (SOUND_THEMES.includes(s.theme)) out.sound.theme = s.theme;
+  }
+  const d = patch.dnd;
+  if (isObj(d)) {
+    out.dnd.enabled = bool(d.enabled, out.dnd.enabled);
+    const q = d.quietHours;
+    if (isObj(q)) {
+      out.dnd.quietHours = { enabled: bool(q.enabled, out.dnd.quietHours.enabled), from: time(q.from, out.dnd.quietHours.from), to: time(q.to, out.dnd.quietHours.to) };
+    }
+    if (d.mutedUntil === null) out.dnd.mutedUntil = null;
+    else if (typeof d.mutedUntil === "number" && Number.isFinite(d.mutedUntil)) {
+      out.dnd.mutedUntil = d.mutedUntil <= now ? null : Math.round(Math.min(d.mutedUntil, now + MAX_MUTE_MS));
+    }
+  }
+  const i = patch.interface;
+  if (isObj(i)) {
+    if (i.lang === "en" || i.lang === "uk") out.interface.lang = i.lang;
+    out.interface.autoTour = bool(i.autoTour, out.interface.autoTour);
+    out.interface.reduceMotion = bool(i.reduceMotion, out.interface.reduceMotion);
+    out.interface.showAutomated = bool(i.showAutomated, out.interface.showAutomated);
+  }
+  const l = patch.layout;
+  if (isObj(l)) {
+    out.layout.gravity = bool(l.gravity, out.layout.gravity);
+    const pins = normalizePins(l.pins);
+    if (pins) out.layout.pins = pins;
+  }
+  const r = patch.recommendations;
+  if (isObj(r)) {
+    if (typeof r.unusedDays === "number" && Number.isFinite(r.unusedDays)) {
+      out.recommendations.unusedDays = Math.round(Math.min(RECOMMEND_DAYS.max, Math.max(RECOMMEND_DAYS.min, r.unusedDays)));
+    }
+    const ids = normalizeDismissed(r.dismissed);
+    if (ids) out.recommendations.dismissed = ids;
+  }
+  return out;
+}
+function parseHHMM(s) {
+  const m = HHMM.exec(s);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+function inQuietHours(from, to, date) {
+  const a = parseHHMM(from);
+  const b = parseHHMM(to);
+  if (a === null || b === null || a === b) return false;
+  const m = date.getHours() * 60 + date.getMinutes();
+  return a < b ? m >= a && m < b : m >= a || m < b;
+}
+function isSilenced(s, now = Date.now()) {
+  if (s.dnd.enabled) return true;
+  if (s.dnd.mutedUntil && s.dnd.mutedUntil > now) return true;
+  const q = s.dnd.quietHours;
+  return q.enabled && inQuietHours(q.from, q.to, new Date(now));
+}
+var isObj, bool, HHMM, time, MAX_MUTE_MS, MAX_PINS, PIN_KEY, RECOMMEND_DAYS, MAX_DISMISSED, DISMISS_ID, unit;
+var init_settings = __esm({
+  "shared/settings.ts"() {
+    "use strict";
+    init_api();
+    isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+    bool = (v, d) => typeof v === "boolean" ? v : d;
+    HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+    time = (v, d) => typeof v === "string" && HHMM.test(v.trim()) ? v.trim() : d;
+    MAX_MUTE_MS = 7 * 24 * 36e5;
+    MAX_PINS = 64;
+    PIN_KEY = /^(star|cluster):[^\u0000-\u001f]{1,240}$/;
+    RECOMMEND_DAYS = { min: 7, max: 365 };
+    MAX_DISMISSED = 500;
+    DISMISS_ID = /^[\w:.@~+\-/]{1,200}$/;
+    unit = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(Math.min(1, Math.max(0, v)) * 1e4) / 1e4 : null;
+  }
+});
+
 // server/config.ts
 import fs from "node:fs";
 import os from "node:os";
@@ -869,11 +1017,12 @@ var init_config = __esm({
 });
 
 // server/types.ts
-var SUMMARY_VERSION;
+var SUMMARY_VERSION, MIN_SUMMARY_VERSION;
 var init_types = __esm({
   "server/types.ts"() {
     "use strict";
-    SUMMARY_VERSION = 5;
+    SUMMARY_VERSION = 6;
+    MIN_SUMMARY_VERSION = 5;
   }
 });
 
@@ -1020,9 +1169,13 @@ var init_db = __esm({
         this.stmt("INSERT INTO settings(key, value_json, updated_at) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at").run(key, valueJson, now);
       }
       // ---------- file summaries ----------
-      /** Loads summaries of the current SUMMARY_VERSION; rows of other versions stay in the DB untouched. */
+      /**
+       * Loads summaries of versions MIN_SUMMARY_VERSION..SUMMARY_VERSION; rows of other versions stay in the DB untouched.
+       * Older compatible rows of transcripts still on disk are re-parsed by the next scan (Store.coldScan); archived
+       * ones keep their old summary, since there is nothing left to re-parse.
+       */
       loadSummaries() {
-        const rows = this.stmt("SELECT summary_json, missing_since FROM file_summaries WHERE version = ?").all(SUMMARY_VERSION);
+        const rows = this.stmt("SELECT summary_json, missing_since FROM file_summaries WHERE version BETWEEN ? AND ?").all(MIN_SUMMARY_VERSION, SUMMARY_VERSION);
         const out = [];
         for (const r of rows) {
           try {
@@ -1414,15 +1567,6 @@ function en() {
       fixPerm: (allow) => `Pre-approve safe, frequent tools: "permissions": { "allow": [${allow}] } in the project's .claude/settings.json (for Bash \u2014 specific commands only). Long waits for replies are a reason to enable notifications or give agents longer autonomous tasks.`,
       fixInput: "Long waits for replies are a reason to enable notifications or give agents longer autonomous tasks with a clear definition of done."
     },
-    startupHook: {
-      title: (plugin, per) => `Plugin ${plugin} adds ~${N(per)} tokens to every session`,
-      detail: (plugin, per, sessions2, total) => `The SessionStart hook of ${plugin} injects a block of text at the start of every session. In this period that is ${N(per)} \xD7 ${sessions2} sessions \u2248 ${N(total)} tokens (estimated from text length), which are then re-read from cache on every turn.`,
-      sessions: (sessions2, days) => `${sessions2} sessions with this block over ${days} days`,
-      perSession: (per) => `\u2248 ${N(per)} tokens per session`,
-      listing: (plugin, per) => `Another \u2248 ${N(per)} tokens per session \u2014 ${plugin}'s skill descriptions in the skill listing`,
-      noListing: (plugin) => `No ${plugin} skills found in the listing`,
-      fix: (plugin, key) => `If ${plugin} is not needed in every project, disable it globally in ~/.claude/settings.json: "enabledPlugins": { "${key}": false }, and enable it in the project-level .claude/settings.json where needed.`
-    },
     skillListing: {
       title: (per, perSub) => `Skill listing: ~${N(per)} tokens per session${perSub ? ` and ~${N(perSub)} per subagent` : ""}`,
       detail: (perSub, total) => `Descriptions of all available skills are injected at the start of every session${perSub ? " and every subagent" : ""}. In total \u2248 ${N(total)} tokens in this period.`,
@@ -1434,16 +1578,6 @@ function en() {
       detail: (total) => `Before the first prompt, the context already holds the system prompt, tool definitions, skill and agent listings, CLAUDE.md and more. In total \u2248 ${N(total)} tokens in this period (estimated from text length); after that they are read from cache on every turn.`,
       evidence: (label, per, perSub) => `${label}: \u2248 ${N(per)} per session${perSub ? `, \u2248 ${N(perSub)} per subagent` : ""}`,
       fix: "The easiest wins: shorten the skill listing (disable unused plugins, remove unneeded skills) and CLAUDE.md; do small tasks without a separate subagent \u2014 each subagent pays this startup cost again."
-    },
-    unusedPlugin: {
-      title: (name, days) => `Plugin ${name} is enabled but unused for ${days} days`,
-      detail: (name, hookRuns) => `No skill calls, MCP tool calls or attributed turns from ${name} in this period${hookRuns ? `, although its hooks ran ${N(hookRuns)} times` : ""}. It still takes space in the startup context.`,
-      skills: (tok) => `Its skill descriptions: \u2248 ${N(tok)} tokens in this period`,
-      noSkills: "No skills found in the listing",
-      hookBlock: (tok) => `Hook block at startup: \u2248 ${N(tok)} tokens`,
-      noHookBlock: "No startup hook block",
-      hookRuns: (n) => `Hook runs: ${N(n)}`,
-      fix: (key) => `In ~/.claude/settings.json: "enabledPlugins": { "${key}": false }`
     },
     unusedMcp: {
       title: (n, days) => `${n} MCP ${plural(n, "en", ["server is", "servers are"])} connected but had no calls in ${days} days`,
@@ -1492,6 +1626,63 @@ function en() {
       errors: (n) => `With error/stderr: ${N(n)}`,
       fix: (plugin, key) => `If plugin ${plugin} is not needed in this environment, disable it: "enabledPlugins": { "${key}": false } in ~/.claude/settings.json.`,
       fixNoPlugin: "Review the hook commands in ~/.claude/settings.json: are they needed on every event?"
+    },
+    // Recommendations (recommend-*.ts). Prompt items reuse `why` lines, so they read well on their own.
+    rec: {
+      lastUsed: (days) => days === 0 ? "last used today" : `last used ${days} ${plural(days, "en", ["day", "days"])} ago`,
+      never: (since) => since ? `never used (listed since ${since})` : "never used",
+      perSession: (tok) => `\u2248 ${N(tok)} tokens of context per session`,
+      parts: (p) => [
+        p.skills ? `skill descriptions ${N(p.skills)}` : "",
+        p.hook ? `SessionStart hook ${N(p.hook)}` : "",
+        p.mcp ? `MCP instructions ${N(p.mcp)}` : ""
+      ].filter(Boolean).join(" + "),
+      unusedPlugins: {
+        titleOne: (name, last) => `Plugin ${name} is enabled but ${last}`,
+        titleMany: (n, days) => `${n} enabled plugins have not been used for ${days}+ days`,
+        detail: (days) => `No skill calls, MCP tool calls or attributed turns in the whole stored history for at least ${days} days (archived sessions included). They still load into every new session and every subagent that gets the skill listing.`,
+        evidence: (name, last, per, parts) => `${name}: ${last}; \u2248 ${N(per)} tokens per session${parts ? ` (${parts})` : ""}`,
+        why: (last, per) => `${last}; \u2248 ${N(per)} tokens of context per session`,
+        summary: (n, days) => `${n} enabled ${plural(n, "en", ["plugin has", "plugins have"])} not been used for ${days}+ days but still add to the startup context of every session.`
+      },
+      hookContext: {
+        title: (plugin, per) => `Plugin ${plugin} adds ~${N(per)} tokens to every session, also where it is not used`,
+        detail: (plugin, used, total, projects) => `Its SessionStart hook injects a block of text at the start of every session, yet the skills or tools of ${plugin} were used in ${used} of ${total} such sessions in this period${projects.length ? ` (projects: ${projects.join(", ")})` : ""}. Disable it globally and enable it only where you use it.`,
+        sessions: (used, total) => `Used in ${used} of ${total} sessions that carried the hook block`,
+        perSession: (per) => `Hook block: \u2248 ${N(per)} tokens per session`,
+        why: (per, used, total) => `its SessionStart hook adds \u2248 ${N(per)} tokens to every session, but it was used in ${used} of ${total} sessions`,
+        whyEnable: (project) => `you use it in ${project}`,
+        skillsUnused: (n, total, days) => `${n} of its ${total} skills not used for ${days}+ days`,
+        summary: (plugin, per) => `plugin ${plugin} injects \u2248 ${N(per)} tokens into every session through its SessionStart hook, but is used only in a few projects.`,
+        fix: (plugin, key) => `If ${plugin} is not needed in every project, disable it globally (claude plugin disable ${key} --scope user) and enable it where you use it (claude plugin enable ${key} --scope local inside that project).`
+      },
+      unusedSkills: {
+        title: (plugin, n, total, days) => `Plugin ${plugin}: ${n} of ${total} skills not used for ${days}+ days`,
+        detail: (plugin, unusedTok, totalTok) => `Their descriptions take \u2248 ${N(unusedTok)} of the \u2248 ${N(totalTok)} listing tokens of ${plugin} in every session. A plugin's skills cannot be turned off one by one, so the choice is the whole plugin: disable it if you can do without the skills you still use.`,
+        stillUsed: (list) => `Still in use: ${list}`,
+        noneUsed: "None of its listed skills was used recently; only its hooks or MCP tools were",
+        mcpUsed: (last) => `Its MCP tools: ${last}`,
+        why: (n, total, used) => `${n} of its ${total} skills not used recently${used ? `; still in use: ${used}` : ""}`,
+        summary: (plugin, n, total, days) => `${n} of the ${total} skills of plugin ${plugin} have not been used for ${days}+ days.`
+      },
+      unusedOwn: {
+        title: (n, days) => `${n} of your own ${plural(n, "en", ["skills has", "skills have"])} not been used for ${days}+ days`,
+        detail: (dir) => `Skills in ${dir} are listed in every session and every subagent that gets the skill listing. Moving a folder to a "-disabled" folder next to it takes it out of the listing and keeps it safe to bring back.`,
+        evidence: (name, last, per) => `${name}: ${last}; \u2248 ${N(per)} tokens per session`,
+        why: (last, per) => `${last}; \u2248 ${N(per)} tokens of context per session`,
+        summary: (n, days) => `${n} of my own ${plural(n, "en", ["skills has", "skills have"])} not been used for ${days}+ days.`
+      },
+      duplicates: {
+        title: (n) => `${n} ${plural(n, "en", ["skill name appears", "skill names appear"])} more than once in the skill listing`,
+        detail: "The same name in several plugins, or your own skill next to a plugin skill of the same name: both descriptions are paid for in every session, and the model may pick the wrong one.",
+        own: "your own",
+        copy: (label, last) => `${label} \u2014 ${last}`,
+        evidence: (name, copies) => `${name}: ${copies}`,
+        whyMove: (keep, keepLast) => `the same skill also comes from ${keep} (${keepLast})`,
+        reviewAction: (key, keep) => `Compare the skill ${key} with ${keep}`,
+        whyReview: (plugin) => `a plugin skill cannot be turned off alone; tell me whether disabling ${plugin} as a whole makes sense, and which copy to keep`,
+        summary: (n) => `${n} skill ${plural(n, "en", ["name is", "names are"])} listed more than once.`
+      }
     }
   };
 }
@@ -1525,15 +1716,6 @@ function uk() {
       fixPerm: (allow) => `\u0414\u043E\u0437\u0432\u043E\u043B\u044C \u0431\u0435\u0437\u043F\u0435\u0447\u043D\u0456 \u0447\u0430\u0441\u0442\u0456 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0438 \u0437\u0430\u0437\u0434\u0430\u043B\u0435\u0433\u0456\u0434\u044C: "permissions": { "allow": [${allow}] } \u0443 .claude/settings.json \u043F\u0440\u043E\u0454\u043A\u0442\u0443 (\u0434\u043B\u044F Bash \u2014 \u043B\u0438\u0448\u0435 \u043A\u043E\u043D\u043A\u0440\u0435\u0442\u043D\u0456 \u043A\u043E\u043C\u0430\u043D\u0434\u0438). \u0414\u043E\u0432\u0433\u0456 \u043E\u0447\u0456\u043A\u0443\u0432\u0430\u043D\u043D\u044F \u0432\u0456\u0434\u043F\u043E\u0432\u0456\u0434\u0456 \u2014 \u043F\u0440\u0438\u0432\u0456\u0434 \u0443\u0432\u0456\u043C\u043A\u043D\u0443\u0442\u0438 \u0441\u043F\u043E\u0432\u0456\u0449\u0435\u043D\u043D\u044F \u0430\u0431\u043E \u0434\u0430\u0432\u0430\u0442\u0438 \u0430\u0433\u0435\u043D\u0442\u0430\u043C \u0434\u043E\u0432\u0448\u0456 \u0430\u0432\u0442\u043E\u043D\u043E\u043C\u043D\u0456 \u0437\u0430\u0434\u0430\u0447\u0456.`,
       fixInput: "\u0414\u043E\u0432\u0433\u0456 \u043E\u0447\u0456\u043A\u0443\u0432\u0430\u043D\u043D\u044F \u0432\u0456\u0434\u043F\u043E\u0432\u0456\u0434\u0456 \u2014 \u043F\u0440\u0438\u0432\u0456\u0434 \u0443\u0432\u0456\u043C\u043A\u043D\u0443\u0442\u0438 \u0441\u043F\u043E\u0432\u0456\u0449\u0435\u043D\u043D\u044F \u0430\u0431\u043E \u0434\u0430\u0432\u0430\u0442\u0438 \u0430\u0433\u0435\u043D\u0442\u0430\u043C \u0434\u043E\u0432\u0448\u0456 \u0430\u0432\u0442\u043E\u043D\u043E\u043C\u043D\u0456 \u0437\u0430\u0434\u0430\u0447\u0456 \u0437 \u0447\u0456\u0442\u043A\u0438\u043C \u043A\u0440\u0438\u0442\u0435\u0440\u0456\u0454\u043C \u0433\u043E\u0442\u043E\u0432\u043D\u043E\u0441\u0442\u0456."
     },
-    startupHook: {
-      title: (plugin, per) => `\u041F\u043B\u0430\u0433\u0456\u043D ${plugin} \u0434\u043E\u0434\u0430\u0454 ~${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0443 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E`,
-      detail: (plugin, per, sessions2, total) => `\u0425\u0443\u043A SessionStart \u043F\u043B\u0430\u0433\u0456\u043D\u0430 ${plugin} \u0432\u0441\u0442\u0430\u0432\u043B\u044F\u0454 \u0431\u043B\u043E\u043A \u0442\u0435\u043A\u0441\u0442\u0443 \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0456 \u043A\u043E\u0436\u043D\u043E\u0457 \u0441\u0435\u0441\u0456\u0457. \u0417\u0430 \u043F\u0435\u0440\u0456\u043E\u0434 \u0446\u0435 ${N(per)} \xD7 ${sessions2} \u0441\u0435\u0441\u0456\u0439 \u2248 ${N(total)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 (\u043E\u0446\u0456\u043D\u043A\u0430 \u0437\u0430 \u0434\u043E\u0432\u0436\u0438\u043D\u043E\u044E \u0442\u0435\u043A\u0441\u0442\u0443), \u044F\u043A\u0456 \u043F\u043E\u0442\u0456\u043C \u0449\u043E\u0445\u043E\u0434\u0443 \u043F\u0435\u0440\u0435\u0447\u0438\u0442\u0443\u044E\u0442\u044C\u0441\u044F \u0437 \u043A\u0435\u0448\u0443.`,
-      sessions: (sessions2, days) => `${sessions2} \u0441\u0435\u0441\u0456\u0439 \u0437 \u0446\u0438\u043C \u0431\u043B\u043E\u043A\u043E\u043C \u0437\u0430 ${days} \u0434\u043D.`,
-      perSession: (per) => `\u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E`,
-      listing: (plugin, per) => `\u0429\u0435 \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E \u2014 \u043E\u043F\u0438\u0441\u0438 \u0441\u043A\u0456\u043B\u0456\u0432 ${plugin} \u0443 \u0441\u043F\u0438\u0441\u043A\u0443 \u0441\u043A\u0456\u043B\u0456\u0432`,
-      noListing: (plugin) => `\u0421\u043A\u0456\u043B\u0456\u0432 ${plugin} \u0443 \u0441\u043F\u0438\u0441\u043A\u0443 \u043D\u0435 \u0437\u043D\u0430\u0439\u0434\u0435\u043D\u043E`,
-      fix: (plugin, key) => `\u042F\u043A\u0449\u043E ${plugin} \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D \u043D\u0435 \u0432 \u043A\u043E\u0436\u043D\u043E\u043C\u0443 \u043F\u0440\u043E\u0454\u043A\u0442\u0456 \u2014 \u0432\u0438\u043C\u043A\u043D\u0438 \u0439\u043E\u0433\u043E \u0433\u043B\u043E\u0431\u0430\u043B\u044C\u043D\u043E \u0432 ~/.claude/settings.json: "enabledPlugins": { "${key}": false }, \u0430 \u0432 \u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0438\u0445 \u043F\u0440\u043E\u0454\u043A\u0442\u0430\u0445 \u0443\u0432\u0456\u043C\u043A\u043D\u0438 \u0432 .claude/settings.json \u043F\u0440\u043E\u0454\u043A\u0442\u0443.`
-    },
     skillListing: {
       title: (per, perSub) => `\u0421\u043F\u0438\u0441\u043E\u043A \u0441\u043A\u0456\u043B\u0456\u0432: ~${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E${perSub ? ` \u0456 ~${N(perSub)} \u043D\u0430 \u043A\u043E\u0436\u043D\u043E\u0433\u043E \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430` : ""}`,
       detail: (perSub, total) => `\u041E\u043F\u0438\u0441\u0438 \u0432\u0441\u0456\u0445 \u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0438\u0445 \u0441\u043A\u0456\u043B\u0456\u0432 \u0432\u0441\u0442\u0430\u0432\u043B\u044F\u044E\u0442\u044C\u0441\u044F \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0456 \u043A\u043E\u0436\u043D\u043E\u0457 \u0441\u0435\u0441\u0456\u0457${perSub ? " \u0456 \u043A\u043E\u0436\u043D\u043E\u0433\u043E \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430" : ""}. \u0420\u0430\u0437\u043E\u043C \u0437\u0430 \u043F\u0435\u0440\u0456\u043E\u0434 \u2248 ${N(total)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432.`,
@@ -1545,16 +1727,6 @@ function uk() {
       detail: (total) => `\u0429\u0435 \u0434\u043E \u043F\u0435\u0440\u0448\u043E\u0433\u043E \u0437\u0430\u043F\u0438\u0442\u0443 \u0432 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u043F\u043E\u0442\u0440\u0430\u043F\u043B\u044F\u044E\u0442\u044C \u0441\u0438\u0441\u0442\u0435\u043C\u043D\u0438\u0439 \u043F\u0440\u043E\u043C\u043F\u0442, \u0432\u0438\u0437\u043D\u0430\u0447\u0435\u043D\u043D\u044F \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432, \u0441\u043F\u0438\u0441\u043A\u0438 \u0441\u043A\u0456\u043B\u0456\u0432 \u0456 \u0430\u0433\u0435\u043D\u0442\u0456\u0432, CLAUDE.md \u0442\u043E\u0449\u043E. \u0420\u0430\u0437\u043E\u043C \u0437\u0430 \u043F\u0435\u0440\u0456\u043E\u0434 \u2248 ${N(total)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 (\u043E\u0446\u0456\u043D\u043A\u0430 \u0437\u0430 \u0434\u043E\u0432\u0436\u0438\u043D\u043E\u044E \u0442\u0435\u043A\u0441\u0442\u0443); \u0434\u0430\u043B\u0456 \u0432\u043E\u043D\u0438 \u0449\u043E\u0445\u043E\u0434\u0443 \u0447\u0438\u0442\u0430\u044E\u0442\u044C\u0441\u044F \u0437 \u043A\u0435\u0448\u0443.`,
       evidence: (label, per, perSub) => `${label}: \u2248 ${N(per)} \u043D\u0430 \u0441\u0435\u0441\u0456\u044E${perSub ? `, \u2248 ${N(perSub)} \u043D\u0430 \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430` : ""}`,
       fix: "\u041D\u0430\u0439\u043F\u0440\u043E\u0441\u0442\u0456\u0448\u0435 \u0441\u043A\u043E\u0440\u043E\u0442\u0438\u0442\u0438 \u0441\u043F\u0438\u0441\u043E\u043A \u0441\u043A\u0456\u043B\u0456\u0432 (\u0432\u0438\u043C\u043A\u043D\u0443\u0442\u0438 \u0437\u0430\u0439\u0432\u0456 \u043F\u043B\u0430\u0433\u0456\u043D\u0438, \u043F\u0440\u0438\u0431\u0440\u0430\u0442\u0438 \u043D\u0435\u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0456 \u0441\u043A\u0456\u043B\u0438) \u0456 CLAUDE.md; \u0434\u0440\u0456\u0431\u043D\u0456 \u0437\u0430\u0434\u0430\u0447\u0456 \u043A\u0440\u0430\u0449\u0435 \u0440\u043E\u0431\u0438\u0442\u0438 \u0431\u0435\u0437 \u043E\u043A\u0440\u0435\u043C\u043E\u0433\u043E \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430 \u2014 \u043A\u043E\u0436\u0435\u043D \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442 \u043F\u043B\u0430\u0442\u0438\u0442\u044C \u0446\u0435\u0439 \u0441\u0442\u0430\u0440\u0442\u043E\u0432\u0438\u0439 \u0432\u043D\u0435\u0441\u043E\u043A \u0437\u0430\u043D\u043E\u0432\u043E."
-    },
-    unusedPlugin: {
-      title: (name, days) => `\u041F\u043B\u0430\u0433\u0456\u043D ${name} \u0443\u0432\u0456\u043C\u043A\u043D\u0435\u043D\u043E, \u0430\u043B\u0435 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u0432\u0441\u044F ${days} \u0434\u043D.`,
-      detail: (name, hookRuns) => `\u0416\u043E\u0434\u043D\u043E\u0433\u043E \u0432\u0438\u043A\u043B\u0438\u043A\u0443 \u0441\u043A\u0456\u043B\u0456\u0432, MCP-\u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432 \u0447\u0438 \u0430\u0442\u0440\u0438\u0431\u0443\u0442\u043E\u0432\u0430\u043D\u0438\u0445 \u0445\u043E\u0434\u0456\u0432 \u043F\u043B\u0430\u0433\u0456\u043D\u0430 ${name} \u0437\u0430 \u043F\u0435\u0440\u0456\u043E\u0434${hookRuns ? `, \u0445\u043E\u0447\u0430 \u0439\u043E\u0433\u043E \u0445\u0443\u043A\u0438 \u0441\u043F\u0440\u0430\u0446\u044E\u0432\u0430\u043B\u0438 ${N(hookRuns)} \u0440\u0430\u0437\u0456\u0432` : ""}. \u0412\u0456\u043D \u043E\u0434\u043D\u0430\u043A\u043E\u0432\u043E \u0437\u0430\u0439\u043C\u0430\u0454 \u043C\u0456\u0441\u0446\u0435 \u0432 \u0441\u0442\u0430\u0440\u0442\u043E\u0432\u043E\u043C\u0443 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0456.`,
-      skills: (tok) => `\u041E\u043F\u0438\u0441\u0438 \u0439\u043E\u0433\u043E \u0441\u043A\u0456\u043B\u0456\u0432: \u2248 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0437\u0430 \u043F\u0435\u0440\u0456\u043E\u0434`,
-      noSkills: "\u0421\u043A\u0456\u043B\u0456\u0432 \u0443 \u0441\u043F\u0438\u0441\u043A\u0443 \u043D\u0435 \u0437\u043D\u0430\u0439\u0434\u0435\u043D\u043E",
-      hookBlock: (tok) => `\u0411\u043B\u043E\u043A \u0445\u0443\u043A\u0430 \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0456: \u2248 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432`,
-      noHookBlock: "\u0421\u0442\u0430\u0440\u0442\u043E\u0432\u043E\u0433\u043E \u0431\u043B\u043E\u043A\u0443 \u0445\u0443\u043A\u0430 \u043D\u0435\u043C\u0430\u0454",
-      hookRuns: (n) => `\u0417\u0430\u043F\u0443\u0441\u043A\u0456\u0432 \u0445\u0443\u043A\u0456\u0432: ${N(n)}`,
-      fix: (key) => `\u0423 ~/.claude/settings.json: "enabledPlugins": { "${key}": false }`
     },
     unusedMcp: {
       title: (n, days) => `${n} MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0456\u0432 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u043E, \u0430\u043B\u0435 \u0436\u043E\u0434\u043D\u043E\u0433\u043E \u0432\u0438\u043A\u043B\u0438\u043A\u0443 \u0437\u0430 ${days} \u0434\u043D.`,
@@ -1603,6 +1775,62 @@ function uk() {
       errors: (n) => `\u0417 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E/stderr: ${N(n)}`,
       fix: (plugin, key) => `\u042F\u043A\u0449\u043E \u043F\u043B\u0430\u0433\u0456\u043D ${plugin} \u043D\u0435 \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D \u0443 \u0446\u044C\u043E\u043C\u0443 \u0441\u0435\u0440\u0435\u0434\u043E\u0432\u0438\u0449\u0456 \u2014 \u0432\u0438\u043C\u043A\u043D\u0438: "enabledPlugins": { "${key}": false } \u0443 ~/.claude/settings.json.`,
       fixNoPlugin: "\u041F\u0435\u0440\u0435\u0432\u0456\u0440 \u043A\u043E\u043C\u0430\u043D\u0434\u0438 \u0445\u0443\u043A\u0456\u0432 \u0443 ~/.claude/settings.json: \u0447\u0438 \u0432\u043E\u043D\u0438 \u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0456 \u043D\u0430 \u043A\u043E\u0436\u043D\u0443 \u043F\u043E\u0434\u0456\u044E."
+    },
+    rec: {
+      lastUsed: (days) => days === 0 ? "\u0432\u043E\u0441\u0442\u0430\u043D\u043D\u0454 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E \u0441\u044C\u043E\u0433\u043E\u0434\u043D\u0456" : `\u0432\u043E\u0441\u0442\u0430\u043D\u043D\u0454 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E ${days} ${plural(days, "uk", ["\u0434\u0435\u043D\u044C", "\u0434\u043D\u0456", "\u0434\u043D\u0456\u0432"])} \u0442\u043E\u043C\u0443`,
+      never: (since) => since ? `\u0436\u043E\u0434\u043D\u043E\u0433\u043E \u0440\u0430\u0437\u0443 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E (\u0443 \u0441\u043F\u0438\u0441\u043A\u0443 \u0437 ${since})` : "\u0436\u043E\u0434\u043D\u043E\u0433\u043E \u0440\u0430\u0437\u0443 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E",
+      perSession: (tok) => `\u2248 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E`,
+      parts: (p) => [
+        p.skills ? `\u043E\u043F\u0438\u0441\u0438 \u0441\u043A\u0456\u043B\u0456\u0432 ${N(p.skills)}` : "",
+        p.hook ? `\u0445\u0443\u043A SessionStart ${N(p.hook)}` : "",
+        p.mcp ? `\u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0457 MCP ${N(p.mcp)}` : ""
+      ].filter(Boolean).join(" + "),
+      unusedPlugins: {
+        titleOne: (name, last) => `\u041F\u043B\u0430\u0433\u0456\u043D ${name} \u0443\u0432\u0456\u043C\u043A\u043D\u0435\u043D\u043E, \u0430\u043B\u0435 ${last}`,
+        titleMany: (n, days) => `${n} ${plural(n, "uk", ["\u0443\u0432\u0456\u043C\u043A\u043D\u0435\u043D\u0438\u0439 \u043F\u043B\u0430\u0433\u0456\u043D \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u0432\u0441\u044F", "\u0443\u0432\u0456\u043C\u043A\u043D\u0435\u043D\u0456 \u043F\u043B\u0430\u0433\u0456\u043D\u0438 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C", "\u0443\u0432\u0456\u043C\u043A\u043D\u0435\u043D\u0438\u0445 \u043F\u043B\u0430\u0433\u0456\u043D\u0456\u0432 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C"])} ${days}+ \u0434\u043D.`,
+        detail: (days) => `\u0416\u043E\u0434\u043D\u043E\u0433\u043E \u0432\u0438\u043A\u043B\u0438\u043A\u0443 \u0441\u043A\u0456\u043B\u0456\u0432, MCP-\u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432 \u0447\u0438 \u0430\u0442\u0440\u0438\u0431\u0443\u0442\u043E\u0432\u0430\u043D\u0438\u0445 \u0445\u043E\u0434\u0456\u0432 \u0437\u0430 \u0432\u0441\u044E \u0437\u0431\u0435\u0440\u0435\u0436\u0435\u043D\u0443 \u0456\u0441\u0442\u043E\u0440\u0456\u044E \u0449\u043E\u043D\u0430\u0439\u043C\u0435\u043D\u0448\u0435 ${days} \u0434\u043D. (\u0437 \u0430\u0440\u0445\u0456\u0432\u043D\u0438\u043C\u0438 \u0441\u0435\u0441\u0456\u044F\u043C\u0438). \u041F\u0440\u043E\u0442\u0435 \u0432\u043E\u043D\u0438 \u0439 \u0434\u0430\u043B\u0456 \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u044E\u0442\u044C\u0441\u044F \u0432 \u043A\u043E\u0436\u043D\u0443 \u043D\u043E\u0432\u0443 \u0441\u0435\u0441\u0456\u044E \u0456 \u043A\u043E\u0436\u043D\u043E\u0433\u043E \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430, \u0449\u043E \u043E\u0442\u0440\u0438\u043C\u0443\u0454 \u0441\u043F\u0438\u0441\u043E\u043A \u0441\u043A\u0456\u043B\u0456\u0432.`,
+        evidence: (name, last, per, parts) => `${name}: ${last}; \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E${parts ? ` (${parts})` : ""}`,
+        why: (last, per) => `${last}; \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E`,
+        summary: (n, days) => `${n} ${plural(n, "uk", ["\u0443\u0432\u0456\u043C\u043A\u043D\u0435\u043D\u0438\u0439 \u043F\u043B\u0430\u0433\u0456\u043D \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u0432\u0441\u044F", "\u0443\u0432\u0456\u043C\u043A\u043D\u0435\u043D\u0456 \u043F\u043B\u0430\u0433\u0456\u043D\u0438 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C", "\u0443\u0432\u0456\u043C\u043A\u043D\u0435\u043D\u0438\u0445 \u043F\u043B\u0430\u0433\u0456\u043D\u0456\u0432 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C"])} ${days}+ \u0434\u043D., \u0430\u043B\u0435 \u0439 \u0434\u0430\u043B\u0456 \u0434\u043E\u0434\u0430\u044E\u0442\u044C \u0441\u0442\u0430\u0440\u0442\u043E\u0432\u0438\u0439 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0443 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E.`
+      },
+      hookContext: {
+        title: (plugin, per) => `\u041F\u043B\u0430\u0433\u0456\u043D ${plugin} \u0434\u043E\u0434\u0430\u0454 ~${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0443 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E, \u043D\u0430\u0432\u0456\u0442\u044C \u0442\u0430\u043C, \u0434\u0435 \u0432\u0456\u043D \u043D\u0435 \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D`,
+        detail: (plugin, used, total, projects) => `\u0419\u043E\u0433\u043E \u0445\u0443\u043A SessionStart \u0432\u0441\u0442\u0430\u0432\u043B\u044F\u0454 \u0431\u043B\u043E\u043A \u0442\u0435\u043A\u0441\u0442\u0443 \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0456 \u043A\u043E\u0436\u043D\u043E\u0457 \u0441\u0435\u0441\u0456\u0457, \u0430 \u0441\u043A\u0456\u043B\u0438 \u0447\u0438 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0438 ${plugin} \u0437\u043D\u0430\u0434\u043E\u0431\u0438\u043B\u0438\u0441\u044C \u0443 ${used} \u0437 ${total} \u0442\u0430\u043A\u0438\u0445 \u0441\u0435\u0441\u0456\u0439 \u0437\u0430 \u043F\u0435\u0440\u0456\u043E\u0434${projects.length ? ` (\u043F\u0440\u043E\u0454\u043A\u0442\u0438: ${projects.join(", ")})` : ""}. \u0412\u0438\u043C\u043A\u043D\u0438 \u0439\u043E\u0433\u043E \u0433\u043B\u043E\u0431\u0430\u043B\u044C\u043D\u043E \u0439 \u0443\u0432\u0456\u043C\u043A\u043D\u0438 \u043B\u0438\u0448\u0435 \u0442\u0430\u043C, \u0434\u0435 \u0432\u0456\u043D \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D.`,
+        sessions: (used, total) => `\u0412\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E \u0432 ${used} \u0437 ${total} \u0441\u0435\u0441\u0456\u0439 \u0456\u0437 \u0431\u043B\u043E\u043A\u043E\u043C \u0445\u0443\u043A\u0430`,
+        perSession: (per) => `\u0411\u043B\u043E\u043A \u0445\u0443\u043A\u0430: \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E`,
+        why: (per, used, total) => `\u0439\u043E\u0433\u043E \u0445\u0443\u043A SessionStart \u0434\u043E\u0434\u0430\u0454 \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0443 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E, \u0430 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E \u0439\u043E\u0433\u043E \u0432 ${used} \u0437 ${total} \u0441\u0435\u0441\u0456\u0439`,
+        whyEnable: (project) => `\u0432\u0456\u043D \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D \u0443 ${project}`,
+        skillsUnused: (n, total, days) => `${n} \u0437 ${total} \u0439\u043E\u0433\u043E \u0441\u043A\u0456\u043B\u0456\u0432 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C ${days}+ \u0434\u043D.`,
+        summary: (plugin, per) => `\u043F\u043B\u0430\u0433\u0456\u043D ${plugin} \u0447\u0435\u0440\u0435\u0437 \u0445\u0443\u043A SessionStart \u0432\u0441\u0442\u0430\u0432\u043B\u044F\u0454 \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0443 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E, \u0430\u043B\u0435 \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D \u043B\u0438\u0448\u0435 \u0432 \u043A\u0456\u043B\u044C\u043A\u043E\u0445 \u043F\u0440\u043E\u0454\u043A\u0442\u0430\u0445.`,
+        fix: (plugin, key) => `\u042F\u043A\u0449\u043E ${plugin} \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D \u043D\u0435 \u0432 \u043A\u043E\u0436\u043D\u043E\u043C\u0443 \u043F\u0440\u043E\u0454\u043A\u0442\u0456 \u2014 \u0432\u0438\u043C\u043A\u043D\u0438 \u0439\u043E\u0433\u043E \u0433\u043B\u043E\u0431\u0430\u043B\u044C\u043D\u043E (claude plugin disable ${key} --scope user) \u0456 \u0443\u0432\u0456\u043C\u043A\u043D\u0438 \u0442\u0430\u043C, \u0434\u0435 \u0432\u0456\u043D \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D (claude plugin enable ${key} --scope local \u0443 \u0442\u0435\u0446\u0456 \u043F\u0440\u043E\u0454\u043A\u0442\u0443).`
+      },
+      unusedSkills: {
+        title: (plugin, n, total, days) => `\u041F\u043B\u0430\u0433\u0456\u043D ${plugin}: ${n} \u0437 ${total} \u0441\u043A\u0456\u043B\u0456\u0432 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C ${days}+ \u0434\u043D.`,
+        detail: (plugin, unusedTok, totalTok) => `\u0407\u0445\u043D\u0456 \u043E\u043F\u0438\u0441\u0438 \u0437\u0430\u0439\u043C\u0430\u044E\u0442\u044C \u2248 ${N(unusedTok)} \u0437 \u2248 ${N(totalTok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0441\u043F\u0438\u0441\u043A\u0443 \u0441\u043A\u0456\u043B\u0456\u0432 ${plugin} \u0443 \u043A\u043E\u0436\u043D\u0456\u0439 \u0441\u0435\u0441\u0456\u0457. \u0421\u043A\u0456\u043B\u0438 \u043F\u043B\u0430\u0433\u0456\u043D\u0430 \u043D\u0435 \u0432\u0438\u043C\u0438\u043A\u0430\u044E\u0442\u044C\u0441\u044F \u043F\u043E\u043E\u0434\u0438\u043D\u0446\u0456, \u0442\u043E\u0436 \u0432\u0438\u0431\u0456\u0440 \u2014 \u0443\u0432\u0435\u0441\u044C \u043F\u043B\u0430\u0433\u0456\u043D: \u0432\u0438\u043C\u043A\u043D\u0438 \u0439\u043E\u0433\u043E, \u044F\u043A\u0449\u043E \u043E\u0431\u0456\u0439\u0434\u0435\u0448\u0441\u044F \u0431\u0435\u0437 \u0441\u043A\u0456\u043B\u0456\u0432, \u044F\u043A\u0438\u043C\u0438 \u0449\u0435 \u043A\u043E\u0440\u0438\u0441\u0442\u0443\u0454\u0448\u0441\u044F.`,
+        stillUsed: (list) => `\u0429\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u044E\u0442\u044C\u0441\u044F: ${list}`,
+        noneUsed: "\u0416\u043E\u0434\u0435\u043D \u0437\u0456 \u0441\u043A\u0456\u043B\u0456\u0432 \u0443 \u0441\u043F\u0438\u0441\u043A\u0443 \u043E\u0441\u0442\u0430\u043D\u043D\u0456\u043C \u0447\u0430\u0441\u043E\u043C \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u0432\u0441\u044F \u2014 \u043B\u0438\u0448\u0435 \u0445\u0443\u043A\u0438 \u0447\u0438 MCP-\u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0438",
+        mcpUsed: (last) => `\u0419\u043E\u0433\u043E MCP-\u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0438: ${last}`,
+        why: (n, total, used) => `${n} \u0437 ${total} \u0439\u043E\u0433\u043E \u0441\u043A\u0456\u043B\u0456\u0432 \u0434\u0430\u0432\u043D\u043E \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C${used ? `; \u0449\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u044E\u0442\u044C\u0441\u044F: ${used}` : ""}`,
+        summary: (plugin, n, total, days) => `${n} \u0437 ${total} \u0441\u043A\u0456\u043B\u0456\u0432 \u043F\u043B\u0430\u0433\u0456\u043D\u0430 ${plugin} \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C ${days}+ \u0434\u043D.`
+      },
+      unusedOwn: {
+        title: (n, days) => `${n} ${plural(n, "uk", ["\u0432\u043B\u0430\u0441\u043D\u0438\u0439 \u0441\u043A\u0456\u043B \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u0432\u0441\u044F", "\u0432\u043B\u0430\u0441\u043D\u0456 \u0441\u043A\u0456\u043B\u0438 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C", "\u0432\u043B\u0430\u0441\u043D\u0438\u0445 \u0441\u043A\u0456\u043B\u0456\u0432 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C"])} ${days}+ \u0434\u043D.`,
+        detail: (dir) => `\u0421\u043A\u0456\u043B\u0438 \u0437 ${dir} \u043F\u043E\u0442\u0440\u0430\u043F\u043B\u044F\u044E\u0442\u044C \u0443 \u0441\u043F\u0438\u0441\u043E\u043A \u0441\u043A\u0456\u043B\u0456\u0432 \u043A\u043E\u0436\u043D\u043E\u0457 \u0441\u0435\u0441\u0456\u0457 \u0442\u0430 \u043A\u043E\u0436\u043D\u043E\u0433\u043E \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430, \u0449\u043E \u0439\u043E\u0433\u043E \u043E\u0442\u0440\u0438\u043C\u0443\u0454. \u042F\u043A\u0449\u043E \u043F\u0435\u0440\u0435\u043D\u0435\u0441\u0442\u0438 \u0442\u0435\u043A\u0443 \u0432 \u0441\u0443\u0441\u0456\u0434\u043D\u044E \u0442\u0435\u043A\u0443 \xAB-disabled\xBB, \u0441\u043A\u0456\u043B \u0437\u043D\u0438\u043A\u043D\u0435 \u0437\u0456 \u0441\u043F\u0438\u0441\u043A\u0443, \u0430 \u043F\u043E\u0432\u0435\u0440\u043D\u0443\u0442\u0438 \u0439\u043E\u0433\u043E \u0431\u0443\u0434\u0435 \u043F\u0440\u043E\u0441\u0442\u043E.`,
+        evidence: (name, last, per) => `${name}: ${last}; \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E`,
+        why: (last, per) => `${last}; \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E`,
+        summary: (n, days) => `${n} ${plural(n, "uk", ["\u043C\u0456\u0439 \u0432\u043B\u0430\u0441\u043D\u0438\u0439 \u0441\u043A\u0456\u043B \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u0432\u0441\u044F", "\u043C\u043E\u0457 \u0432\u043B\u0430\u0441\u043D\u0456 \u0441\u043A\u0456\u043B\u0438 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C", "\u043C\u043E\u0457\u0445 \u0432\u043B\u0430\u0441\u043D\u0438\u0445 \u0441\u043A\u0456\u043B\u0456\u0432 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C"])} ${days}+ \u0434\u043D.`
+      },
+      duplicates: {
+        title: (n) => `${n} ${plural(n, "uk", ["\u043D\u0430\u0437\u0432\u0430 \u0441\u043A\u0456\u043B\u0430 \u0442\u0440\u0430\u043F\u043B\u044F\u0454\u0442\u044C\u0441\u044F", "\u043D\u0430\u0437\u0432\u0438 \u0441\u043A\u0456\u043B\u0456\u0432 \u0442\u0440\u0430\u043F\u043B\u044F\u044E\u0442\u044C\u0441\u044F", "\u043D\u0430\u0437\u0432 \u0441\u043A\u0456\u043B\u0456\u0432 \u0442\u0440\u0430\u043F\u043B\u044F\u044E\u0442\u044C\u0441\u044F"])} \u0443 \u0441\u043F\u0438\u0441\u043A\u0443 \u0441\u043A\u0456\u043B\u0456\u0432 \u0431\u0456\u043B\u044C\u0448\u0435 \u043E\u0434\u043D\u043E\u0433\u043E \u0440\u0430\u0437\u0443`,
+        detail: "\u0422\u0430 \u0441\u0430\u043C\u0430 \u043D\u0430\u0437\u0432\u0430 \u0432 \u043A\u0456\u043B\u044C\u043A\u043E\u0445 \u043F\u043B\u0430\u0433\u0456\u043D\u0430\u0445 \u0430\u0431\u043E \u0432\u043B\u0430\u0441\u043D\u0438\u0439 \u0441\u043A\u0456\u043B \u043F\u043E\u0440\u0443\u0447 \u0437\u0456 \u0441\u043A\u0456\u043B\u043E\u043C \u043F\u043B\u0430\u0433\u0456\u043D\u0430 \u0437 \u0442\u0456\u0454\u044E \u0436 \u043D\u0430\u0437\u0432\u043E\u044E: \u043E\u0431\u0438\u0434\u0432\u0430 \u043E\u043F\u0438\u0441\u0438 \u043E\u043F\u043B\u0430\u0447\u0443\u044E\u0442\u044C\u0441\u044F \u0432 \u043A\u043E\u0436\u043D\u0456\u0439 \u0441\u0435\u0441\u0456\u0457, \u0456 \u043C\u043E\u0434\u0435\u043B\u044C \u043C\u043E\u0436\u0435 \u043E\u0431\u0440\u0430\u0442\u0438 \u043D\u0435 \u0442\u043E\u0439.",
+        own: "\u0432\u043B\u0430\u0441\u043D\u0438\u0439",
+        copy: (label, last) => `${label} \u2014 ${last}`,
+        evidence: (name, copies) => `${name}: ${copies}`,
+        whyMove: (keep, keepLast) => `\u0442\u043E\u0439 \u0441\u0430\u043C\u0438\u0439 \u0441\u043A\u0456\u043B \u0454 \u0456 \u0432 ${keep} (${keepLast})`,
+        reviewAction: (key, keep) => `\u041F\u043E\u0440\u0456\u0432\u043D\u044F\u0442\u0438 \u0441\u043A\u0456\u043B ${key} \u0437 ${keep}`,
+        whyReview: (plugin) => `\u0441\u043A\u0456\u043B \u043F\u043B\u0430\u0433\u0456\u043D\u0430 \u043D\u0435 \u0432\u0438\u043C\u0438\u043A\u0430\u0454\u0442\u044C\u0441\u044F \u043E\u043A\u0440\u0435\u043C\u043E; \u0441\u043A\u0430\u0436\u0438, \u0447\u0438 \u0454 \u0441\u0435\u043D\u0441 \u0432\u0438\u043C\u043A\u043D\u0443\u0442\u0438 ${plugin} \u043F\u043E\u0432\u043D\u0456\u0441\u0442\u044E \u0456 \u044F\u043A\u0443 \u043A\u043E\u043F\u0456\u044E \u0437\u0430\u043B\u0438\u0448\u0438\u0442\u0438`,
+        summary: (n) => `${n} ${plural(n, "uk", ["\u043D\u0430\u0437\u0432\u0430 \u0441\u043A\u0456\u043B\u0430 \u0442\u0440\u0430\u043F\u043B\u044F\u0454\u0442\u044C\u0441\u044F", "\u043D\u0430\u0437\u0432\u0438 \u0441\u043A\u0456\u043B\u0456\u0432 \u0442\u0440\u0430\u043F\u043B\u044F\u044E\u0442\u044C\u0441\u044F", "\u043D\u0430\u0437\u0432 \u0441\u043A\u0456\u043B\u0456\u0432 \u0442\u0440\u0430\u043F\u043B\u044F\u044E\u0442\u044C\u0441\u044F"])} \u0443 \u0441\u043F\u0438\u0441\u043A\u0443 \u0431\u0456\u043B\u044C\u0448\u0435 \u043E\u0434\u043D\u043E\u0433\u043E \u0440\u0430\u0437\u0443.`
+      }
     }
   };
 }
@@ -1619,8 +1847,593 @@ var init_insights_text = __esm({
   }
 });
 
-// server/insights.ts
+// server/recommend.ts
+import fs3 from "node:fs";
+import os2 from "node:os";
 import path4 from "node:path";
+function homeDisplay(p) {
+  const home = os2.homedir();
+  return p === home ? "~" : p.startsWith(home + path4.sep) ? `~/${p.slice(home.length + 1).split(path4.sep).join("/")}` : p;
+}
+function defaultEnv(o) {
+  const skills = path4.join(CLAUDE_DIR, "skills");
+  return {
+    now: o.now ?? Date.now(),
+    unusedDays: o.unusedDays,
+    enabledPlugins: readSettings().enabledPlugins,
+    settingsFile: homeDisplay(SETTINGS_FILE),
+    skillsDir: homeDisplay(skills),
+    ownSkillExists: (name) => /^[\w.-]+$/.test(name) && fs3.existsSync(path4.join(skills, name))
+  };
+}
+function hash8(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+function stableId(rule2, keys) {
+  return `${rule2}:${hash8([...new Set(keys)].sort().join("\n"))}`;
+}
+function severityOf(s) {
+  const pct2 = s.pctStartup ?? 0;
+  const period = s.period ?? 0;
+  if (pct2 >= 0.1 || period >= 2e7) return "high";
+  if (pct2 >= 0.02 || period >= 2e6) return "warn";
+  return "info";
+}
+function dayTs(date, s) {
+  const [y, m, d] = date.split("-").map(Number);
+  const start = new Date(y, m - 1, d).getTime();
+  return Math.max(start, Math.min(s.lastTs || start, new Date(y, m - 1, d + 1).getTime() - 1));
+}
+function usageIndex(store2) {
+  if (indexMemo && indexMemo.store === store2 && indexMemo.version === store2.version) return indexMemo.v;
+  const v = { plugin: /* @__PURE__ */ new Map(), skill: /* @__PURE__ */ new Map(), mcp: /* @__PURE__ */ new Map(), tool: /* @__PURE__ */ new Map(), pluginSeen: /* @__PURE__ */ new Map(), skillSeen: /* @__PURE__ */ new Map() };
+  for (const s of store2.files.values()) {
+    for (const [date, b] of Object.entries(s.days)) {
+      for (const [k, a] of Object.entries(b.plugins)) bump(v.plugin, k, a.last);
+      for (const [k, a] of Object.entries(b.skills)) bump(v.skill, k, a.last);
+      for (const [k, n] of Object.entries(b.skillLoads)) if (n > 0) bump(v.skill, k, dayTs(date, s));
+      for (const [k, a] of Object.entries(b.mcpServers)) bump(v.mcp, k, a.last);
+      for (const [k, a] of Object.entries(b.tools)) if (a.calls > 0) bump(v.tool, k, a.last || dayTs(date, s));
+    }
+    if (!s.firstTs) continue;
+    for (const [p, c] of Object.entries(s.skillsByPlugin)) if (c > 0) first(v.pluginSeen, p, s.firstTs);
+    for (const k of Object.keys(s.startup)) if (k.startsWith("hook:plugin:")) first(v.pluginSeen, k.slice("hook:plugin:".length), s.firstTs);
+    for (const [k, c] of Object.entries(s.skillsByName ?? {})) if (c > 0) first(v.skillSeen, k, s.firstTs);
+  }
+  indexMemo = { store: store2, version: store2.version, v };
+  return v;
+}
+function isPluginMcp(server2, plugin) {
+  return server2.startsWith(`plugin:${plugin}:`) || server2.startsWith(`plugin_${plugin}_`) || server2.replace(/[^a-zA-Z0-9_-]/g, "_").startsWith(`plugin_${plugin}_`);
+}
+function pluginLastUse(idx, plugin) {
+  let last = idx.plugin.get(plugin) ?? 0;
+  for (const [k, ts] of idx.skill) if (k.startsWith(plugin + ":") && ts > last) last = ts;
+  for (const [k, ts] of idx.mcp) if (isPluginMcp(k, plugin) && ts > last) last = ts;
+  const prefix = `mcp__plugin_${plugin}_`;
+  for (const [k, ts] of idx.tool) if (k.startsWith(prefix) && ts > last) last = ts;
+  return last || null;
+}
+function unusedFor(last, seen, env2) {
+  const ref = last ?? seen ?? null;
+  return ref !== null && env2.now - ref >= env2.unusedDays * DAY_MS;
+}
+function costWindow(store2, now, days = PROJECTION_DAYS) {
+  const from = now - days * DAY_MS;
+  const mains = [];
+  const subs = [];
+  let earliest = now;
+  for (const s of store2.files.values()) {
+    if (!s.firstTs || s.firstTs < from || s.firstTs > now || !Object.keys(s.startup).length) continue;
+    (s.agentId === null ? mains : subs).push(s);
+    if (s.firstTs < earliest) earliest = s.firstTs;
+  }
+  const spanDays = Math.min(days, Math.max(1, (now - earliest) / DAY_MS));
+  const avgStartup = mains.length ? mains.reduce((n, s) => n + startupTokens(s), 0) / mains.length : 0;
+  return { mains, subs, spanDays, avgStartup };
+}
+function rangeWindow(store2, range) {
+  const mains = [];
+  const subs = [];
+  for (const s of store2.files.values()) {
+    if (!s.firstTs || !Object.keys(s.startup).length) continue;
+    const d = localDate(s.firstTs);
+    if (d < range.from || d > range.to) continue;
+    (s.agentId === null ? mains : subs).push(s);
+  }
+  const [y1, m1, d1] = range.from.split("-").map(Number);
+  const [y2, m2, d2] = range.to.split("-").map(Number);
+  const spanDays = Math.max(1, Math.round((new Date(y2, m2 - 1, d2).getTime() - new Date(y1, m1 - 1, d1).getTime()) / DAY_MS) + 1);
+  const avgStartup = mains.length ? mains.reduce((n, s) => n + startupTokens(s), 0) / mains.length : 0;
+  return { mains, subs, spanDays, avgStartup };
+}
+function costOf(w, chars, basis = "projection") {
+  let mainSum = 0, subSum = 0, subWith = 0;
+  for (const s of w.mains) mainSum += estTokens(chars(s));
+  for (const s of w.subs) {
+    const t = estTokens(chars(s));
+    subSum += t;
+    if (t > 0) subWith++;
+  }
+  const total = mainSum + subSum;
+  const perSession = w.mains.length ? Math.round(mainSum / w.mains.length) : 0;
+  const perSubagent = subWith ? Math.round(subSum / subWith) : 0;
+  const days = basis === "projection" ? PROJECTION_DAYS : Math.round(w.spanDays);
+  const period = basis === "projection" ? Math.round(total * PROJECTION_DAYS / w.spanDays) : total;
+  const out = { perSession, period, days, basis, total };
+  if (perSubagent) out.perSubagent = perSubagent;
+  if (w.avgStartup > 0 && perSession > 0) out.pctStartup = Math.min(1, perSession / w.avgStartup);
+  return out;
+}
+function addSavings(list) {
+  const sum = (f) => list.reduce((n, s) => n + (f(s) ?? 0), 0);
+  const out = { perSession: sum((s) => s.perSession), period: sum((s) => s.period), days: list[0]?.days, basis: list[0]?.basis };
+  const sub = sum((s) => s.perSubagent);
+  if (sub) out.perSubagent = sub;
+  const pct2 = sum((s) => s.pctStartup);
+  if (pct2) out.pctStartup = Math.min(1, pct2);
+  return out;
+}
+function publicSaving(s) {
+  const { total: _t, ...rest } = s;
+  return rest;
+}
+var DAY_MS, PROJECTION_DAYS, daysBetween, bump, first, indexMemo, skillLastUse, startupTokens;
+var init_recommend = __esm({
+  "server/recommend.ts"() {
+    "use strict";
+    init_config();
+    init_util();
+    DAY_MS = 864e5;
+    PROJECTION_DAYS = 30;
+    daysBetween = (from, to) => Math.max(0, Math.floor((to - from) / DAY_MS));
+    bump = (m, k, ts) => {
+      if (ts > (m.get(k) ?? 0)) m.set(k, ts);
+    };
+    first = (m, k, ts) => {
+      const v = m.get(k);
+      if (v === void 0 || ts < v) m.set(k, ts);
+    };
+    indexMemo = null;
+    skillLastUse = (idx, key) => idx.skill.get(key) ?? null;
+    startupTokens = (s) => estTokens(Object.values(s.startup).reduce((n, c) => n + c, 0));
+  }
+});
+
+// shared/prompts.ts
+function shq(s) {
+  if (/^[\w@%+=:,./~-]+$/.test(s)) return s;
+  const esc = (x) => x.replace(/(["\\$`])/g, "\\$1");
+  if (s.startsWith("~/")) return `"$HOME/${esc(s.slice(2))}"`;
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+function itemLines(it, i, T) {
+  const out = [`${i + 1}. ${it.action} \u2014 ${it.why}`];
+  if (it.reviewOnly) out.push(`   ${T.review}`);
+  if (it.commands?.length) out.push(`   ${T.run}: ${it.commands.join(" && ")}`);
+  if (it.undo?.length) out.push(`   ${T.undo}: ${it.undo.join(" && ")}`);
+  return out;
+}
+function buildPrompts(spec) {
+  const T = TEXT[spec.lang] ?? TEXT.en;
+  const files = [...new Set(spec.items.flatMap((i) => i.files ?? []))];
+  const verify = spec.verify ?? [];
+  const head = [T.intro, "", `${T.found} ${spec.summary}`, T.estimates, ""];
+  const rules = (planLine, extra) => [
+    planLine,
+    ...extra,
+    T.backup(files),
+    T.noDelete,
+    T.onFail,
+    ...spec.notes ?? [],
+    T.report(verify),
+    T.newSessions
+  ].map((l) => `- ${l}`);
+  const items = spec.items.flatMap((it, i) => itemLines(it, i, T));
+  const all = [...head, T.itemsAll, ...items, "", T.rules, ...rules(T.planFirst, [])].join("\n");
+  const ask = [...head, ...T.askHow, "", T.itemsAsk, ...items, "", T.afterAsk, ...rules(T.planConfirmed, [T.onlyConfirmed])].join("\n");
+  return { all, ask };
+}
+function disablePluginItem(lang, o) {
+  return {
+    name: o.key,
+    action: ACTIONS[lang].disablePlugin(o.key),
+    why: o.why,
+    commands: [`claude plugin disable ${shq(o.key)} --scope user`],
+    undo: [`claude plugin enable ${shq(o.key)} --scope user`],
+    files: [o.settingsFile]
+  };
+}
+function enablePluginInProjectItem(lang, o) {
+  return {
+    name: `${o.key} \u2192 ${o.dir}`,
+    action: ACTIONS[lang].enableLocal(o.key, o.dir),
+    why: o.why,
+    commands: [`cd ${shq(o.dir)}`, `claude plugin enable ${shq(o.key)} --scope local`],
+    undo: [`cd ${shq(o.dir)}`, `claude plugin disable ${shq(o.key)} --scope local`],
+    files: [`${o.dir}/.claude/settings.local.json`]
+  };
+}
+function moveSkillItem(lang, o) {
+  const from = `${o.skillsDir}/${o.name}`;
+  const toDir = `${o.skillsDir}-disabled`;
+  const to = `${toDir}/${o.name}`;
+  return {
+    name: o.name,
+    action: ACTIONS[lang].moveSkill(o.name, from, to),
+    why: o.why,
+    commands: [`mkdir -p ${shq(toDir)}`, `mv ${shq(from)} ${shq(to)}`],
+    undo: [`mv ${shq(to)} ${shq(from)}`]
+  };
+}
+function reviewItem(o) {
+  return { ...o, reviewOnly: true };
+}
+var TEXT, ACTIONS;
+var init_prompts = __esm({
+  "shared/prompts.ts"() {
+    "use strict";
+    TEXT = {
+      en: {
+        intro: "Clorbit (a read-only dashboard over my Claude Code sessions) suggests a change to my Claude Code setup.",
+        found: "What it found:",
+        estimates: "Its numbers are estimates from my session history. If what you see on disk differs (already disabled, folder missing), trust the disk and tell me.",
+        itemsAll: "Please make these changes:",
+        itemsAsk: "The candidates:",
+        run: "Run",
+        undo: "Undo",
+        review: "Nothing to change automatically \u2014 look and tell me what you would do.",
+        askHow: [
+          'Do not change anything yet. Go through the candidates one at a time and ask me about each \u2014 with the AskUserQuestion tool if you have it (one question per item, options "Yes, do it" and "No, keep it"), otherwise in plain text, waiting for my answer before the next one.',
+          "In each question say what it is, why it is suggested (the facts above) and what exactly will change."
+        ],
+        afterAsk: "After my last answer:",
+        rules: "How to work:",
+        planFirst: "First show me the full list of changes and every file they will touch, then go ahead.",
+        planConfirmed: "Show me the list of changes I confirmed and every file they will touch, then go ahead.",
+        onlyConfirmed: "Apply only what I confirmed; leave everything else as it is.",
+        backup: (files) => `Before editing any settings file, back it up next to itself with a timestamp${files.length ? `, e.g. ${files.map((f) => `cp ${shq(f)} ${shq(f)}.bak-$(date +%Y%m%d-%H%M%S)`).join("; ")}` : ""}.`,
+        noDelete: "Do not delete anything: folders are moved, not removed.",
+        onFail: "If a step fails or the item no longer exists, skip it and tell me why; do not improvise other changes.",
+        report: (verify) => `At the end${verify.length ? ` check the result (${verify.join("; ")}) and` : ","} show me a short report: what changed, what was skipped, where the backups are and how to undo each change.`,
+        newSessions: "Remind me that the changes apply to new Claude Code sessions: this one and other open sessions keep the old setup until restarted."
+      },
+      uk: {
+        intro: "Clorbit (\u0434\u0430\u0448\u0431\u043E\u0440\u0434, \u0449\u043E \u043B\u0438\u0448\u0435 \u0447\u0438\u0442\u0430\u0454 \u043C\u043E\u0457 \u0441\u0435\u0441\u0456\u0457 Claude Code) \u0440\u0430\u0434\u0438\u0442\u044C \u0437\u043C\u0456\u043D\u0438\u0442\u0438 \u043D\u0430\u043B\u0430\u0448\u0442\u0443\u0432\u0430\u043D\u043D\u044F Claude Code.",
+        found: "\u0429\u043E \u0432\u0456\u043D \u0437\u043D\u0430\u0439\u0448\u043E\u0432:",
+        estimates: "\u0419\u043E\u0433\u043E \u0447\u0438\u0441\u043B\u0430 \u2014 \u043E\u0446\u0456\u043D\u043A\u0438 \u0437\u0430 \u0456\u0441\u0442\u043E\u0440\u0456\u0454\u044E \u043C\u043E\u0457\u0445 \u0441\u0435\u0441\u0456\u0439. \u042F\u043A\u0449\u043E \u043D\u0430 \u0434\u0438\u0441\u043A\u0443 \u0456\u043D\u0430\u043A\u0448\u0435 (\u0432\u0436\u0435 \u0432\u0438\u043C\u043A\u043D\u0435\u043D\u043E, \u0442\u0435\u043A\u0438 \u043D\u0435\u043C\u0430\u0454) \u2014 \u0432\u0456\u0440 \u0434\u0438\u0441\u043A\u0443 \u0456 \u0441\u043A\u0430\u0436\u0438 \u043C\u0435\u043D\u0456.",
+        itemsAll: "\u0417\u0440\u043E\u0431\u0438, \u0431\u0443\u0434\u044C \u043B\u0430\u0441\u043A\u0430, \u0442\u0430\u043A\u0456 \u0437\u043C\u0456\u043D\u0438:",
+        itemsAsk: "\u041A\u0430\u043D\u0434\u0438\u0434\u0430\u0442\u0438:",
+        run: "\u041A\u043E\u043C\u0430\u043D\u0434\u0430",
+        undo: "\u0421\u043A\u0430\u0441\u0443\u0432\u0430\u0442\u0438",
+        review: "\u0410\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u043D\u043E \u043D\u0456\u0447\u043E\u0433\u043E \u043D\u0435 \u0437\u043C\u0456\u043D\u044E\u0439 \u2014 \u043F\u043E\u0434\u0438\u0432\u0438\u0441\u044C \u0456 \u0441\u043A\u0430\u0436\u0438, \u0449\u043E \u0431 \u0442\u0438 \u0437\u0440\u043E\u0431\u0438\u0432.",
+        askHow: [
+          "\u041F\u043E\u043A\u0438 \u043D\u0456\u0447\u043E\u0433\u043E \u043D\u0435 \u0437\u043C\u0456\u043D\u044E\u0439. \u041F\u0440\u043E\u0439\u0434\u0438\u0441\u044F \u043F\u043E \u043A\u0430\u043D\u0434\u0438\u0434\u0430\u0442\u0430\u0445 \u043F\u043E \u043E\u0434\u043D\u043E\u043C\u0443 \u0439 \u0441\u043F\u0438\u0442\u0430\u0439 \u043C\u0435\u043D\u0435 \u043F\u0440\u043E \u043A\u043E\u0436\u0435\u043D \u2014 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u043E\u043C AskUserQuestion, \u044F\u043A\u0449\u043E \u0432\u0456\u043D \u0443 \u0442\u0435\u0431\u0435 \u0454 (\u043E\u0434\u043D\u0435 \u043F\u0438\u0442\u0430\u043D\u043D\u044F \u043D\u0430 \u043F\u0443\u043D\u043A\u0442, \u0432\u0430\u0440\u0456\u0430\u043D\u0442\u0438 \xAB\u0422\u0430\u043A, \u0437\u0440\u043E\u0431\u0438\xBB \u0456 \xAB\u041D\u0456, \u0437\u0430\u043B\u0438\u0448\xBB), \u0456\u043D\u0430\u043A\u0448\u0435 \u0437\u0432\u0438\u0447\u0430\u0439\u043D\u0438\u043C \u0442\u0435\u043A\u0441\u0442\u043E\u043C, \u0434\u043E\u0447\u0435\u043A\u0430\u0432\u0448\u0438\u0441\u044C \u0432\u0456\u0434\u043F\u043E\u0432\u0456\u0434\u0456 \u043F\u0435\u0440\u0435\u0434 \u043D\u0430\u0441\u0442\u0443\u043F\u043D\u0438\u043C.",
+          "\u0423 \u043A\u043E\u0436\u043D\u043E\u043C\u0443 \u043F\u0438\u0442\u0430\u043D\u043D\u0456 \u0441\u043A\u0430\u0436\u0438, \u0449\u043E \u0446\u0435, \u0447\u043E\u043C\u0443 \u0440\u0430\u0434\u044F\u0442\u044C (\u0444\u0430\u043A\u0442\u0438 \u0432\u0438\u0449\u0435) \u0456 \u0449\u043E \u0441\u0430\u043C\u0435 \u0437\u043C\u0456\u043D\u0438\u0442\u044C\u0441\u044F."
+        ],
+        afterAsk: "\u041F\u0456\u0441\u043B\u044F \u043C\u043E\u0454\u0457 \u043E\u0441\u0442\u0430\u043D\u043D\u044C\u043E\u0457 \u0432\u0456\u0434\u043F\u043E\u0432\u0456\u0434\u0456:",
+        rules: "\u042F\u043A \u043F\u0440\u0430\u0446\u044E\u0432\u0430\u0442\u0438:",
+        planFirst: "\u0421\u043F\u0435\u0440\u0448\u0443 \u043F\u043E\u043A\u0430\u0436\u0438 \u043F\u043E\u0432\u043D\u0438\u0439 \u0441\u043F\u0438\u0441\u043E\u043A \u0437\u043C\u0456\u043D \u0456 \u0432\u0441\u0456 \u0444\u0430\u0439\u043B\u0438, \u044F\u043A\u0438\u0445 \u0432\u043E\u043D\u0438 \u0442\u043E\u0440\u043A\u043D\u0443\u0442\u044C\u0441\u044F, \u043F\u043E\u0442\u0456\u043C \u0432\u0438\u043A\u043E\u043D\u0443\u0439.",
+        planConfirmed: "\u041F\u043E\u043A\u0430\u0436\u0438 \u0441\u043F\u0438\u0441\u043E\u043A \u0437\u043C\u0456\u043D, \u044F\u043A\u0456 \u044F \u043F\u0456\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0432, \u0456 \u0432\u0441\u0456 \u0444\u0430\u0439\u043B\u0438, \u044F\u043A\u0438\u0445 \u0432\u043E\u043D\u0438 \u0442\u043E\u0440\u043A\u043D\u0443\u0442\u044C\u0441\u044F, \u043F\u043E\u0442\u0456\u043C \u0432\u0438\u043A\u043E\u043D\u0443\u0439.",
+        onlyConfirmed: "\u0417\u0430\u0441\u0442\u043E\u0441\u0443\u0439 \u043B\u0438\u0448\u0435 \u0442\u0435, \u0449\u043E \u044F \u043F\u0456\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0432; \u0443\u0441\u0435 \u0456\u043D\u0448\u0435 \u0437\u0430\u043B\u0438\u0448 \u044F\u043A \u0454.",
+        backup: (files) => `\u041F\u0435\u0440\u0435\u0434 \u0437\u043C\u0456\u043D\u043E\u044E \u0431\u0443\u0434\u044C-\u044F\u043A\u043E\u0433\u043E \u0444\u0430\u0439\u043B\u0443 \u043D\u0430\u043B\u0430\u0448\u0442\u0443\u0432\u0430\u043D\u044C \u0437\u0440\u043E\u0431\u0438 \u0439\u043E\u0433\u043E \u043A\u043E\u043F\u0456\u044E \u043F\u043E\u0440\u0443\u0447 \u0456\u0437 \u043F\u043E\u0437\u043D\u0430\u0447\u043A\u043E\u044E \u0447\u0430\u0441\u0443${files.length ? `, \u043D\u0430\u043F\u0440\u0438\u043A\u043B\u0430\u0434 ${files.map((f) => `cp ${shq(f)} ${shq(f)}.bak-$(date +%Y%m%d-%H%M%S)`).join("; ")}` : ""}.`,
+        noDelete: "\u041D\u0456\u0447\u043E\u0433\u043E \u043D\u0435 \u0432\u0438\u0434\u0430\u043B\u044F\u0439: \u0442\u0435\u043A\u0438 \u043F\u0435\u0440\u0435\u043D\u043E\u0441\u0438\u043C\u043E, \u0430 \u043D\u0435 \u0441\u0442\u0438\u0440\u0430\u0454\u043C\u043E.",
+        onFail: "\u042F\u043A\u0449\u043E \u043A\u0440\u043E\u043A \u043D\u0435 \u0432\u0434\u0430\u0432\u0441\u044F \u0430\u0431\u043E \u043F\u0443\u043D\u043A\u0442\u0443 \u0432\u0436\u0435 \u043D\u0435\u043C\u0430\u0454 \u2014 \u043F\u0440\u043E\u043F\u0443\u0441\u0442\u0438 \u0439\u043E\u0433\u043E \u0439 \u043F\u043E\u044F\u0441\u043D\u0438 \u0447\u043E\u043C\u0443; \u0456\u043D\u0448\u0438\u0445 \u0437\u043C\u0456\u043D \u0432\u0456\u0434 \u0441\u0435\u0431\u0435 \u043D\u0435 \u0432\u0438\u0433\u0430\u0434\u0443\u0439.",
+        report: (verify) => `\u041D\u0430\u043F\u0440\u0438\u043A\u0456\u043D\u0446\u0456${verify.length ? ` \u043F\u0435\u0440\u0435\u0432\u0456\u0440 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 (${verify.join("; ")}) \u0456` : ""} \u043F\u043E\u043A\u0430\u0436\u0438 \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u0437\u0432\u0456\u0442: \u0449\u043E \u0437\u043C\u0456\u043D\u0435\u043D\u043E, \u0449\u043E \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u043E, \u0434\u0435 \u043A\u043E\u043F\u0456\u0457 \u0456 \u044F\u043A \u0441\u043A\u0430\u0441\u0443\u0432\u0430\u0442\u0438 \u043A\u043E\u0436\u043D\u0443 \u0437\u043C\u0456\u043D\u0443.`,
+        newSessions: "\u041D\u0430\u0433\u0430\u0434\u0430\u0439 \u043C\u0435\u043D\u0456, \u0449\u043E \u0437\u043C\u0456\u043D\u0438 \u0434\u0456\u044E\u0442\u044C \u0443 \u043D\u043E\u0432\u0438\u0445 \u0441\u0435\u0441\u0456\u044F\u0445 Claude Code: \u0446\u044F \u0439 \u0456\u043D\u0448\u0456 \u0432\u0456\u0434\u043A\u0440\u0438\u0442\u0456 \u0441\u0435\u0441\u0456\u0457 \u043F\u0440\u0430\u0446\u044E\u044E\u0442\u044C \u0437\u0456 \u0441\u0442\u0430\u0440\u0438\u043C\u0438 \u043D\u0430\u043B\u0430\u0448\u0442\u0443\u0432\u0430\u043D\u043D\u044F\u043C\u0438 \u0434\u043E \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A\u0443."
+      }
+    };
+    ACTIONS = {
+      en: {
+        disablePlugin: (key) => `Disable the plugin ${key}`,
+        enableLocal: (key, dir) => `Enable the plugin ${key} only in the project ${dir} (local scope, not committed)`,
+        moveSkill: (name, from, to) => `Move my own skill "${name}" out of the skills folder (${from} \u2192 ${to})`
+      },
+      uk: {
+        disablePlugin: (key) => `\u0412\u0438\u043C\u043A\u043D\u0443\u0442\u0438 \u043F\u043B\u0430\u0433\u0456\u043D ${key}`,
+        enableLocal: (key, dir) => `\u0423\u0432\u0456\u043C\u043A\u043D\u0443\u0442\u0438 \u043F\u043B\u0430\u0433\u0456\u043D ${key} \u043B\u0438\u0448\u0435 \u0432 \u043F\u0440\u043E\u0454\u043A\u0442\u0456 ${dir} (\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u043E, \u0431\u0435\u0437 \u043A\u043E\u043C\u0456\u0442\u0443)`,
+        moveSkill: (name, from, to) => `\u041F\u0435\u0440\u0435\u043D\u0435\u0441\u0442\u0438 \u043C\u0456\u0439 \u0432\u043B\u0430\u0441\u043D\u0438\u0439 \u0441\u043A\u0456\u043B \xAB${name}\xBB \u0437 \u0442\u0435\u043A\u0438 \u0441\u043A\u0456\u043B\u0456\u0432 (${from} \u2192 ${to})`
+      }
+    };
+  }
+});
+
+// server/recommend-skills.ts
+function usedInBucket(b, plugin) {
+  if (b.plugins[plugin]) return true;
+  const pre = plugin + ":";
+  for (const k of Object.keys(b.skills)) if (k.startsWith(pre)) return true;
+  for (const k of Object.keys(b.skillLoads)) if (k.startsWith(pre)) return true;
+  for (const k of Object.keys(b.mcpServers)) if (isPluginMcp(k, plugin)) return true;
+  const tp = `mcp__plugin_${plugin}_`;
+  for (const [k, a] of Object.entries(b.tools)) if (k.startsWith(tp) && a.calls > 0) return true;
+  return false;
+}
+function skillRecommendations(store2, range, lang, env2) {
+  const T = insightText(lang).rec;
+  const idx = usageIndex(store2);
+  const w = costWindow(store2, env2.now);
+  const out = [];
+  const keyOf2 = /* @__PURE__ */ new Map();
+  for (const [k, on] of Object.entries(env2.enabledPlugins)) if (on) keyOf2.set(k.split("@")[0], k);
+  const lastText = (last, seen) => last ? T.lastUsed(daysBetween(last, env2.now)) : T.never(seen ? localDate(seen) : null);
+  const days = env2.unusedDays;
+  const unusedPlugins = /* @__PURE__ */ new Set();
+  const pluginCost = (name) => costOf(w, (s) => (s.skillsByPlugin[name] ?? 0) + (s.startup[hookPluginKey(name)] ?? 0) + mcpChars(s, name));
+  {
+    const rows = [];
+    for (const [name, key] of keyOf2) {
+      const cost = pluginCost(name);
+      if (!cost.perSession && !cost.perSubagent) continue;
+      const last = pluginLastUse(idx, name);
+      const seen = idx.pluginSeen.get(name) ?? null;
+      if (!unusedFor(last, seen, env2)) continue;
+      unusedPlugins.add(name);
+      const lt = lastText(last, seen);
+      const parts = T.parts({
+        skills: costOf(w, (s) => s.skillsByPlugin[name] ?? 0).perSession ?? 0,
+        hook: costOf(w, (s) => s.startup[hookPluginKey(name)] ?? 0).perSession ?? 0,
+        mcp: costOf(w, (s) => mcpChars(s, name)).perSession ?? 0
+      });
+      rows.push({
+        target: { key, label: name, kind: "plugin", lastUsed: last, tokensPerSession: cost.perSession },
+        saving: cost,
+        ev: T.unusedPlugins.evidence(name, lt, cost.perSession ?? 0, parts),
+        item: disablePluginItem(lang, { key, why: T.unusedPlugins.why(lt, cost.perSession ?? 0), settingsFile: env2.settingsFile })
+      });
+    }
+    if (rows.length) {
+      rows.sort((a, b) => (b.saving.period ?? 0) - (a.saving.period ?? 0));
+      const saving = addSavings(rows.map((r) => r.saving));
+      const one = rows.length === 1 ? rows[0] : null;
+      out.push({
+        id: stableId("unused-plugins", rows.map((r) => r.target.key)),
+        severity: severityOf(saving),
+        title: one ? T.unusedPlugins.titleOne(one.target.label, lastText(one.target.lastUsed ?? null, idx.pluginSeen.get(one.target.label))) : T.unusedPlugins.titleMany(rows.length, days),
+        detail: T.unusedPlugins.detail(days),
+        evidence: rows.map((r) => r.ev),
+        estSavingTokens: saving.period,
+        pages: ["skills", "startup"],
+        scope: "history",
+        saving,
+        targets: rows.map((r) => r.target),
+        prompts: buildPrompts({ lang, summary: T.unusedPlugins.summary(rows.length, days), items: rows.map((r) => r.item), verify: ["claude plugin list"] })
+      });
+    }
+  }
+  const listed = /* @__PURE__ */ new Set();
+  for (const s of w.mains) for (const k of Object.keys(s.skillsByName ?? {})) listed.add(k);
+  for (const s of w.subs) for (const k of Object.keys(s.skillsByName ?? {})) listed.add(k);
+  const skillCost = /* @__PURE__ */ new Map();
+  const perSkill = (k) => {
+    let v = skillCost.get(k);
+    if (v === void 0) skillCost.set(k, v = costOf(w, (s) => s.skillsByName?.[k] ?? 0).perSession ?? 0);
+    return v;
+  };
+  const skillUnused = (k) => unusedFor(skillLastUse(idx, k), idx.skillSeen.get(k), env2);
+  const groups = /* @__PURE__ */ new Map();
+  for (const k of listed) {
+    const i = k.indexOf(":");
+    if (i >= 0 && unusedPlugins.has(k.slice(0, i))) continue;
+    const name = i < 0 ? k : k.slice(i + 1);
+    groups.set(name, [...groups.get(name) ?? [], k]);
+  }
+  const dup = [...groups.entries()].filter(([, ks]) => ks.length > 1).sort((a, b) => a[0].localeCompare(b[0]));
+  const inDup = new Set(dup.flatMap(([, ks]) => ks));
+  const byPlugin = /* @__PURE__ */ new Map();
+  const own = [];
+  for (const k of [...listed].sort()) {
+    const i = k.indexOf(":");
+    if (i < 0) own.push(k);
+    else byPlugin.set(k.slice(0, i), [...byPlugin.get(k.slice(0, i)) ?? [], k]);
+  }
+  const hookCards = /* @__PURE__ */ new Set();
+  {
+    const rw = rangeWindow(store2, range);
+    const ctx = new Ctx(store2);
+    const hookPlugins = /* @__PURE__ */ new Set();
+    for (const s of rw.mains) for (const k of Object.keys(s.startup)) if (k.startsWith("hook:plugin:")) hookPlugins.add(k.slice("hook:plugin:".length));
+    const cwdOf = /* @__PURE__ */ new Map();
+    for (const name of [...hookPlugins].sort()) {
+      if (unusedPlugins.has(name)) continue;
+      const hk = hookPluginKey(name);
+      const withHook = rw.mains.filter((s) => (s.startup[hk] ?? 0) > 0);
+      if (!withHook.length) continue;
+      const per = Math.round(withHook.reduce((n, s) => n + estTokens(s.startup[hk]), 0) / withHook.length);
+      if (per < HOOK_MIN_TOKENS) continue;
+      const usedSids = /* @__PURE__ */ new Set();
+      const usedProjects = /* @__PURE__ */ new Set();
+      for (const { s, b } of ctx.days(range)) {
+        if (!usedInBucket(b, name)) continue;
+        usedSids.add(s.sessionId);
+        const p = ctx.project(s);
+        usedProjects.add(p);
+        const main = store2.mainOf(s.sessionId);
+        if (main?.cwd && !cwdOf.has(p)) cwdOf.set(p, main.cwd);
+      }
+      const total = costOf(rw, (s) => s.startup[hk] ?? 0, "range");
+      const avoid = costOf(rw, (s) => usedProjects.has(ctx.project(s)) ? 0 : s.startup[hk] ?? 0, "range");
+      if (!total.total || avoid.total < total.total * HOOK_MIN_AVOIDABLE) continue;
+      const usedIn = withHook.filter((s) => usedSids.has(s.sessionId)).length;
+      hookCards.add(name);
+      const pluginSkills = byPlugin.get(name) ?? [];
+      const unusedSkills = pluginSkills.filter(skillUnused).length;
+      const projects = [...usedProjects].sort();
+      const saving = publicSaving({ ...avoid, perSession: per, pctStartup: rw.avgStartup ? Math.min(1, per / rw.avgStartup) : void 0 });
+      const key = keyOf2.get(name);
+      const items = key ? [
+        disablePluginItem(lang, { key, why: T.hookContext.why(per, usedIn, withHook.length), settingsFile: env2.settingsFile }),
+        ...projects.filter((p) => cwdOf.has(p)).slice(0, MAX_PROJECTS).map((p) => enablePluginInProjectItem(lang, { key, dir: homeDisplay(cwdOf.get(p)), why: T.hookContext.whyEnable(p) }))
+      ] : [];
+      out.push({
+        id: `hook-context:${name}`,
+        severity: severityOf(saving),
+        title: T.hookContext.title(name, per),
+        detail: T.hookContext.detail(name, usedIn, withHook.length, projects),
+        evidence: [
+          T.hookContext.perSession(per),
+          T.hookContext.sessions(usedIn, withHook.length),
+          ...unusedSkills ? [T.hookContext.skillsUnused(unusedSkills, pluginSkills.length, days)] : []
+        ],
+        fix: key ? void 0 : T.hookContext.fix(name, `${name}@\u2026`),
+        estSavingTokens: saving.period,
+        pages: ["skills", "startup"],
+        scope: "range",
+        saving,
+        targets: [{ key: key ?? name, label: name, kind: "plugin", lastUsed: pluginLastUse(idx, name), tokensPerSession: per }],
+        prompts: items.length ? buildPrompts({ lang, summary: T.hookContext.summary(name, per), items, verify: ["claude plugin list"] }) : void 0
+      });
+    }
+  }
+  for (const [plugin, keys] of byPlugin) {
+    if (unusedPlugins.has(plugin) || hookCards.has(plugin) || plugin === OWN_SKILLS) continue;
+    const key = keyOf2.get(plugin);
+    if (!key) continue;
+    const unused = keys.filter(skillUnused);
+    if (unused.length < 2 || unused.length * 2 <= keys.length) continue;
+    const used = keys.filter((k) => !unused.includes(k));
+    const short = (k) => k.slice(plugin.length + 1);
+    const usedText = used.map((k) => `${short(k)} (${lastText(skillLastUse(idx, k), idx.skillSeen.get(k))})`).join(", ");
+    const cost = pluginCost(plugin);
+    const saving = publicSaving(cost);
+    const unusedTok = unused.reduce((n, k) => n + perSkill(k), 0);
+    const listTok = keys.reduce((n, k) => n + perSkill(k), 0);
+    const mcpLast = (() => {
+      let last = 0;
+      for (const [k, ts] of idx.mcp) if (isPluginMcp(k, plugin) && ts > last) last = ts;
+      for (const [k, ts] of idx.tool) if (k.startsWith(`mcp__plugin_${plugin}_`) && ts > last) last = ts;
+      return last || null;
+    })();
+    const targets = unused.map((k) => ({ key: k, label: short(k), kind: "skill", lastUsed: skillLastUse(idx, k), tokensPerSession: perSkill(k) })).sort((a, b) => (b.tokensPerSession ?? 0) - (a.tokensPerSession ?? 0));
+    out.push({
+      id: stableId(`unused-skills:${plugin}`, unused),
+      severity: severityOf(saving),
+      title: T.unusedSkills.title(plugin, unused.length, keys.length, days),
+      detail: T.unusedSkills.detail(plugin, unusedTok, listTok),
+      evidence: [
+        used.length ? T.unusedSkills.stillUsed(usedText) : T.unusedSkills.noneUsed,
+        ...mcpLast ? [T.unusedSkills.mcpUsed(lastText(mcpLast, null))] : []
+      ],
+      estSavingTokens: saving.period,
+      pages: ["skills"],
+      scope: "history",
+      saving,
+      targets,
+      prompts: buildPrompts({
+        lang,
+        summary: T.unusedSkills.summary(plugin, unused.length, keys.length, days),
+        items: [disablePluginItem(lang, { key, why: T.unusedSkills.why(unused.length, keys.length, usedText), settingsFile: env2.settingsFile })],
+        verify: ["claude plugin list"]
+      })
+    });
+  }
+  {
+    const unusedOwn = own.filter((k) => !inDup.has(k) && skillUnused(k) && env2.ownSkillExists(k));
+    if (unusedOwn.length) {
+      const rows = unusedOwn.map((k) => {
+        const last = skillLastUse(idx, k);
+        const lt = lastText(last, idx.skillSeen.get(k));
+        return { k, last, lt, per: perSkill(k) };
+      }).sort((a, b) => b.per - a.per);
+      const set = new Set(unusedOwn);
+      const saving = publicSaving(costOf(w, (s) => {
+        let n = 0;
+        for (const [k, c] of Object.entries(s.skillsByName ?? {})) if (set.has(k)) n += c;
+        return n;
+      }));
+      out.push({
+        id: stableId("unused-own-skills", unusedOwn),
+        severity: severityOf(saving),
+        title: T.unusedOwn.title(unusedOwn.length, days),
+        detail: T.unusedOwn.detail(env2.skillsDir),
+        evidence: rows.map((r) => T.unusedOwn.evidence(r.k, r.lt, r.per)),
+        estSavingTokens: saving.period,
+        pages: ["skills"],
+        scope: "history",
+        saving,
+        targets: rows.map((r) => ({ key: r.k, label: r.k, kind: "ownSkill", lastUsed: r.last, tokensPerSession: r.per })),
+        prompts: buildPrompts({
+          lang,
+          summary: T.unusedOwn.summary(unusedOwn.length, days),
+          items: rows.map((r) => moveSkillItem(lang, { name: r.k, skillsDir: env2.skillsDir, why: T.unusedOwn.why(r.lt, r.per) })),
+          verify: [`ls ${env2.skillsDir}`]
+        })
+      });
+    }
+  }
+  {
+    if (dup.length) {
+      const label = (k) => k.includes(":") ? k.split(":")[0] : T.duplicates.own;
+      const items = [];
+      const targets = [];
+      const movable = /* @__PURE__ */ new Set();
+      const evidence = [];
+      for (const [name, ks] of dup) {
+        const ranked = [...ks].sort((a, b) => (skillLastUse(idx, b) ?? 0) - (skillLastUse(idx, a) ?? 0) || Number(!b.includes(":")) - Number(!a.includes(":")) || a.localeCompare(b));
+        const keep = ranked[0];
+        const keepLast = lastText(skillLastUse(idx, keep), idx.skillSeen.get(keep));
+        evidence.push(T.duplicates.evidence(name, ks.map((k) => T.duplicates.copy(label(k), lastText(skillLastUse(idx, k), idx.skillSeen.get(k)))).join("; ")));
+        for (const k of ranked.slice(1)) {
+          const isOwn = !k.includes(":");
+          targets.push({ key: k, label: `${name} \xB7 ${label(k)}`, kind: isOwn ? "ownSkill" : "skill", lastUsed: skillLastUse(idx, k), tokensPerSession: perSkill(k), note: `${label(keep)}: ${keepLast}` });
+          if (isOwn && env2.ownSkillExists(k)) {
+            movable.add(k);
+            items.push(moveSkillItem(lang, { name: k, skillsDir: env2.skillsDir, why: T.duplicates.whyMove(label(keep), keepLast) }));
+          } else {
+            items.push(reviewItem({ name: k, action: T.duplicates.reviewAction(k, keep), why: T.duplicates.whyReview(isOwn ? label(keep) : label(k)) }));
+          }
+        }
+      }
+      const saving = publicSaving(costOf(w, (s) => {
+        let n = 0;
+        for (const k of movable) n += s.skillsByName?.[k] ?? 0;
+        return n;
+      }));
+      out.push({
+        id: stableId("duplicate-skills", dup.flatMap(([, ks]) => ks)),
+        severity: saving.period ? severityOf(saving) : "info",
+        title: T.duplicates.title(dup.length),
+        detail: T.duplicates.detail,
+        evidence,
+        estSavingTokens: saving.period || void 0,
+        pages: ["skills"],
+        scope: "history",
+        saving: saving.perSession ? saving : void 0,
+        targets,
+        prompts: buildPrompts({ lang, summary: T.duplicates.summary(dup.length), items })
+      });
+    }
+  }
+  return out;
+}
+var HOOK_MIN_TOKENS, HOOK_MIN_AVOIDABLE, MAX_PROJECTS, mcpChars;
+var init_recommend_skills = __esm({
+  "server/recommend-skills.ts"() {
+    "use strict";
+    init_prompts();
+    init_analytics();
+    init_i18n();
+    init_insights_text();
+    init_recommend();
+    init_util();
+    HOOK_MIN_TOKENS = 300;
+    HOOK_MIN_AVOIDABLE = 0.2;
+    MAX_PROJECTS = 6;
+    mcpChars = (s, plugin) => {
+      let n = 0;
+      for (const [k, c] of Object.entries(s.mcpBlocks)) if (isPluginMcp(k, plugin)) n += c;
+      return n;
+    };
+  }
+});
+
+// server/insights.ts
+import path5 from "node:path";
 function filesStartedIn(store2, range) {
   const out = [];
   for (const s of store2.files.values()) {
@@ -1644,11 +2457,13 @@ function toolFix(tool, T) {
   if (m) return T.toolFixMcp(m.server);
   return T.toolFixGeneric;
 }
-function insights(store2, range, hookLog2, lang = "en") {
-  const base = memoize(store2, `ins:${lang}:${range.from}:${range.to}`, () => compute(store2, range, lang));
+function insights(store2, range, hookLog2, lang = "en", opts = {}) {
+  const env2 = { ...defaultEnv({ unusedDays: opts.unusedDays ?? DEFAULT_SETTINGS.recommendations.unusedDays }), ...opts.env };
+  const key = `ins:${lang}:${range.from}:${range.to}:${env2.unusedDays}:${localDate(env2.now)}:${hash8(JSON.stringify(env2.enabledPlugins))}`;
+  const base = opts.env ? compute(store2, range, lang, env2) : memoize(store2, key, () => compute(store2, range, lang, env2));
   const extra = hookLog2 ? waitInsights(store2, hookLog2, range, lang) : [];
-  if (!extra.length) return base;
-  return [...base, ...extra].sort((a, b) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity]);
+  const all = extra.length ? [...base, ...extra].sort(bySaving) : base;
+  return opts.page ? all.filter((i) => i.pages?.includes(opts.page)) : all;
 }
 function rangeMs(range) {
   const at = (d, plus) => {
@@ -1694,6 +2509,7 @@ function waitInsights(store2, hookLog2, range, lang = "en") {
     const capH = WAIT_CAP_MS / 36e5;
     v.push({
       id: "hook-waits",
+      pages: ["sessions", "overview"],
       severity: total > 60 * 6e4 ? "warn" : "info",
       title: T.waits.title(total, longest.end - longest.start),
       detail: T.waits.detail(
@@ -1715,41 +2531,17 @@ function waitInsights(store2, hookLog2, range, lang = "en") {
   if (waitMemo.size > 50) waitMemo.delete(waitMemo.keys().next().value);
   return v;
 }
-function compute(store2, range, lang) {
+function compute(store2, range, lang, env2) {
   const T = insightText(lang);
-  const out = [];
+  const out = skillRecommendations(store2, range, lang, env2);
   const attr = attribution(store2, range, lang);
   const ov = overview(store2, range);
   const grand = ov.totals.total || 1;
   const settings2 = readSettings();
   const ctx = new Ctx(store2);
   const started = filesStartedIn(store2, range);
-  const mainsStarted = started.filter((s) => s.agentId === null);
   const days = Math.max(1, ov.daily.length);
   const pluginKey = (name) => Object.keys(settings2.enabledPlugins).find((k) => k.split("@")[0] === name) ?? `${name}@\u2026`;
-  for (const r of attr.startupContext) {
-    if (!r.key.startsWith("hook:plugin:")) continue;
-    const plugin = r.key.slice("hook:plugin:".length);
-    const per = Number(r.extra?.perSession ?? 0);
-    const sessions2 = r.calls;
-    if (!sessions2 || per < 300) continue;
-    const listing = mainsStarted.reduce((n, s) => n + (s.skillsByPlugin[plugin] ?? 0), 0);
-    const listingPer = mainsStarted.length ? estTokens(listing) / mainsStarted.length : 0;
-    const total = r.total;
-    out.push({
-      id: `startup-hook-${plugin}`,
-      severity: total > 5e6 ? "high" : total > 5e5 ? "warn" : "info",
-      title: T.startupHook.title(plugin, per),
-      detail: T.startupHook.detail(plugin, per, sessions2, total),
-      evidence: [
-        T.startupHook.sessions(sessions2, days),
-        T.startupHook.perSession(per),
-        listingPer > 0 ? T.startupHook.listing(plugin, listingPer) : T.startupHook.noListing(plugin)
-      ],
-      fix: T.startupHook.fix(plugin, pluginKey(plugin)),
-      estSavingTokens: Math.round(total)
-    });
-  }
   const skillRow = attr.startupContext.find((r) => r.key === STARTUP.skills);
   if (skillRow && skillRow.total > 0) {
     const byPlugin = /* @__PURE__ */ new Map();
@@ -1759,6 +2551,7 @@ function compute(store2, range, lang) {
     const perSub2 = Number(skillRow.extra?.perSubagent ?? 0);
     out.push({
       id: "startup-skill-listing",
+      pages: ["startup"],
       severity: skillRow.total > 5e6 ? "high" : "warn",
       title: T.skillListing.title(per, perSub2),
       detail: T.skillListing.detail(perSub2 > 0, skillRow.total),
@@ -1774,6 +2567,7 @@ function compute(store2, range, lang) {
     const top = [...attr.startupContext].sort((a, b) => Number(b.extra?.perSession ?? 0) - Number(a.extra?.perSession ?? 0)).slice(0, 5);
     out.push({
       id: "startup-total",
+      pages: ["startup", "overview"],
       severity: "info",
       title: T.startupTotal.title(perMain, perSub),
       detail: T.startupTotal.detail(startupTotal),
@@ -1781,37 +2575,7 @@ function compute(store2, range, lang) {
       fix: T.startupTotal.fix
     });
   }
-  const usedPlugin = (name) => attr.plugins.some((r) => r.key === name && (r.total > 0 || r.calls > 0)) || attr.skills.some((r) => (r.group === name || r.key.startsWith(name + ":")) && (r.total > 0 || r.calls > 0)) || attr.mcpServers.some((r) => (r.key.includes(`plugin:${name}:`) || mcpKey(r.key).includes(`plugin_${name}_`)) && (r.total > 0 || r.calls > 0)) || attr.tools.some((r) => r.key.startsWith(`mcp__plugin_${name}_`) && r.calls > 0);
   const filesInRange = filesActiveIn(store2, range);
-  for (const [key, on] of Object.entries(settings2.enabledPlugins)) {
-    if (!on) continue;
-    const name = key.split("@")[0];
-    if (usedPlugin(name)) continue;
-    const hookRunsAny = filesInRange.some((s) => Object.values(s.days).some((b) => Object.keys(b.hooks).some((k) => k.startsWith(name + "|"))));
-    if (hookRunsAny && !started.some((s) => s.skillsByPlugin[name])) continue;
-    const listChars = started.reduce((n, s) => n + (s.skillsByPlugin[name] ?? 0), 0);
-    const hookRow = attr.startupContext.find((r) => r.key === hookPluginKey(name));
-    const saving = estTokens(listChars) + (hookRow?.total ?? 0);
-    const hookRuns = filesInRange.reduce((n, s) => {
-      for (const [d, b] of Object.entries(s.days)) if (d >= range.from && d <= range.to) {
-        for (const [k, h] of Object.entries(b.hooks)) if (k.startsWith(name + "|")) n += h.n;
-      }
-      return n;
-    }, 0);
-    out.push({
-      id: `unused-plugin-${name}`,
-      severity: saving > 1e6 ? "warn" : "info",
-      title: T.unusedPlugin.title(name, days),
-      detail: T.unusedPlugin.detail(name, hookRuns),
-      evidence: [
-        listChars ? T.unusedPlugin.skills(estTokens(listChars)) : T.unusedPlugin.noSkills,
-        hookRow ? T.unusedPlugin.hookBlock(hookRow.total) : T.unusedPlugin.noHookBlock,
-        ...hookRuns ? [T.unusedPlugin.hookRuns(hookRuns)] : []
-      ],
-      fix: T.unusedPlugin.fix(key),
-      estSavingTokens: saving
-    });
-  }
   const disp = mcpDisplayNames(store2);
   const seen = /* @__PURE__ */ new Map();
   const blockChars = /* @__PURE__ */ new Map();
@@ -1830,6 +2594,7 @@ function compute(store2, range, lang) {
     const saving = unusedMcp.reduce((n, [k]) => n + estTokens(blockChars.get(k) ?? 0), 0);
     out.push({
       id: "unused-mcp",
+      pages: ["mcp"],
       severity: saving > 1e6 ? "warn" : "info",
       title: T.unusedMcp.title(unusedMcp.length, days),
       detail: T.unusedMcp.detail,
@@ -1854,6 +2619,7 @@ function compute(store2, range, lang) {
   for (const [tool, a] of [...big.entries()].sort((x, y) => y[1].sum - x[1].sum).slice(0, 5)) {
     out.push({
       id: `big-results-${tool}`,
+      pages: ["tools"],
       severity: a.sum > 2e6 ? "high" : a.sum > 3e5 ? "warn" : "info",
       title: T.bigResults.title(tool, a.n, a.max),
       detail: T.bigResults.detail(a.sum),
@@ -1877,12 +2643,13 @@ function compute(store2, range, lang) {
     const sessionsN = new Set(repeated.map((r) => r.sid)).size;
     out.push({
       id: "repeated-reads",
+      pages: ["tools"],
       severity: extra * readAvg > 1e6 ? "warn" : "info",
       title: T.repeatedReads.title(repeated.length),
       detail: T.repeatedReads.detail(sessionsN, extra, readAvg),
       evidence: repeated.slice(0, 8).map((r) => {
         const main = store2.mainOf(r.sid);
-        return `${path4.basename(r.file)} \xD7${r.n} \u2014 ${main?.title ?? ctx.projectOfSession.get(r.sid) ?? r.sid.slice(0, 8)}`;
+        return `${path5.basename(r.file)} \xD7${r.n} \u2014 ${main?.title ?? ctx.projectOfSession.get(r.sid) ?? r.sid.slice(0, 8)}`;
       }),
       fix: T.repeatedReads.fix,
       estSavingTokens: Math.round(extra * readAvg)
@@ -1900,6 +2667,7 @@ function compute(store2, range, lang) {
     const total = compacted.reduce((n, c) => n + c.n, 0);
     out.push({
       id: "auto-compactions",
+      pages: ["sessions"],
       severity: total >= 10 ? "warn" : "info",
       title: T.autoCompactions.title(total, compacted.length),
       detail: T.autoCompactions.detail,
@@ -1914,6 +2682,7 @@ function compute(store2, range, lang) {
     const loads = Number(r.extra?.loads ?? 0);
     out.push({
       id: `skill-share-${r.key}`,
+      pages: ["skills"],
       severity: share >= 0.15 ? "warn" : "info",
       title: T.skillShare.title(r.key, share, loads),
       detail: T.skillShare.detail(r.key, r.total, r.sessions, loads ? r.total / loads : null),
@@ -1925,6 +2694,7 @@ function compute(store2, range, lang) {
   if (oftenLoaded.length) {
     out.push({
       id: "skills-loads",
+      pages: [],
       severity: "info",
       title: T.skillLoads.title,
       detail: T.skillLoads.detail,
@@ -1943,6 +2713,7 @@ function compute(store2, range, lang) {
       const saving = low.reduce((n, x) => n + Math.max(0, (avg - x.rate) * x.denom), 0);
       out.push({
         id: "low-cache-days",
+        pages: ["overview"],
         severity: low.some((x) => x.rate < 0.7) ? "warn" : "info",
         title: T.lowCache.title(low.length, avg),
         detail: T.lowCache.detail,
@@ -1973,6 +2744,7 @@ function compute(store2, range, lang) {
     const min = Math.round(a.ms / 6e4);
     out.push({
       id: `hooks-${plugin || "none"}`,
+      pages: ["startup"],
       severity: errShare > 0.5 && a.n > 500 ? "warn" : "info",
       title: T.hooks.title(plugin || null, a.n, min, errShare > 0.5 ? errShare : null),
       detail: T.hooks.detail([...a.names].join(", "), min, a.err ? errShare : null),
@@ -1980,20 +2752,24 @@ function compute(store2, range, lang) {
       fix: plugin ? T.hooks.fix(plugin, pluginKey(plugin)) : T.hooks.fixNoPlugin
     });
   }
-  out.sort((a, b) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity]);
+  out.sort(bySaving);
   return out;
 }
-var sevRank, waitMemo;
+var sevRank, bySaving, waitMemo;
 var init_insights = __esm({
   "server/insights.ts"() {
     "use strict";
+    init_api();
     init_analytics();
     init_config();
     init_hook_log();
     init_util();
     init_i18n();
     init_insights_text();
+    init_recommend();
+    init_recommend_skills();
     sevRank = { high: 0, warn: 1, info: 2 };
+    bySaving = (a, b) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity];
     waitMemo = /* @__PURE__ */ new Map();
   }
 });
@@ -2083,8 +2859,8 @@ function forecastWindow(inp) {
   const anchor = seg[n - 1];
   const span = anchor.ts - seg[0].ts;
   if (anchor.pct >= 100) {
-    const first = seg.find((p) => p.pct >= 100) ?? anchor;
-    return { window: w, pct: anchor.pct, resetsAt, ratePerHour: 0, hitsAt: Math.min(first.ts, now), pctAtReset: 100, confidence: "high", basis: "limits", points: n, exhausted: true };
+    const first2 = seg.find((p) => p.pct >= 100) ?? anchor;
+    return { window: w, pct: anchor.pct, resetsAt, ratePerHour: 0, hitsAt: Math.min(first2.ts, now), pctAtReset: 100, confidence: "high", basis: "limits", points: n, exhausted: true };
   }
   let rate = 0;
   let basis = "none";
@@ -2352,7 +3128,7 @@ var init_automation = __esm({
 });
 
 // server/plan.ts
-import fs3 from "node:fs";
+import fs4 from "node:fs";
 function str2(v, max = 40) {
   if (typeof v !== "string") return null;
   const s = v.trim();
@@ -2377,14 +3153,14 @@ function readPlan(files = CLAUDE_JSON_FILES) {
   for (const file of files) {
     let st;
     try {
-      st = fs3.statSync(file);
+      st = fs4.statSync(file);
     } catch {
       continue;
     }
     if (cache2 && cache2.file === file && cache2.mtime === st.mtimeMs && cache2.size === st.size) return cache2.plan;
     let plan = null;
     try {
-      plan = planFrom(JSON.parse(fs3.readFileSync(file, "utf8"))?.oauthAccount);
+      plan = planFrom(JSON.parse(fs4.readFileSync(file, "utf8"))?.oauthAccount);
     } catch {
       if (cache2 && cache2.file === file) return cache2.plan;
     }
@@ -2409,7 +3185,7 @@ var init_plan = __esm({
 });
 
 // server/lines.ts
-import fs4 from "node:fs/promises";
+import fs5 from "node:fs/promises";
 function classifyPrefix(head) {
   if (head[0] !== 123 || head[1] !== 34) return null;
   const p = head.subarray(0, 24).toString("latin1");
@@ -2417,7 +3193,7 @@ function classifyPrefix(head) {
   return null;
 }
 async function readLines(file, start, sink, maxBytes = Infinity) {
-  const fh = await fs4.open(file, "r");
+  const fh = await fs5.open(file, "r");
   try {
     const buf = Buffer.allocUnsafe(CHUNK);
     let pos = start;
@@ -2518,8 +3294,8 @@ var init_lines = __esm({
 });
 
 // server/scanner.ts
-import fs5 from "node:fs";
-import path5 from "node:path";
+import fs6 from "node:fs";
+import path6 from "node:path";
 function emptyCarry() {
   return {
     recentReq: [],
@@ -2558,11 +3334,11 @@ function emptyDay() {
   };
 }
 function identify(projectsDir, file) {
-  const rel = path5.relative(projectsDir, file).split(path5.sep);
+  const rel = path6.relative(projectsDir, file).split(path6.sep);
   if (rel.length < 2 || rel[0] === ".." || !file.endsWith(".jsonl")) return null;
   const projectDir = rel[0];
-  if (rel.length === 2) return { sessionId: path5.basename(rel[1], ".jsonl"), agentId: null, projectDir };
-  const base = path5.basename(file, ".jsonl");
+  if (rel.length === 2) return { sessionId: path6.basename(rel[1], ".jsonl"), agentId: null, projectDir };
+  const base = path6.basename(file, ".jsonl");
   if (rel[2] !== "subagents" || !base.startsWith("agent-")) return null;
   return { sessionId: rel[1], agentId: base.slice(6), projectDir };
 }
@@ -2599,6 +3375,7 @@ function newSummary(file, id) {
     minutes: {},
     startup: {},
     skillsByPlugin: {},
+    skillsByName: {},
     mcpBlocks: {},
     mcpSeen: [],
     spawns: {},
@@ -2610,8 +3387,8 @@ function newSummary(file, id) {
 function readMeta(file) {
   const metaPath = file.replace(/\.jsonl$/, ".meta.json");
   try {
-    const m = JSON.parse(fs5.readFileSync(metaPath, "utf8"));
-    const wf = path5.basename(path5.dirname(file));
+    const m = JSON.parse(fs6.readFileSync(metaPath, "utf8"));
+    const wf = path6.basename(path6.dirname(file));
     return {
       agentType: m.agentType || "general-purpose",
       description: m.description ?? null,
@@ -2660,7 +3437,7 @@ function detectPlugin(texts, known) {
 async function scanFile(projectsDir, file, prev, opts, onEvent) {
   let st;
   try {
-    st = fs5.statSync(file);
+    st = fs6.statSync(file);
   } catch {
     return null;
   }
@@ -2981,10 +3758,18 @@ var init_scanner = __esm({
           case "skill_listing": {
             this.addStartup(LABELS.skills, size);
             if (!c.startupDone && typeof a.content === "string") {
+              const byName = s.skillsByName ??= {};
+              let plugin = OWN_SKILLS;
+              let name = null;
               for (const ln of a.content.split("\n")) {
-                const m = /^- ([^:\s]+):([^:\s]+):/.exec(ln);
-                const key = m ? m[1] : OWN_SKILLS;
-                s.skillsByPlugin[key] = (s.skillsByPlugin[key] ?? 0) + ln.length + 1;
+                const m = /^- ([^:\s]+)(?::([^:\s]+))?:/.exec(ln);
+                if (m) {
+                  plugin = m[2] ? m[1] : OWN_SKILLS;
+                  name = m[2] ? `${m[1]}:${m[2]}` : m[1];
+                }
+                const n = ln.length + 1;
+                s.skillsByPlugin[plugin] = (s.skillsByPlugin[plugin] ?? 0) + n;
+                if (name) byName[name] = (byName[name] ?? 0) + n;
               }
             }
             return;
@@ -3044,53 +3829,53 @@ var init_scanner = __esm({
 
 // server/store.ts
 import { EventEmitter } from "node:events";
-import fs6 from "node:fs";
-import os2 from "node:os";
-import path6 from "node:path";
+import fs7 from "node:fs";
+import os3 from "node:os";
+import path7 from "node:path";
 import { Worker } from "node:worker_threads";
 function listTranscripts(projectsDir) {
   const out = [];
   let dirs = [];
   try {
-    dirs = fs6.readdirSync(projectsDir);
+    dirs = fs7.readdirSync(projectsDir);
   } catch {
     return out;
   }
   for (const d of dirs) {
-    const pd = path6.join(projectsDir, d);
+    const pd = path7.join(projectsDir, d);
     let entries;
     try {
-      entries = fs6.readdirSync(pd, { withFileTypes: true });
+      entries = fs7.readdirSync(pd, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const e of entries) {
-      if (e.isFile() && e.name.endsWith(".jsonl")) out.push(path6.join(pd, e.name));
+      if (e.isFile() && e.name.endsWith(".jsonl")) out.push(path7.join(pd, e.name));
       else if (e.isDirectory()) {
-        const sub = path6.join(pd, e.name, "subagents");
+        const sub = path7.join(pd, e.name, "subagents");
         let se;
         try {
-          se = fs6.readdirSync(sub, { withFileTypes: true });
+          se = fs7.readdirSync(sub, { withFileTypes: true });
         } catch {
           continue;
         }
         for (const x of se) {
-          if (x.isFile() && x.name.startsWith("agent-") && x.name.endsWith(".jsonl")) out.push(path6.join(sub, x.name));
+          if (x.isFile() && x.name.startsWith("agent-") && x.name.endsWith(".jsonl")) out.push(path7.join(sub, x.name));
           else if (x.isDirectory() && x.name === "workflows") {
             let wfs = [];
             try {
-              wfs = fs6.readdirSync(path6.join(sub, "workflows"));
+              wfs = fs7.readdirSync(path7.join(sub, "workflows"));
             } catch {
               continue;
             }
             for (const wf of wfs) {
               let af = [];
               try {
-                af = fs6.readdirSync(path6.join(sub, "workflows", wf));
+                af = fs7.readdirSync(path7.join(sub, "workflows", wf));
               } catch {
                 continue;
               }
-              for (const f of af) if (f.startsWith("agent-") && f.endsWith(".jsonl")) out.push(path6.join(sub, "workflows", wf, f));
+              for (const f of af) if (f.startsWith("agent-") && f.endsWith(".jsonl")) out.push(path7.join(sub, "workflows", wf, f));
             }
           }
         }
@@ -3105,6 +3890,7 @@ var init_store = __esm({
     "use strict";
     init_config();
     init_scanner();
+    init_types();
     init_i18n();
     Pool = class {
       workers = [];
@@ -3199,7 +3985,7 @@ var init_store = __esm({
         }
         this.stats.loadMs = Date.now() - t02;
       }
-      put(s, bump = true, persist = true) {
+      put(s, bump2 = true, persist = true) {
         this.files.set(s.path, s);
         let set = this.bySession.get(s.sessionId);
         if (!set) this.bySession.set(s.sessionId, set = /* @__PURE__ */ new Set());
@@ -3208,7 +3994,7 @@ var init_store = __esm({
           this.missing.delete(s.path);
           this.dirtyPaths.add(s.path);
         }
-        if (bump) this.version++;
+        if (bump2) this.version++;
       }
       /**
        * The transcript disappeared from disk (e.g. Claude Code's 30-day cleanup).
@@ -3243,13 +4029,13 @@ var init_store = __esm({
         return null;
       }
       /** Cold scan in the background. HTTP already responds meanwhile. */
-      async coldScan(threads = Math.max(2, Math.min(8, os2.cpus().length - 2))) {
+      async coldScan(threads = Math.max(2, Math.min(8, os3.cpus().length - 2))) {
         const st = this.stats;
         st.startedAt = Date.now();
         const list = listTranscripts(this.projectsDir);
         const withM = list.map((f) => {
           try {
-            const s = fs6.statSync(f);
+            const s = fs7.statSync(f);
             return { f, m: s.mtimeMs, size: s.size };
           } catch {
             return null;
@@ -3262,7 +4048,7 @@ var init_store = __esm({
         const todo = [];
         for (const x of withM) {
           const prev = this.files.get(x.f);
-          if (prev && prev.size === x.size && prev.mtimeMs === x.m) {
+          if (prev && prev.v === SUMMARY_VERSION && prev.size === x.size && prev.mtimeMs === x.m) {
             st.filesDone++;
             st.fromCache++;
             if (this.missing.delete(x.f)) {
@@ -3314,7 +4100,7 @@ var init_store = __esm({
       refresh(file) {
         return this.enqueue(file, async () => {
           if (!identify(this.projectsDir, file)) return;
-          if (!fs6.existsSync(file)) {
+          if (!fs7.existsSync(file)) {
             this.markMissing(file);
             return;
           }
@@ -3533,8 +4319,8 @@ var init_tree = __esm({
 
 // server/live.ts
 import { EventEmitter as EventEmitter2 } from "node:events";
-import fs7 from "node:fs";
-import path7 from "node:path";
+import fs8 from "node:fs";
+import path8 from "node:path";
 function isAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -3547,14 +4333,14 @@ function readPidFiles(dir = SESSIONS_DIR) {
   const out = /* @__PURE__ */ new Map();
   let names = [];
   try {
-    names = fs7.readdirSync(dir);
+    names = fs8.readdirSync(dir);
   } catch {
     return out;
   }
   for (const n of names) {
     if (!/^\d+\.json$/.test(n)) continue;
     try {
-      const j = JSON.parse(fs7.readFileSync(path7.join(dir, n), "utf8"));
+      const j = JSON.parse(fs8.readFileSync(path8.join(dir, n), "utf8"));
       const pid = Number(j.pid ?? n.split(".")[0]);
       if (!j.sessionId) continue;
       const info = {
@@ -3579,9 +4365,9 @@ function readHeadOrigin(file) {
   const out = { entrypoint: null, promptOrigin: null };
   let fd = null;
   try {
-    fd = fs7.openSync(file, "r");
+    fd = fs8.openSync(file, "r");
     const buf = Buffer.alloc(HEAD_BYTES);
-    const n = fs7.readSync(fd, buf, 0, HEAD_BYTES, 0);
+    const n = fs8.readSync(fd, buf, 0, HEAD_BYTES, 0);
     const lines = buf.subarray(0, n).toString("utf8").split("\n");
     if (n === HEAD_BYTES) lines.pop();
     for (const line of lines) {
@@ -3602,7 +4388,7 @@ function readHeadOrigin(file) {
   } catch {
   } finally {
     if (fd !== null) try {
-      fs7.closeSync(fd);
+      fs8.closeSync(fd);
     } catch {
     }
   }
@@ -3639,14 +4425,14 @@ function limitsFromStatusline(j, updatedAt) {
 }
 function readLimits() {
   try {
-    const file = fs7.existsSync(STATUSLINE_FILE) || !fs7.existsSync(LEGACY_STATUSLINE_FILE) ? STATUSLINE_FILE : LEGACY_STATUSLINE_FILE;
-    const st = fs7.statSync(file);
-    return { capture: true, limits: limitsFromStatusline(JSON.parse(fs7.readFileSync(file, "utf8")), Math.round(st.mtimeMs)) };
+    const file = fs8.existsSync(STATUSLINE_FILE) || !fs8.existsSync(LEGACY_STATUSLINE_FILE) ? STATUSLINE_FILE : LEGACY_STATUSLINE_FILE;
+    const st = fs8.statSync(file);
+    return { capture: true, limits: limitsFromStatusline(JSON.parse(fs8.readFileSync(file, "utf8")), Math.round(st.mtimeMs)) };
   } catch {
     return { limits: null, capture: false };
   }
 }
-var DAY_MS, HEAD_BYTES, Live;
+var DAY_MS2, HEAD_BYTES, Live;
 var init_live = __esm({
   "server/live.ts"() {
     "use strict";
@@ -3657,7 +4443,7 @@ var init_live = __esm({
     init_store();
     init_tree();
     init_util();
-    DAY_MS = 24 * 36e5;
+    DAY_MS2 = 24 * 36e5;
     HEAD_BYTES = 64 * 1024;
     Live = class extends EventEmitter2 {
       constructor(store2, hooks2) {
@@ -3710,18 +4496,18 @@ var init_live = __esm({
       }
       start() {
         try {
-          const w = fs7.watch(PROJECTS_DIR, { recursive: true }, (_ev, name) => {
+          const w = fs8.watch(PROJECTS_DIR, { recursive: true }, (_ev, name) => {
             if (!name) return;
             const f = String(name);
-            if (f.endsWith(".jsonl")) this.schedule(path7.join(PROJECTS_DIR, f));
-            else if (f.endsWith(".meta.json")) this.schedule(path7.join(PROJECTS_DIR, f.replace(/\.meta\.json$/, ".jsonl")));
+            if (f.endsWith(".jsonl")) this.schedule(path8.join(PROJECTS_DIR, f));
+            else if (f.endsWith(".meta.json")) this.schedule(path8.join(PROJECTS_DIR, f.replace(/\.meta\.json$/, ".jsonl")));
           });
           this.watchers.push(w);
         } catch (e) {
           console.warn("[clorbit] fs.watch on projects is unavailable:", e.message);
         }
         try {
-          const w = fs7.watch(SESSIONS_DIR, () => this.schedule("__sessions__"));
+          const w = fs8.watch(SESSIONS_DIR, () => this.schedule("__sessions__"));
           this.watchers.push(w);
         } catch {
         }
@@ -3755,7 +4541,7 @@ var init_live = __esm({
           const live2 = this.pids.get(s.sessionId)?.alive || now - s.lastTs < 10 * 6e4;
           if (!live2) continue;
           try {
-            const st = fs7.statSync(s.path);
+            const st = fs8.statSync(s.path);
             if (st.size !== s.size || st.mtimeMs !== s.mtimeMs) void this.store.refresh(s.path);
           } catch {
           }
@@ -3764,12 +4550,12 @@ var init_live = __esm({
           for (const p of this.pids.values()) {
             if (!p.alive) continue;
             const main = this.store.mainOf(p.sessionId);
-            const dir = main ? path7.join(path7.dirname(main.path), p.sessionId, "subagents") : null;
+            const dir = main ? path8.join(path8.dirname(main.path), p.sessionId, "subagents") : null;
             if (!dir) continue;
             try {
-              for (const f of fs7.readdirSync(dir)) {
+              for (const f of fs8.readdirSync(dir)) {
                 if (f.startsWith("agent-") && f.endsWith(".jsonl")) {
-                  const full = path7.join(dir, f);
+                  const full = path8.join(dir, f);
                   if (!this.store.files.has(full)) void this.store.refresh(full);
                 }
               }
@@ -3869,7 +4655,7 @@ var init_live = __esm({
         const now = Date.now();
         if (this.cache && now - this.cache.at < 500) return this.cache;
         const reasons = /* @__PURE__ */ new Map();
-        const cutoff = now - DAY_MS;
+        const cutoff = now - DAY_MS2;
         const today = localDate(now);
         const sessionIds = /* @__PURE__ */ new Set();
         for (const p of this.pids.values()) if (p.alive) sessionIds.add(p.sessionId);
@@ -4226,135 +5012,10 @@ var init_notify = __esm({
   }
 });
 
-// shared/api.ts
-var NOTIFY_EVENTS, SOUND_THEMES, rule, DEFAULT_SETTINGS;
-var init_api = __esm({
-  "shared/api.ts"() {
-    "use strict";
-    NOTIFY_EVENTS = ["session_waiting", "session_done", "subagent_finished", "subagent_spawned", "compaction", "context_high", "limit_high", "limit_forecast"];
-    SOUND_THEMES = ["orbit", "minimal", "retro"];
-    rule = (sound, browser, toast, browserHiddenOnly = false) => ({ sound, browser, browserHiddenOnly, toast, system: false });
-    DEFAULT_SETTINGS = {
-      notifications: {
-        session_waiting: rule(true, true, true),
-        session_done: rule(true, true, true, true),
-        subagent_finished: rule(true, false, false),
-        subagent_spawned: rule(false, false, false),
-        compaction: rule(false, false, false),
-        context_high: rule(false, false, false),
-        limit_high: rule(false, false, false),
-        limit_forecast: rule(true, false, true)
-      },
-      sound: { enabled: true, volume: 0.6, theme: "orbit" },
-      dnd: { enabled: false, quietHours: { enabled: false, from: "22:00", to: "08:00" }, mutedUntil: null },
-      interface: { lang: "en", autoTour: false, reduceMotion: false, showAutomated: false },
-      layout: { gravity: true, pins: {} }
-    };
-  }
-});
-
-// shared/settings.ts
-function normalizePins(v) {
-  if (!isObj(v)) return null;
-  const ok = [];
-  for (const [k, p] of Object.entries(v)) {
-    if (!PIN_KEY.test(k) || !isObj(p)) continue;
-    const x = unit(p.x), y = unit(p.y);
-    if (x !== null && y !== null) ok.push([k, { x, y }]);
-  }
-  return Object.fromEntries(ok.slice(-MAX_PINS));
-}
-function cloneSettings(s) {
-  return JSON.parse(JSON.stringify(s));
-}
-function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
-  const out = cloneSettings(base);
-  if (!isObj(patch)) return out;
-  const n = patch.notifications;
-  if (isObj(n)) {
-    for (const ev of NOTIFY_EVENTS) {
-      const r = n[ev];
-      if (!isObj(r)) continue;
-      const cur = out.notifications[ev];
-      out.notifications[ev] = {
-        sound: bool(r.sound, cur.sound),
-        browser: bool(r.browser, cur.browser),
-        browserHiddenOnly: bool(r.browserHiddenOnly, cur.browserHiddenOnly),
-        toast: bool(r.toast, cur.toast),
-        system: bool(r.system, cur.system)
-      };
-    }
-  }
-  const s = patch.sound;
-  if (isObj(s)) {
-    out.sound.enabled = bool(s.enabled, out.sound.enabled);
-    if (typeof s.volume === "number" && Number.isFinite(s.volume)) out.sound.volume = Math.round(Math.min(1, Math.max(0, s.volume)) * 100) / 100;
-    if (SOUND_THEMES.includes(s.theme)) out.sound.theme = s.theme;
-  }
-  const d = patch.dnd;
-  if (isObj(d)) {
-    out.dnd.enabled = bool(d.enabled, out.dnd.enabled);
-    const q = d.quietHours;
-    if (isObj(q)) {
-      out.dnd.quietHours = { enabled: bool(q.enabled, out.dnd.quietHours.enabled), from: time(q.from, out.dnd.quietHours.from), to: time(q.to, out.dnd.quietHours.to) };
-    }
-    if (d.mutedUntil === null) out.dnd.mutedUntil = null;
-    else if (typeof d.mutedUntil === "number" && Number.isFinite(d.mutedUntil)) {
-      out.dnd.mutedUntil = d.mutedUntil <= now ? null : Math.round(Math.min(d.mutedUntil, now + MAX_MUTE_MS));
-    }
-  }
-  const i = patch.interface;
-  if (isObj(i)) {
-    if (i.lang === "en" || i.lang === "uk") out.interface.lang = i.lang;
-    out.interface.autoTour = bool(i.autoTour, out.interface.autoTour);
-    out.interface.reduceMotion = bool(i.reduceMotion, out.interface.reduceMotion);
-    out.interface.showAutomated = bool(i.showAutomated, out.interface.showAutomated);
-  }
-  const l = patch.layout;
-  if (isObj(l)) {
-    out.layout.gravity = bool(l.gravity, out.layout.gravity);
-    const pins = normalizePins(l.pins);
-    if (pins) out.layout.pins = pins;
-  }
-  return out;
-}
-function parseHHMM(s) {
-  const m = HHMM.exec(s);
-  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
-}
-function inQuietHours(from, to, date) {
-  const a = parseHHMM(from);
-  const b = parseHHMM(to);
-  if (a === null || b === null || a === b) return false;
-  const m = date.getHours() * 60 + date.getMinutes();
-  return a < b ? m >= a && m < b : m >= a || m < b;
-}
-function isSilenced(s, now = Date.now()) {
-  if (s.dnd.enabled) return true;
-  if (s.dnd.mutedUntil && s.dnd.mutedUntil > now) return true;
-  const q = s.dnd.quietHours;
-  return q.enabled && inQuietHours(q.from, q.to, new Date(now));
-}
-var isObj, bool, HHMM, time, MAX_MUTE_MS, MAX_PINS, PIN_KEY, unit;
-var init_settings = __esm({
-  "shared/settings.ts"() {
-    "use strict";
-    init_api();
-    isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
-    bool = (v, d) => typeof v === "boolean" ? v : d;
-    HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
-    time = (v, d) => typeof v === "string" && HHMM.test(v.trim()) ? v.trim() : d;
-    MAX_MUTE_MS = 7 * 24 * 36e5;
-    MAX_PINS = 64;
-    PIN_KEY = /^(star|cluster):[^\u0000-\u001f]{1,240}$/;
-    unit = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(Math.min(1, Math.max(0, v)) * 1e4) / 1e4 : null;
-  }
-});
-
 // server/notifier.ts
 import { execFile } from "node:child_process";
-import fs8 from "node:fs";
-import path8 from "node:path";
+import fs9 from "node:fs";
+import path9 from "node:path";
 function escapeAppleScript(s) {
   return s.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
@@ -4368,8 +5029,8 @@ function notifierCommand(tool, title, body) {
 }
 function executable(file) {
   try {
-    fs8.accessSync(file, fs8.constants.X_OK);
-    return fs8.statSync(file).isFile();
+    fs9.accessSync(file, fs9.constants.X_OK);
+    return fs9.statSync(file).isFile();
   } catch {
     return false;
   }
@@ -4377,7 +5038,7 @@ function executable(file) {
 function detectTool(platform = process.platform, pathEnv = process.env.PATH ?? "") {
   if (platform === "darwin") return executable("/usr/bin/osascript") ? "osascript" : null;
   if (platform === "linux") {
-    for (const dir of pathEnv.split(path8.delimiter)) if (dir && executable(path8.join(dir, "notify-send"))) return "notify-send";
+    for (const dir of pathEnv.split(path9.delimiter)) if (dir && executable(path9.join(dir, "notify-send"))) return "notify-send";
   }
   return null;
 }
@@ -4773,11 +5434,11 @@ function sortReplayEvents(events) {
 }
 function normalizeReplayEvents(events) {
   const sorted = sortReplayEvents(events);
-  const first = /* @__PURE__ */ new Map();
+  const first2 = /* @__PURE__ */ new Map();
   const last = /* @__PURE__ */ new Map();
   for (const e of sorted) {
     if (e.kind !== "tool" && e.kind !== "text" && e.kind !== "tokens") continue;
-    if (!first.has(e.agentId)) first.set(e.agentId, e.ts);
+    if (!first2.has(e.agentId)) first2.set(e.agentId, e.ts);
     last.set(e.agentId, e.ts);
   }
   const spawned = /* @__PURE__ */ new Set();
@@ -4787,7 +5448,7 @@ function normalizeReplayEvents(events) {
     if (e.kind === "spawn") {
       if (e.agentId === "main" || spawned.has(e.agentId)) continue;
       spawned.add(e.agentId);
-      out.push({ ...e, ts: Math.min(e.ts, first.get(e.agentId) ?? e.ts) });
+      out.push({ ...e, ts: Math.min(e.ts, first2.get(e.agentId) ?? e.ts) });
     } else if (e.kind === "finish") {
       if (e.agentId === "main" || finished.has(e.agentId)) continue;
       finished.add(e.agentId);
@@ -5223,9 +5884,9 @@ var init_replay2 = __esm({
 });
 
 // server/changes.ts
-import fs9 from "node:fs/promises";
-import os3 from "node:os";
-import path9 from "node:path";
+import fs10 from "node:fs/promises";
+import os4 from "node:os";
+import path10 from "node:path";
 function stringAt2(buf, at) {
   const end = buf.indexOf(34, at);
   return end > at ? buf.toString("latin1", at, end) : null;
@@ -5272,15 +5933,15 @@ function diffOps(a, b) {
 }
 function lineDiff(oldText, newText) {
   const ops = diffOps(splitLines(oldText), splitLines(newText));
-  let added = 0, removed = 0, first = -1, last = -1;
+  let added = 0, removed = 0, first2 = -1, last = -1;
   ops.forEach((o, i) => {
     if (o[0] === " ") return;
     if (o[0] === "+") added++;
     else removed++;
-    if (first < 0) first = i;
+    if (first2 < 0) first2 = i;
     last = i;
   });
-  const view = first < 0 ? [] : ops.slice(Math.max(0, first - 2), last + 3);
+  const view = first2 < 0 ? [] : ops.slice(Math.max(0, first2 - 2), last + 3);
   const max = CHANGE_LIMITS.linesPerHunk;
   return { added, removed, lines: view.slice(0, max).map(clip), more: Math.max(0, view.length - max) };
 }
@@ -5312,12 +5973,12 @@ function changeOf(name, input, ts) {
   }
   return { path: p, added, removed, hunks, write: false };
 }
-function relPath(abs, cwd, home = os3.homedir()) {
-  if (!path9.isAbsolute(abs)) return abs;
-  const norm = path9.normalize(abs);
+function relPath(abs, cwd, home = os4.homedir()) {
+  if (!path10.isAbsolute(abs)) return abs;
+  const norm = path10.normalize(abs);
   if (cwd) {
-    const c = path9.normalize(cwd).replace(/\/+$/, "");
-    if (norm === c) return path9.basename(norm);
+    const c = path10.normalize(cwd).replace(/\/+$/, "");
+    if (norm === c) return path10.basename(norm);
     if (norm.startsWith(c + "/")) return norm.slice(c.length + 1);
   }
   if (home && norm.startsWith(home.replace(/\/+$/, "") + "/")) {
@@ -5369,7 +6030,7 @@ function buildChanges(files, steps, stepsTotal, meta) {
     if (f.edits || f.failed) {
       const c = {
         path: rel,
-        name: path9.basename(f.abs),
+        name: path10.basename(f.abs),
         added: f.added,
         removed: f.removed,
         edits: f.edits,
@@ -5391,7 +6052,7 @@ function buildChanges(files, steps, stepsTotal, meta) {
       }
     } else if (f.reads) {
       readsTotal++;
-      reads.push({ path: rel, name: path9.basename(f.abs), count: f.reads, lastTs: f.lastTs });
+      reads.push({ path: rel, name: path10.basename(f.abs), count: f.reads, lastTs: f.lastTs });
     }
   }
   changed.sort((a, b) => Number(b.edits > 0) - Number(a.edits > 0) || b.lastTs - a.lastTs || a.path.localeCompare(b.path));
@@ -5413,7 +6074,7 @@ function buildChanges(files, steps, stepsTotal, meta) {
 async function sinkFor(f) {
   let st;
   try {
-    st = await fs9.stat(f.path);
+    st = await fs10.stat(f.path);
   } catch {
     return null;
   }
@@ -5635,9 +6296,9 @@ var init_changes = __esm({
 
 // server/index.ts
 var index_exports = {};
-import fs10 from "node:fs";
+import fs11 from "node:fs";
 import http from "node:http";
-import path10 from "node:path";
+import path11 from "node:path";
 function about() {
   const st = db ? (hookLog.flush(), db.stats()) : null;
   const lim = readLimits();
@@ -5679,16 +6340,16 @@ function json(res, code, body) {
   res.end(s);
 }
 function serveStatic(res, urlPath) {
-  const safe = path10.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
-  let file = path10.join(DIST_DIR, safe);
-  if (!file.startsWith(DIST_DIR) || !fs10.existsSync(file) || fs10.statSync(file).isDirectory()) file = path10.join(DIST_DIR, "index.html");
-  if (!fs10.existsSync(file)) {
+  const safe = path11.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
+  let file = path11.join(DIST_DIR, safe);
+  if (!file.startsWith(DIST_DIR) || !fs11.existsSync(file) || fs11.statSync(file).isDirectory()) file = path11.join(DIST_DIR, "index.html");
+  if (!fs11.existsSync(file)) {
     res.writeHead(404);
     res.end("dist is not built: run pnpm build");
     return;
   }
-  res.writeHead(200, { "content-type": MIME[path10.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
-  fs10.createReadStream(file).pipe(res);
+  res.writeHead(200, { "content-type": MIME[path11.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
+  fs11.createReadStream(file).pipe(res);
 }
 function readBody(req, limit = 2e6) {
   return new Promise((resolve, reject) => {
@@ -5710,6 +6371,8 @@ var init_index = __esm({
   "server/index.ts"() {
     "use strict";
     init_analytics();
+    init_api();
+    init_settings();
     init_config();
     init_db();
     init_hook_log();
@@ -5851,7 +6514,13 @@ var init_index = __esm({
           const d = await sessionDetail(store, id, alive, lang);
           return d ? json(res, 200, d) : json(res, 404, { error: err.notFound });
         }
-        if (p === "/api/insights") return json(res, 200, insights(store, parseRange(url.searchParams), hookLog, lang));
+        if (p === "/api/insights") {
+          const page = url.searchParams.get("page");
+          if (page !== null && !INSIGHT_PAGES.includes(page)) return json(res, 200, []);
+          const nd = Number(url.searchParams.get("unusedDays"));
+          const unusedDays = Number.isFinite(nd) && nd > 0 ? Math.round(Math.min(RECOMMEND_DAYS.max, Math.max(RECOMMEND_DAYS.min, nd))) : settings.get().recommendations.unusedDays;
+          return json(res, 200, insights(store, parseRange(url.searchParams), hookLog, lang, { page: page ?? void 0, unusedDays }));
+        }
         if (p === "/api/limits/history") {
           const r = parseTsRange(url.searchParams);
           return json(res, 200, limitsLog.history(r.from, r.to));
@@ -5872,7 +6541,7 @@ var init_index = __esm({
     PID_FILE = env("PID_FILE");
     ownsPidFile = () => {
       try {
-        return PID_FILE && JSON.parse(fs10.readFileSync(PID_FILE, "utf8")).pid === process.pid;
+        return PID_FILE && JSON.parse(fs11.readFileSync(PID_FILE, "utf8")).pid === process.pid;
       } catch {
         return false;
       }
@@ -5885,14 +6554,14 @@ var init_index = __esm({
     server.listen(PORT, HOST, () => {
       if (PID_FILE) {
         try {
-          fs10.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
+          fs11.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
         } catch (e) {
           console.error(`[clorbit] could not write ${PID_FILE}:`, e.message);
         }
       }
       const lock = env("START_LOCK");
       if (lock) try {
-        fs10.rmSync(lock, { force: true });
+        fs11.rmSync(lock, { force: true });
       } catch {
       }
       console.log(`[clorbit] v${VERSION} http://${HOST}:${PORT} ready in ${Date.now() - t0} ms; ${store.files.size} files in the database, ${store.missing.size} archived (loaded in ${store.stats.loadMs} ms)`);
@@ -5915,7 +6584,7 @@ var init_index = __esm({
       }
       for (const c of clients.keys()) c.end();
       if (ownsPidFile()) try {
-        fs10.unlinkSync(PID_FILE);
+        fs11.unlinkSync(PID_FILE);
       } catch {
       }
       server.close();

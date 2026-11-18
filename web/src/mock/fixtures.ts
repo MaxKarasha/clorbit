@@ -15,6 +15,7 @@ import type {
 import { locale, t, tp } from '../i18n';
 import type enMock from '../i18n/en/mock';
 import { MOCK_PLAN, mockLimits } from './limits';
+import { mockSkillRecommendations } from './recommendations';
 import { rng, type Rng } from './rng';
 
 // Demo data for `?mock=1`. Every project, path and task below is invented.
@@ -692,31 +693,20 @@ export function mockSessionDetail(id: string, range: Range): SessionDetail {
 
 // ---------- Insights ----------
 
-export function mockInsights(range: Range): Insight[] {
+/** Demo insights; `unusedDays` is Settings.recommendations.unusedDays (the skills rules use it). */
+export function mockInsights(range: Range, unusedDays = 30): Insight[] {
   const at = mockAttribution(range);
   const S = mockOverview(range).totals.sessions;
   const num = (n: number) => Math.round(n).toLocaleString(locale());
-  const sp = at.startupContext.find((x) => x.key === 'hook:plugin:superpowers');
   const mcp = at.startupContext.find((x) => x.key === 'mcp');
   const PLAYWRIGHT_PER_SESSION = 2100; // playwright's share of the MCP instructions
   const mcpShare = mcp ? PLAYWRIGHT_PER_SESSION / Math.max(1, Number(mcp.extra?.perSession ?? 5800)) : 0;
   const bash = at.tools.find((x) => x.key === 'Bash');
   return [
-    {
-      id: 'startup-superpowers',
-      severity: 'high',
-      title: t('mock.ins.superpowers.title'),
-      detail: t('mock.ins.superpowers.detail'),
-      evidence: [
-        tp('mock.ins.superpowers.loaded', S, { a: sp?.sessions ?? S }),
-        tp('mock.ins.superpowers.used', at.plugins.find((p) => p.key === 'superpowers')?.sessions ?? 0),
-        t('mock.ins.superpowers.reread'),
-      ],
-      fix: `// ~/.claude/settings.json — ${t('mock.ins.superpowers.fixComment')}\n{\n  "enabledPlugins": {\n    "superpowers@claude-plugins-official": false\n  }\n}`,
-      estSavingTokens: sp ? Math.round(sp.total * 0.6) : undefined,
-    },
+    ...mockSkillRecommendations(range, unusedDays),
     {
       id: 'mcp-playwright-rare',
+      pages: ['mcp', 'startup'],
       severity: 'high',
       title: t('mock.ins.mcpRare.title'),
       detail: t('mock.ins.mcpRare.detail'),
@@ -729,6 +719,7 @@ export function mockInsights(range: Range): Insight[] {
     },
     {
       id: 'mcp-unused',
+      pages: ['mcp'],
       severity: 'warn',
       title: t('mock.ins.mcpUnused.title'),
       detail: t('mock.ins.mcpUnused.detail'),
@@ -738,6 +729,7 @@ export function mockInsights(range: Range): Insight[] {
     },
     {
       id: 'bash-results',
+      pages: ['tools'],
       severity: 'warn',
       title: t('mock.ins.bash.title'),
       detail: t('mock.ins.bash.detail'),
@@ -751,6 +743,7 @@ export function mockInsights(range: Range): Insight[] {
     },
     {
       id: 'compactions',
+      pages: ['sessions'],
       severity: 'warn',
       title: t('mock.ins.compact.title', { project: 'aurora-web' }),
       detail: t('mock.ins.compact.detail'),
@@ -759,6 +752,7 @@ export function mockInsights(range: Range): Insight[] {
     },
     {
       id: 'reread',
+      pages: ['tools'],
       severity: 'info',
       title: t('mock.ins.reread.title'),
       detail: t('mock.ins.reread.detail'),
@@ -770,6 +764,7 @@ export function mockInsights(range: Range): Insight[] {
     },
     {
       id: 'cache',
+      pages: ['overview'],
       severity: 'info',
       title: t('mock.ins.cache.title'),
       detail: t('mock.ins.cache.detail'),

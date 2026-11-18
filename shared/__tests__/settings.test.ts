@@ -1,7 +1,7 @@
 // Settings validation/clamping and quiet-hours math.
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../api';
-import { inQuietHours, isSilenced, normalizeSettings, parseHHMM } from '../settings';
+import { inQuietHours, isSilenced, MAX_DISMISSED, normalizeSettings, parseHHMM } from '../settings';
 
 const at = (h: number, m = 0) => new Date(2026, 10, 17, h, m);
 
@@ -114,5 +114,26 @@ describe('quiet hours', () => {
     const muted = normalizeSettings({ dnd: { mutedUntil: now + 60_000 } }, DEFAULT_SETTINGS, now);
     expect(isSilenced(muted, now)).toBe(true);
     expect(isSilenced(muted, now + 60_001)).toBe(false);
+  });
+  it('recommendations: threshold clamped, hidden ids validated, deduplicated and capped', () => {
+    expect(DEFAULT_SETTINGS.recommendations).toEqual({ unusedDays: 30, dismissed: [] });
+    expect(normalizeSettings({ recommendations: { unusedDays: 2 } }).recommendations.unusedDays).toBe(7);
+    expect(normalizeSettings({ recommendations: { unusedDays: 1000 } }).recommendations.unusedDays).toBe(365);
+    expect(normalizeSettings({ recommendations: { unusedDays: 44.6 } }).recommendations.unusedDays).toBe(45);
+    expect(normalizeSettings({ recommendations: { unusedDays: 'x' } }).recommendations.unusedDays).toBe(30);
+    const r = normalizeSettings({ recommendations: { dismissed: ['a:1', 'bad id', 'b:2', 'a:1', 7, 'x'.repeat(300)] } }).recommendations;
+    expect(r.dismissed).toEqual(['b:2', 'a:1']);
+    const many = Array.from({ length: MAX_DISMISSED + 20 }, (_, i) => `r:${i}`);
+    const kept = normalizeSettings({ recommendations: { dismissed: many } }).recommendations.dismissed;
+    expect(kept.length).toBe(MAX_DISMISSED);
+    expect(kept[kept.length - 1]).toBe(`r:${MAX_DISMISSED + 19}`);
+    // A PUT without the list keeps it; an empty list clears it.
+    const base = normalizeSettings({ recommendations: { dismissed: ['a:1'] } });
+    expect(normalizeSettings({ recommendations: { unusedDays: 60 } }, base).recommendations).toEqual({ unusedDays: 60, dismissed: ['a:1'] });
+    expect(normalizeSettings({ recommendations: { dismissed: [] } }, base).recommendations.dismissed).toEqual([]);
+    // A base saved by an older build has no recommendations block.
+    const legacy = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    delete legacy.recommendations;
+    expect(normalizeSettings({}, legacy).recommendations).toEqual(DEFAULT_SETTINGS.recommendations);
   });
 });

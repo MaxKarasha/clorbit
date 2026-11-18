@@ -54,7 +54,7 @@ All of them are read-only:
 - Usage is **deduplicated by `requestId`** (fallback `message.id`): Claude Code writes one record per content block of the same API call, each with the same usage. A small ring of recent request ids is enough because duplicates are adjacent.
 - Tokens are aggregated into **per-day buckets** (local dates) with per-hour sub-buckets, per-model, per-skill, per-plugin, per-MCP-server/tool and per-tool aggregates, plus per-minute buckets for the last hour (burn rate).
 - Tool results are sized by characters (÷ 3.6 ≈ tokens); results over 20K tokens are kept as "big results" for insights. Repeated `Read` of the same path is counted per file.
-- **Startup context** is everything attached before the first assistant reply. It is stored under language-neutral keys (`system`, `toolDefs`, `skills`, `mcp`, `deferred`, `agents`, `claudeMd`, `env`, `other`, `hook:plugin:<name>`, `hook:event:<name>`) and rendered per language by the server.
+- **Startup context** is everything attached before the first assistant reply. It is stored under language-neutral keys (`system`, `toolDefs`, `skills`, `mcp`, `deferred`, `agents`, `claudeMd`, `env`, `other`, `hook:plugin:<name>`, `hook:event:<name>`) and rendered per language by the server. The skill listing is also split per plugin (`skillsByPlugin`) and per skill (`skillsByName`, `plugin:skill` or an own skill's name; summary v6+), which the recommendations use.
 - Hook runs reported in transcripts (`hook_success`, `hook_error`, …) are attributed to plugins by path (`plugins/cache/<marketplace>/<plugin>/`) or by plugin name mentions.
 - A `Carry` object keeps the minimal parser state (pending tool calls, recent request ids, last tool/text, context size), so parsing can **resume from the last byte offset** when a transcript grows. Tests assert that a file read in several chunks gives the same summary as a full parse.
 
@@ -64,7 +64,7 @@ The cold scan runs on a pool of worker threads (`server/scan-worker.ts`), freshe
 
 `server/db.ts` wraps one SQLite file (`node:sqlite`, WAL mode) with versioned, append-only migrations:
 
-- **`file_summaries`** — one row per transcript: path, session/agent ids, size, mtime, byte offset, the summary as JSON, and `missing_since`. On start, all summaries of the current `SUMMARY_VERSION` are loaded into memory (a warm start takes tens of milliseconds); only files whose size or mtime changed are re-read, from their stored offset.
+- **`file_summaries`** — one row per transcript: path, session/agent ids, size, mtime, byte offset, the summary as JSON, and `missing_since`. On start, all summaries from `MIN_SUMMARY_VERSION` to the current `SUMMARY_VERSION` are loaded into memory; older-version rows whose transcript is still on disk are re-parsed by the next scan, archived ones keep their old summary (so fields added since `MIN_SUMMARY_VERSION` are optional) (a warm start takes tens of milliseconds); only files whose size or mtime changed are re-read, from their stored offset.
 - **`hook_events`** — trimmed hook payloads (top-level scalars, a shallow `tool_input` with short strings, only the size of `tool_response`; at most 4 KB), pruned after **90 days**.
 - **`limits`** — a row whenever the captured subscription percentages or reset times change (polled every 30 s).
 - **`settings`** (schema v2) — `key`, `value_json`, `updated_at`; one row (`app`) holds the whole `Settings` document. It is always read through `normalizeSettings` (`shared/settings.ts`), so unknown keys are dropped and values clamped, and a corrupt row falls back to the defaults.
@@ -197,13 +197,24 @@ All types are in [`shared/api.ts`](../shared/api.ts). Every GET accepts `lang=en
 | `GET /api/session/:id` | `SessionDetail`: summary, full tree, timeline, startup context, tools, token series. |
 | `GET /api/session/:id/replay` | `SessionReplay`: session meta and time-ordered replay events (≤ 20,000; archived sessions: structure only). |
 | `GET /api/session/:id/agent/:agentId/changes` | `AgentChanges`: files an agent edited or wrote (+/− lines, edits, failed calls, capped diff previews), files it only read, and its last ≤ 200 steps. `agentId` is a subagent id, `main` or `all` (the whole session, files only). |
-| `GET /api/insights?from&to` | `Insight[]` with severity, evidence, fix and estimated savings. |
+| `GET /api/insights?from&to&page&unusedDays` | `Insight[]`: recommendations with severity, evidence, a fix or prompts, targets and estimated savings. `page` (an `InsightPage`) keeps the cards of one analytics tab (unknown → `[]`); `unusedDays` overrides `Settings.recommendations.unusedDays`. |
 | `GET /api/limits/history?from&to` | `LimitsPoint[]` (with the windows' reset times). |
 | `GET /api/limits/forecast` | `LimitsForecast`: per window used %, reset, burn rate, projected run-out time and % at reset, confidence, basis; `source: 'none'` without the capture. |
 | `GET /api/debug/scan`, `GET /api/debug/db` | Diagnostics. |
 | `POST /api/hook` | Accepts a Claude Code hook payload. |
 
 Dates are local `YYYY-MM-DD`, timestamps are epoch milliseconds.
+
+## Recommendations
+
+Every analytics tab can show a strip of recommendations (`web/src/components/Recommendations.tsx`, `<Recommendations page="skills" />`); the Insights page shows all of them with the same card.
+
+- **Contract** (`shared/api.ts`): `Insight` carries `pages` (the tabs that show it), `scope` (`history` or `range`), `saving` (`perSession`, `perSubagent`, `period` over `days`, `basis`, `pctStartup`), `targets` (exact keys, labels, last use, tokens per session) and `prompts` (`{ all, ask }`). Ids are stable per rule and target set (`stableId` in `server/recommend.ts`), so a hidden card stays hidden until its items change. Hidden ids and the "unused after N days" threshold live in `Settings.recommendations`.
+- **Framework** (`server/recommend.ts`): `RecommendEnv` (now, threshold, enabled plugins, display paths; injectable for tests), `usageIndex` (last use of every plugin, skill, MCP server and tool over all stored summaries, archived ones included), `costWindow`/`rangeWindow` + `costOf` (per-session/per-subagent cost of a piece of startup context and its 30-day projection), `severityOf`.
+- **Rules** live in `server/recommend-<area>.ts` and are called from `server/insights.ts`; wording is in `server/insights-text.ts` (`rec`). `recommend-skills.ts`: enabled plugins unused for N+ days, plugins whose SessionStart hook loads context into every session but which are used in few projects, plugins most of whose skills are unused, own skills unused for N+ days, duplicate skill names. A plugin covered by one card is left out of the others.
+- **Prompts** (`shared/prompts.ts`): `buildPrompts({ lang, summary, items, verify })` with item factories (`disablePluginItem`, `enablePluginInProjectItem`, `moveSkillItem`, `reviewItem`). Both variants list the exact commands and how to undo them, ask Claude to show the plan first, back up every settings file it edits, never delete, skip what fails and report, and remind that changes apply to new sessions; "ask" goes through the items one at a time (AskUserQuestion when available). The demo data uses the same builder.
+
+To add a tab's recommendations: write rules that return `Insight`s with `pages` including that tab (use `costOf` for savings and the prompt item factories, or add a factory), call them from `insights.ts`, and mount `<Recommendations page="…" />` on the page.
 
 ## Internationalization
 

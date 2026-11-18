@@ -1,8 +1,8 @@
-// Profile button and the settings slide-over: notifications matrix, sounds, do not disturb,
+// Profile button and the settings slide-over: notifications matrix, sounds, do not disturb, recommendations,
 // interface and a read-only connection summary. One instance at the app root.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NOTIFY_EVENTS, SOUND_THEMES, type NotifyChannel, type NotifyEventType, type NotifyRule, type Plan, type SoundTheme } from '@shared/api';
-import { isSilenced } from '@shared/settings';
+import { isSilenced, RECOMMEND_DAYS } from '@shared/settings';
 import { LANGS, locale, setLang, t, tp, useLang, type MsgKey } from '../i18n';
 import { fmtAgo, fmtInt } from '../lib/format';
 import {
@@ -449,6 +449,47 @@ function Interface() {
   );
 }
 
+/** "Consider unused after N days" and the hidden recommendations. */
+function Recommendations() {
+  const r = useSettings().recommendations;
+  const [draft, setDraft] = useState(String(r.unusedDays));
+  useEffect(() => setDraft(String(r.unusedDays)), [r.unusedDays]);
+  const commit = () => {
+    const n = Number(draft);
+    if (Number.isFinite(n) && n > 0) updateSettings({ recommendations: { unusedDays: n } });
+    else setDraft(String(r.unusedDays));
+  };
+  return (
+    <Section id="recommendations" title={t('set.sec.recommendations')}>
+      <Row title={t('rec.set.days')} desc={t('rec.set.days.d')}>
+        <label className="set-num">
+          <input
+            type="number"
+            min={RECOMMEND_DAYS.min}
+            max={RECOMMEND_DAYS.max}
+            step={1}
+            value={draft}
+            aria-label={t('rec.set.days')}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => e.key === 'Enter' && commit()}
+          />
+          <span>{t('rec.set.daysUnit')}</span>
+        </label>
+      </Row>
+      <Row title={t('rec.set.hidden')} desc={t('rec.set.hidden.d')}>
+        {r.dismissed.length ? (
+          <button type="button" className="set-btn" onClick={() => updateSettings({ recommendations: { dismissed: [] } })}>
+            {t('rec.set.showAll')} · <span className="mono">{fmtInt(r.dismissed.length)}</span>
+          </button>
+        ) : (
+          <span className="set-row__desc">{t('rec.set.hiddenNone')}</span>
+        )}
+      </Row>
+    </Section>
+  );
+}
+
 /** "«Max · 20×» since Feb 2026" with where it comes from; or why there is none. */
 function PlanLine({ plan, demo = false }: { plan: Plan | null; demo?: boolean }) {
   if (!plan || !planLabel(plan)) return <span className="set-plan__none">{t('con.plan.none')}</span>;
@@ -609,6 +650,7 @@ function Panel() {
           <Sounds />
           <Dnd />
           <Interface />
+          <Recommendations />
           <Connection demo={demo} offline={offline} focus={section === 'connection'} />
         </div>
       </div>

@@ -390,14 +390,72 @@ export interface AgentChanges {
   archived?: boolean;
 }
 
+/**
+ * A recommendation ("insight"): what is wrong, the evidence, and what to do about it.
+ * The Insights page shows all of them; every analytics tab shows the ones whose `pages` include it.
+ * Fields after `estSavingTokens` are additive (0.4+): older servers do not send them.
+ */
 export interface Insight {
+  /** Stable per rule and target set (e.g. 'unused-plugins:1a2b3c4d'): a hidden card stays hidden until its targets change. */
   id: string;
   severity: 'info' | 'warn' | 'high';
   title: string;
   detail: string;
   evidence: string[];
   fix?: string;            // a concrete action / config snippet to copy
+  /** Tokens for sorting and the Insights total: `saving.period` when present. */
   estSavingTokens?: number;
+  /** Analytics tabs that show this card in their Recommendations strip (the Insights page shows every card). */
+  pages?: InsightPage[];
+  /** 'history': the rule looks at the whole stored history (e.g. "unused for 30+ days"), not the selected range. */
+  scope?: 'range' | 'history';
+  /** Estimated savings (tokens, estimated from text length). */
+  saving?: InsightSaving;
+  /** The concrete items the card is about (plugins, skills, servers…), used by the item list and the prompts. */
+  targets?: InsightTarget[];
+  /** Ready-to-paste prompts for a Claude Code session, in the request's language. Clorbit itself never changes anything. */
+  prompts?: InsightPrompts;
+}
+
+/** The analytics tabs a recommendation can be shown on. */
+export type InsightPage = 'skills' | 'mcp' | 'startup' | 'tools' | 'subagents' | 'sessions' | 'overview' | 'limits' | 'session';
+export const INSIGHT_PAGES: InsightPage[] = ['skills', 'mcp', 'startup', 'tools', 'subagents', 'sessions', 'overview', 'limits', 'session'];
+
+/**
+ * Estimated savings of a recommendation. All values are tokens (estimates from text length).
+ * - perSession / perSubagent: startup context removed from every new main session / subagent;
+ * - period: total over `days` days. basis 'projection' = the observed rate (sessions and subagents per day,
+ *   over the last 30 days of history) × `days`; basis 'range' = what the selected range actually cost;
+ * - pctStartup: perSession as a share (0..1) of the average startup context of a session.
+ */
+export interface InsightSaving {
+  perSession?: number;
+  perSubagent?: number;
+  period?: number;
+  days?: number;
+  basis?: 'projection' | 'range';
+  pctStartup?: number;
+}
+
+/** One concrete item of a recommendation. */
+export interface InsightTarget {
+  /** Exact identifier used in commands: 'superpowers@claude-plugins-official', a skill name, a folder path… */
+  key: string;
+  /** Display name. */
+  label: string;
+  kind?: 'plugin' | 'skill' | 'ownSkill' | 'mcp' | 'other';
+  /** Last use (epoch ms) across the whole history; null = never used; absent = not applicable. */
+  lastUsed?: number | null;
+  /** Context tokens this item adds to every session (estimate). */
+  tokensPerSession?: number;
+  /** A short extra fact, e.g. "4 of 5 skills unused" or "also in plugin x". */
+  note?: string;
+}
+
+/** Two prompt variants: `all` — Claude performs every change and reports; `ask` — Claude asks about each item first. */
+export interface InsightPrompts {
+  all: string;
+  ask: string;
 }
 
 // ---------- Settings & notifications ----------
@@ -446,6 +504,9 @@ export interface Settings {
    *  positions are fractions (0..1) of the galaxy's width and height, so they do not depend on the screen.
    *  A PUT replaces the whole pins map (that is how a pin is removed); at most MAX_PINS (shared/settings.ts). */
   layout: { gravity: boolean; pins: Record<string, LayoutPin> };
+  /** Recommendations. unusedDays: "consider unused after N days" (RECOMMEND_DAYS in shared/settings.ts);
+   *  dismissed: ids of hidden recommendations (a PUT replaces the whole list; at most MAX_DISMISSED). Additive (0.4+). */
+  recommendations: { unusedDays: number; dismissed: string[] };
 }
 
 /** A pinned body's position: fractions of the galaxy's width and height. */
@@ -470,6 +531,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dnd: { enabled: false, quietHours: { enabled: false, from: '22:00', to: '08:00' }, mutedUntil: null },
   interface: { lang: 'en', autoTour: false, reduceMotion: false, showAutomated: false },
   layout: { gravity: true, pins: {} },
+  recommendations: { unusedDays: 30, dismissed: [] },
 };
 
 /** GET /api/about — read-only facts for the Connection section of the settings panel. */
@@ -496,7 +558,8 @@ export interface AboutInfo {
 //   /api/session/:id                            → SessionDetail
 //   /api/session/:id/replay                     → SessionReplay (time-ordered replay events; archived sessions: structure only)
 //   /api/session/:id/agent/:agentId/changes     → AgentChanges (files changed + recent steps; agentId 'main', a subagent id or 'all')
-//   /api/insights?from&to                       → Insight[]
+//   /api/insights?from&to[&page][&unusedDays]   → Insight[] (page: an InsightPage — only cards for that tab, unknown → [];
+//                                                 unusedDays: overrides Settings.recommendations.unusedDays, 7..365)
 //   /api/limits/history?from&to                 → LimitsPoint[] (from/to: 'YYYY-MM-DD' or epoch ms; default last 7 days)
 //   /api/limits/forecast                        → LimitsForecast (source 'none' without the status-line capture)
 //   /api/debug/scan, /api/debug/db              → diagnostics (scan stats; SQLite row counts, size, archived files)

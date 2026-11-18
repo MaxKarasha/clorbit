@@ -61,16 +61,18 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 | Page | What it answers |
 | --- | --- |
 | Overview | Tokens per day, by model and project; sessions, subagents, tool calls; activity heatmap; subscription-limit history with the forecast to the next reset. |
-| Skills & plugins | Which skills and plugins consume tokens (via Claude Code's attribution fields) and how often skills are loaded. |
+| Skills & plugins | Which skills and plugins consume tokens (via Claude Code's attribution fields) and how often skills are loaded. A **Recommendations** strip on top points at plugins and skills you have not used for a while, plugin hooks that load context into every session, and duplicate skill names. |
 | MCP | Calls and result sizes per MCP server and tool, including servers that are connected but never used. |
 | Tools | Call counts and result sizes for every tool; which ones flood the context. |
 | Subagents | Subagent types, their average cost, duration and nesting depth. |
 | Startup context | What lands in every session before the first prompt: system prompt, tool definitions, skill listing, MCP instructions, CLAUDE.md, plugin hooks. |
 | Sessions | Every session in the range, sortable, filterable by project. |
 | Session | The agent tree, a timeline of prompts, tool calls, spawns and compactions, a context-size chart, and "▶ Replay in galaxy". |
-| Insights | Rules that turn the numbers into advice: each insight has evidence and a concrete fix (often a config snippet to copy). |
+| Insights | All recommendations in one place: each has evidence, estimated savings and a concrete fix or a ready-made prompt. |
 
 Examples of insights: a plugin whose SessionStart hook adds thousands of tokens to every session, enabled plugins or MCP servers that were never used, tool results over 20K tokens, files read again and again in the same session, auto-compactions, days with a low cache hit rate, noisy or failing hooks, and (with hooks installed) how long agents waited for your permission or reply.
+
+**Recommendations.** Analytics tabs show the recommendations relevant to them as cards (so far on Skills & plugins; more tabs follow). A card says what is wrong and why, with the numbers, and how much it would save: context tokens per session and per subagent, an estimate over 30 days and the share of the startup context. Savings are estimates from measured text sizes and your observed number of sessions and subagents. "Unused for a long time" rules look at your whole stored history, archived sessions included; the threshold is in Settings → Recommendations (30 days by default). **Copy prompt** gives you a prompt to paste into a Claude Code session, in two variants: **Ask me** (Claude asks about each item, one at a time, and changes only what you confirm) and **Do it all** (Claude makes every change and shows the result). The prompts name the exact plugins, skills and commands (`claude plugin disable <name>@<marketplace> --scope user`; own skills are moved to `~/.claude/skills-disabled/`, never deleted) and ask Claude to back up every settings file it edits. Clorbit itself stays read-only. **Hide** dismisses a card for good (it is saved with your settings and comes back only if its items change); "N hidden · show" brings hidden ones back.
 
 The UI is available in **English** and **Ukrainian** (switch in the top-right corner or in Settings, or add `?lang=uk` to the URL).
 
@@ -228,6 +230,7 @@ Upgrading from a pre-release that stored its database in `<repo>/data/fleet.db`:
 - **Subagents** are counted from their own transcripts (`<session>/subagents/agent-*.jsonl`), so a session's total includes everything its agents did.
 - **Attribution** to skills, plugins and MCP servers uses the `attributionSkill`, `attributionPlugin` and `attributionMcpServer` fields that Claude Code writes on assistant records. Turns without them count as regular work.
 - **Startup context and tool result sizes are estimates**: characters ÷ 3.6. Transcripts do not record token counts for these parts.
+- **Recommendation savings are estimates** too: a plugin's or skill's share of the skill listing (plus its SessionStart hook block and MCP instructions) per session and per subagent, from the last 30 days; "over 30 days" is what that context cost in the sessions and subagents of those 30 days (a shorter history is scaled up). Cards about the selected period say so and use the period instead.
 - **Context fill** is `input + cache read + cache write` of the main agent's latest turn, against 200K or 1M depending on the model.
 - **Days and hours** are in your local time zone.
 

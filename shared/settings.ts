@@ -13,6 +13,20 @@ export type { LayoutPin };
 export const MAX_PINS = 64;
 /** Pin keys: 'star:<project>:<sessionId>' or 'cluster:<project>'. */
 const PIN_KEY = /^(star|cluster):[^\u0000-\u001f]{1,240}$/;
+/** "Consider unused after N days": allowed range of Settings.recommendations.unusedDays. */
+export const RECOMMEND_DAYS = { min: 7, max: 365 } as const;
+/** How many hidden recommendation ids are kept (the oldest go first). */
+export const MAX_DISMISSED = 500;
+const DISMISS_ID = /^[\w:.@~+\-/]{1,200}$/;
+
+/** Validates a list of hidden recommendation ids: known shape only, no duplicates, at most MAX_DISMISSED (the newest win). */
+export function normalizeDismissed(v: unknown): string[] | null {
+  if (!Array.isArray(v)) return null;
+  const seen = new Set<string>();
+  for (const x of v) if (typeof x === 'string' && DISMISS_ID.test(x)) { seen.delete(x); seen.add(x); }
+  return [...seen].slice(-MAX_DISMISSED);
+}
+
 const unit = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.min(1, Math.max(0, v)) * 1e4) / 1e4 : null);
 
 /** Validates a pins map: known key shapes only, coordinates clamped to 0..1, at most MAX_PINS (the newest win). */
@@ -37,6 +51,8 @@ export function cloneSettings(s: Settings): Settings {
  */
 export function normalizeSettings(patch: unknown, base: Settings = DEFAULT_SETTINGS, now = Date.now()): Settings {
   const out = cloneSettings(base);
+  // A base saved by an older build has no recommendations block yet.
+  if (!isObj(out.recommendations)) out.recommendations = cloneSettings(DEFAULT_SETTINGS).recommendations;
   if (!isObj(patch)) return out;
   const n = patch.notifications;
   if (isObj(n)) {
@@ -84,6 +100,15 @@ export function normalizeSettings(patch: unknown, base: Settings = DEFAULT_SETTI
     // The pins map is replaced as a whole, so removing a pin is just sending the map without it.
     const pins = normalizePins(l.pins);
     if (pins) out.layout.pins = pins;
+  }
+  const r = patch.recommendations;
+  if (isObj(r)) {
+    if (typeof r.unusedDays === 'number' && Number.isFinite(r.unusedDays)) {
+      out.recommendations.unusedDays = Math.round(Math.min(RECOMMEND_DAYS.max, Math.max(RECOMMEND_DAYS.min, r.unusedDays)));
+    }
+    // Like pins, the list is replaced as a whole: showing a card again is sending the list without it.
+    const ids = normalizeDismissed(r.dismissed);
+    if (ids) out.recommendations.dismissed = ids;
   }
   return out;
 }

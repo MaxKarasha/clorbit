@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { attribution, overview, parseRange, sessions } from './analytics';
-import type { AboutInfo } from '../shared/api.ts';
+import { INSIGHT_PAGES, type AboutInfo, type InsightPage } from '../shared/api';
+import { RECOMMEND_DAYS } from '../shared/settings';
 import { CACHE_DIR, DATA_DIR, DB_FILE, DIST_DIR, HOST, PORT, PROJECTS_DIR, SERVE_WEB, VERSION, env, hookPluginEnabled, knownPlugins, migrateLegacyDb } from './config';
 import { ClorbitDb } from './db';
 import { HookLog } from './hook-log';
@@ -188,7 +189,15 @@ const server = http.createServer(async (req, res) => {
       const d = await sessionDetail(store, id, alive, lang);
       return d ? json(res, 200, d) : json(res, 404, { error: err.notFound });
     }
-    if (p === '/api/insights') return json(res, 200, insights(store, parseRange(url.searchParams), hookLog, lang));
+    if (p === '/api/insights') {
+      const page = url.searchParams.get('page');
+      if (page !== null && !INSIGHT_PAGES.includes(page as InsightPage)) return json(res, 200, []);
+      const nd = Number(url.searchParams.get('unusedDays'));
+      const unusedDays = Number.isFinite(nd) && nd > 0
+        ? Math.round(Math.min(RECOMMEND_DAYS.max, Math.max(RECOMMEND_DAYS.min, nd)))
+        : settings.get().recommendations.unusedDays;
+      return json(res, 200, insights(store, parseRange(url.searchParams), hookLog, lang, { page: (page as InsightPage | null) ?? undefined, unusedDays }));
+    }
     if (p === '/api/limits/history') { const r = parseTsRange(url.searchParams); return json(res, 200, limitsLog.history(r.from, r.to)); }
     if (p === '/api/limits/forecast') return json(res, 200, forecaster.get(readLimits().limits));
     if (p === '/api/debug/scan') return json(res, 200, { ...store.stats, files: store.files.size, archived: store.missing.size, hooksRecent: hooks.recent.slice(-20), uptimeMs: Date.now() - t0, db: dbHealth() });

@@ -3,6 +3,7 @@ import { t, tp } from '../i18n';
 import { branchColor } from '../lib/colors';
 import { fmtAgo, fmtInt, fmtPct, fmtTokens } from '../lib/format';
 import RankList, { type RankItem } from '../components/RankList';
+import Recommendations from '../components/Recommendations';
 import { PageHeader, Panel } from '../components/ui';
 import { Eyebrow, Guard, unusedChip, useRangeApi } from './common';
 
@@ -35,6 +36,7 @@ export default function Attribution() {
         title={t('attr.title')}
         lede={t('attr.lede')}
       />
+      <Recommendations page="skills" />
       <Guard state={q}>{(d) => <Body d={d} />}</Guard>
     </>
   );

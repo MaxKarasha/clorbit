@@ -1,14 +1,16 @@
 // Insights: rules with evidence and a concrete fix. Wording lives in insights-text.ts (en/uk).
 import path from 'node:path';
-import type { Insight, Range } from '../shared/api.ts';
+import { DEFAULT_SETTINGS, type Insight, type InsightPage, type Range } from '../shared/api';
 import { attribution, Ctx, mcpDisplayNames, memoize, overview } from './analytics';
 import { readSettings } from './config';
 import type { Store } from './store';
 import { deriveWaits, WAIT_CAP_MS, type HookLog } from './hook-log';
 import type { FileSummary } from './types';
 import { estTokens, localDate, mcpKey, mcpSplit } from './util';
-import { hookPluginKey, skillGroupLabel, STARTUP, type Lang } from './i18n';
+import { skillGroupLabel, STARTUP, type Lang } from './i18n';
 import { insightText, type InsightText } from './insights-text';
+import { defaultEnv, hash8, type RecommendEnv } from './recommend';
+import { skillRecommendations } from './recommend-skills';
 
 const sevRank = { high: 0, warn: 1, info: 2 } as const;
 
@@ -38,11 +40,25 @@ function toolFix(tool: string, T: InsightText): string {
   return T.toolFixGeneric;
 }
 
-export function insights(store: Store, range: Range, hookLog?: HookLog | null, lang: Lang = 'en'): Insight[] {
-  const base = memoize(store, `ins:${lang}:${range.from}:${range.to}`, () => compute(store, range, lang));
+export interface InsightOptions {
+  /** Only the cards for this analytics tab (Insight.pages); omitted = all. */
+  page?: InsightPage;
+  /** "Consider unused after N days" (Settings.recommendations.unusedDays). */
+  unusedDays?: number;
+  /** Overrides of the outside facts (tests); disables memoization. */
+  env?: Partial<RecommendEnv>;
+}
+
+const bySaving = (a: Insight, b: Insight) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity];
+
+export function insights(store: Store, range: Range, hookLog?: HookLog | null, lang: Lang = 'en', opts: InsightOptions = {}): Insight[] {
+  const env: RecommendEnv = { ...defaultEnv({ unusedDays: opts.unusedDays ?? DEFAULT_SETTINGS.recommendations.unusedDays }), ...opts.env };
+  // Recommendations also depend on the enabled plugins, the threshold and the day ("unused for N days").
+  const key = `ins:${lang}:${range.from}:${range.to}:${env.unusedDays}:${localDate(env.now)}:${hash8(JSON.stringify(env.enabledPlugins))}`;
+  const base = opts.env ? compute(store, range, lang, env) : memoize(store, key, () => compute(store, range, lang, env));
   const extra = hookLog ? waitInsights(store, hookLog, range, lang) : [];
-  if (!extra.length) return base;
-  return [...base, ...extra].sort((a, b) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity]);
+  const all = extra.length ? [...base, ...extra].sort(bySaving) : base;
+  return opts.page ? all.filter((i) => i.pages?.includes(opts.page!)) : all;
 }
 
 /** Local-day range → [from, to) epoch ms. */
@@ -91,6 +107,7 @@ export function waitInsights(store: Store, hookLog: HookLog, range: Range, lang:
     const capH = WAIT_CAP_MS / 3_600_000;
     v.push({
       id: 'hook-waits',
+      pages: ['sessions', 'overview'],
       severity: total > 60 * 60_000 ? 'warn' : 'info',
       title: T.waits.title(total, longest.end - longest.start),
       detail: T.waits.detail(
@@ -113,43 +130,18 @@ export function waitInsights(store: Store, hookLog: HookLog, range: Range, lang:
   return v;
 }
 
-function compute(store: Store, range: Range, lang: Lang): Insight[] {
+function compute(store: Store, range: Range, lang: Lang, env: RecommendEnv): Insight[] {
   const T = insightText(lang);
-  const out: Insight[] = [];
+  // Skills & plugins: unused plugins and skills, hook context, duplicates (they replace the older per-plugin rules).
+  const out: Insight[] = skillRecommendations(store, range, lang, env);
   const attr = attribution(store, range, lang);
   const ov = overview(store, range);
   const grand = ov.totals.total || 1;
   const settings = readSettings();
   const ctx = new Ctx(store);
   const started = filesStartedIn(store, range);
-  const mainsStarted = started.filter((s) => s.agentId === null);
   const days = Math.max(1, ov.daily.length);
   const pluginKey = (name: string) => Object.keys(settings.enabledPlugins).find((k) => k.split('@')[0] === name) ?? `${name}@…`;
-
-  // (a) Plugins whose SessionStart hooks load startup context into every session.
-  for (const r of attr.startupContext) {
-    if (!r.key.startsWith('hook:plugin:')) continue;
-    const plugin = r.key.slice('hook:plugin:'.length);
-    const per = Number(r.extra?.perSession ?? 0);
-    const sessions = r.calls;
-    if (!sessions || per < 300) continue;
-    const listing = mainsStarted.reduce((n, s) => n + (s.skillsByPlugin[plugin] ?? 0), 0);
-    const listingPer = mainsStarted.length ? estTokens(listing) / mainsStarted.length : 0;
-    const total = r.total;
-    out.push({
-      id: `startup-hook-${plugin}`,
-      severity: total > 5e6 ? 'high' : total > 5e5 ? 'warn' : 'info',
-      title: T.startupHook.title(plugin, per),
-      detail: T.startupHook.detail(plugin, per, sessions, total),
-      evidence: [
-        T.startupHook.sessions(sessions, days),
-        T.startupHook.perSession(per),
-        listingPer > 0 ? T.startupHook.listing(plugin, listingPer) : T.startupHook.noListing(plugin),
-      ],
-      fix: T.startupHook.fix(plugin, pluginKey(plugin)),
-      estSavingTokens: Math.round(total),
-    });
-  }
 
   // (a2) A heavy skill listing — it goes into every session and every subagent.
   const skillRow = attr.startupContext.find((r) => r.key === STARTUP.skills);
@@ -161,6 +153,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
     const perSub = Number(skillRow.extra?.perSubagent ?? 0);
     out.push({
       id: 'startup-skill-listing',
+      pages: ['startup'],
       severity: skillRow.total > 5e6 ? 'high' : 'warn',
       title: T.skillListing.title(per, perSub),
       detail: T.skillListing.detail(perSub > 0, skillRow.total),
@@ -178,6 +171,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
     const top = [...attr.startupContext].sort((a, b) => Number(b.extra?.perSession ?? 0) - Number(a.extra?.perSession ?? 0)).slice(0, 5);
     out.push({
       id: 'startup-total',
+      pages: ['startup', 'overview'],
       severity: 'info',
       title: T.startupTotal.title(perMain, perSub),
       detail: T.startupTotal.detail(startupTotal),
@@ -186,40 +180,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
     });
   }
 
-  // (b) Enabled plugins with no usage in the period.
-  const usedPlugin = (name: string) =>
-    attr.plugins.some((r) => r.key === name && (r.total > 0 || r.calls > 0)) ||
-    attr.skills.some((r) => (r.group === name || r.key.startsWith(name + ':')) && (r.total > 0 || r.calls > 0)) ||
-    attr.mcpServers.some((r) => (r.key.includes(`plugin:${name}:`) || mcpKey(r.key).includes(`plugin_${name}_`)) && (r.total > 0 || r.calls > 0)) ||
-    attr.tools.some((r) => r.key.startsWith(`mcp__plugin_${name}_`) && r.calls > 0);
   const filesInRange = filesActiveIn(store, range);
-  for (const [key, on] of Object.entries(settings.enabledPlugins)) {
-    if (!on) continue;
-    const name = key.split('@')[0];
-    if (usedPlugin(name)) continue;
-    const hookRunsAny = filesInRange.some((s) => Object.values(s.days).some((b) => Object.keys(b.hooks).some((k) => k.startsWith(name + '|'))));
-    if (hookRunsAny && !started.some((s) => s.skillsByPlugin[name])) continue; // a hook-only plugin: covered by the hooks rule
-    const listChars = started.reduce((n, s) => n + (s.skillsByPlugin[name] ?? 0), 0);
-    const hookRow = attr.startupContext.find((r) => r.key === hookPluginKey(name));
-    const saving = estTokens(listChars) + (hookRow?.total ?? 0);
-    const hookRuns = filesInRange.reduce((n, s) => {
-      for (const [d, b] of Object.entries(s.days)) if (d >= range.from && d <= range.to) for (const [k, h] of Object.entries(b.hooks)) if (k.startsWith(name + '|')) n += h.n;
-      return n;
-    }, 0);
-    out.push({
-      id: `unused-plugin-${name}`,
-      severity: saving > 1e6 ? 'warn' : 'info',
-      title: T.unusedPlugin.title(name, days),
-      detail: T.unusedPlugin.detail(name, hookRuns),
-      evidence: [
-        listChars ? T.unusedPlugin.skills(estTokens(listChars)) : T.unusedPlugin.noSkills,
-        hookRow ? T.unusedPlugin.hookBlock(hookRow.total) : T.unusedPlugin.noHookBlock,
-        ...(hookRuns ? [T.unusedPlugin.hookRuns(hookRuns)] : []),
-      ],
-      fix: T.unusedPlugin.fix(key),
-      estSavingTokens: saving,
-    });
-  }
 
   // (b2) MCP servers that are connected but never called.
   const disp = mcpDisplayNames(store);
@@ -237,6 +198,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
     const saving = unusedMcp.reduce((n, [k]) => n + estTokens(blockChars.get(k) ?? 0), 0);
     out.push({
       id: 'unused-mcp',
+      pages: ['mcp'],
       severity: saving > 1e6 ? 'warn' : 'info',
       title: T.unusedMcp.title(unusedMcp.length, days),
       detail: T.unusedMcp.detail,
@@ -261,6 +223,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
   for (const [tool, a] of [...big.entries()].sort((x, y) => y[1].sum - x[1].sum).slice(0, 5)) {
     out.push({
       id: `big-results-${tool}`,
+      pages: ['tools'],
       severity: a.sum > 2e6 ? 'high' : a.sum > 3e5 ? 'warn' : 'info',
       title: T.bigResults.title(tool, a.n, a.max),
       detail: T.bigResults.detail(a.sum),
@@ -286,6 +249,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
     const sessionsN = new Set(repeated.map((r) => r.sid)).size;
     out.push({
       id: 'repeated-reads',
+      pages: ['tools'],
       severity: extra * readAvg > 1e6 ? 'warn' : 'info',
       title: T.repeatedReads.title(repeated.length),
       detail: T.repeatedReads.detail(sessionsN, extra, readAvg),
@@ -311,6 +275,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
     const total = compacted.reduce((n, c) => n + c.n, 0);
     out.push({
       id: 'auto-compactions',
+      pages: ['sessions'],
       severity: total >= 10 ? 'warn' : 'info',
       title: T.autoCompactions.title(total, compacted.length),
       detail: T.autoCompactions.detail,
@@ -327,6 +292,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
     const loads = Number(r.extra?.loads ?? 0);
     out.push({
       id: `skill-share-${r.key}`,
+      pages: ['skills'],
       severity: share >= 0.15 ? 'warn' : 'info',
       title: T.skillShare.title(r.key, share, loads),
       detail: T.skillShare.detail(r.key, r.total, r.sessions, loads ? r.total / loads : null),
@@ -338,6 +304,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
   if (oftenLoaded.length) {
     out.push({
       id: 'skills-loads',
+      pages: [],
       severity: 'info',
       title: T.skillLoads.title,
       detail: T.skillLoads.detail,
@@ -358,6 +325,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
       const saving = low.reduce((n, x) => n + Math.max(0, (avg - x.rate) * x.denom), 0);
       out.push({
         id: 'low-cache-days',
+      pages: ['overview'],
         severity: low.some((x) => x.rate < 0.7) ? 'warn' : 'info',
         title: T.lowCache.title(low.length, avg),
         detail: T.lowCache.detail,
@@ -387,6 +355,7 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
     const min = Math.round(a.ms / 60000);
     out.push({
       id: `hooks-${plugin || 'none'}`,
+      pages: ['startup'],
       severity: errShare > 0.5 && a.n > 500 ? 'warn' : 'info',
       title: T.hooks.title(plugin || null, a.n, min, errShare > 0.5 ? errShare : null),
       detail: T.hooks.detail([...a.names].join(', '), min, a.err ? errShare : null),
@@ -395,6 +364,6 @@ function compute(store: Store, range: Range, lang: Lang): Insight[] {
     });
   }
 
-  out.sort((a, b) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity]);
+  out.sort(bySaving);
   return out;
 }

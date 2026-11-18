@@ -1,4 +1,4 @@
-import type { Range } from '@shared/api';
+import { INSIGHT_PAGES, type InsightPage, type Range } from '@shared/api';
 import { demoValue } from '../lib/demo';
 import { mockAttribution, mockInsights, mockLive, mockOverview, mockSessionDetail, mockSessions } from './fixtures';
 import { mockAbout, mockLimits, mockLimitsHistory } from './limits';
@@ -38,7 +38,13 @@ export function mockResolve(path: string): unknown {
   if (p === '/api/analytics/overview') return mockOverview(range);
   if (p === '/api/analytics/attribution') return mockAttribution(range);
   if (p === '/api/analytics/sessions') return mockSessions(range, q.get('project'));
-  if (p === '/api/insights') return mockInsights(range);
+  if (p === '/api/insights') {
+    const page = q.get('page');
+    const days = Number(q.get('unusedDays')) || undefined;
+    const all = mockInsights(range, days);
+    if (page === null) return all;
+    return INSIGHT_PAGES.includes(page as InsightPage) ? all.filter((i) => i.pages?.includes(page as InsightPage)) : [];
+  }
   if (p === '/api/limits/forecast') return mockLimits().forecast;
   if (p === '/api/about') return mockAbout();
   if (p === '/api/limits/history') {

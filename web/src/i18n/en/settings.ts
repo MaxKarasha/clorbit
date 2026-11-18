@@ -200,4 +200,13 @@ export default {
   'cl.autoEvents': '{n} event|{n} events',
   'cl.autoExpand': 'Show these events',
   'cl.autoCollapse': 'Hide these events',
+  // Recommendations
+  'set.sec.recommendations': 'Recommendations',
+  'rec.set.days': 'Consider unused after',
+  'rec.set.days.d': 'Plugins and skills with no use for this many days (across your whole history) get a recommendation.',
+  'rec.set.daysUnit': 'days',
+  'rec.set.hidden': 'Hidden recommendations',
+  'rec.set.hidden.d': 'Recommendations you hid with "Hide". A hidden card comes back by itself when its items change.',
+  'rec.set.hiddenNone': 'none',
+  'rec.set.showAll': 'Show all again',
 } satisfies Record<string, string>;
