@@ -1716,6 +1716,38 @@
   font-size: 12px;
   color: var(--faint);
 }
+/* "Replay in the galaxy" next to the session id; brighter on row hover. */
+.trow__replay {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 18px;
+  margin-left: 8px;
+  border-radius: 6px;
+  font-size: 9.5px;
+  vertical-align: 1px;
+  color: #b9a3ff;
+  border: 1px solid rgba(181, 140, 255, 0.28);
+  opacity: 0.55;
+  transition: opacity 0.2s, background 0.2s, box-shadow 0.2s;
+}
+.trow:hover .trow__replay,
+.trow__replay:focus-visible {
+  opacity: 1;
+}
+.trow__replay:hover {
+  background: rgba(120, 80, 220, 0.22);
+  box-shadow: 0 0 12px rgba(181, 140, 255, 0.35);
+}
+.btn--replay {
+  padding: 5px 12px;
+  border-color: rgba(181, 140, 255, 0.5);
+  background: rgba(120, 80, 220, 0.18);
+  color: #efe6ff;
+}
+.btn--replay:hover {
+  box-shadow: 0 0 18px rgba(181, 140, 255, 0.35);
+}
 .proj {
   display: inline-flex;
   align-items: center;

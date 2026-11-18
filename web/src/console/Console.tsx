@@ -135,7 +135,7 @@ const ICON_CLEAR = 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3';
 
 /* ---------------- the ticker over the galaxy ---------------- */
 
-export function Ticker({ onFocus, onExpand, onPopOut }: { onFocus: FocusFn; onExpand: () => void; onPopOut: () => void }) {
+export function Ticker({ onFocus, onExpand, onPopOut }: { onFocus: FocusFn; onExpand: () => void; onPopOut?: () => void }) {
   const lines = useConsoleLines();
   useColorVersion();
   const group = useGroupAutomated();
@@ -147,9 +147,11 @@ export function Ticker({ onFocus, onExpand, onPopOut }: { onFocus: FocusFn; onEx
           <Icon d={ICON_EXPAND} />
           <span>{t('cl.title')}</span>
         </button>
-        <button type="button" className="gx-ticker__btn" onClick={onPopOut} title={t('cl.popout')} aria-label={t('cl.popout')}>
-          <Icon d={ICON_POPOUT} />
-        </button>
+        {onPopOut && (
+          <button type="button" className="gx-ticker__btn" onClick={onPopOut} title={t('cl.popout')} aria-label={t('cl.popout')}>
+            <Icon d={ICON_POPOUT} />
+          </button>
+        )}
       </div>
       {last.map((it, i) => (
         <div key={it.t === 'line' ? it.line.key : it.key} className="gx-tick" style={{ opacity: Math.max(0.22, 1 - (last.length - 1 - i) * 0.11) }}>
@@ -308,7 +310,7 @@ export function ConsolePanel({
 }
 
 /** The docked drawer at the bottom of the galaxy, with a resize handle. */
-export function ConsoleDrawer({ onFocus, onClose, onPopOut }: { onFocus: FocusFn; onClose: () => void; onPopOut: () => void }) {
+export function ConsoleDrawer({ onFocus, onClose, onPopOut }: { onFocus: FocusFn; onClose: () => void; onPopOut?: () => void }) {
   const [h, setH] = useState(() => {
     try {
       const v = Number(localStorage.getItem('clorbit.consoleHeight'));

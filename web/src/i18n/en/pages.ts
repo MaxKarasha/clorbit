@@ -260,6 +260,9 @@ export default {
 
   // Session detail
   'session.opening': 'Opening session…',
+  'session.replay': '▶ Replay in galaxy',
+  'session.replayTitle': 'Watch this session again in the galaxy: agents are born, work and return, with a timeline to scrub',
+  'sessions.replay': 'Replay in the galaxy',
   'session.projectSessions': 'Project sessions',
   'session.untitled': 'Untitled session',
   'session.archived': 'archived',

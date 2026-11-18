@@ -252,6 +252,56 @@ export interface SessionDetail {
   archived?: boolean;
 }
 
+// ---------- Replay (time machine) ----------
+
+/**
+ * One event of a session replay (GET /api/session/:id/replay). Timestamps are the original ones (epoch ms).
+ * The list is time-ordered (see shared/replay.ts `sortReplayEvents`); the state at any moment is a pure
+ * function of the list and that moment (`replayStateAt`).
+ * - spawn/finish: a subagent is born (from its parent's Agent call) / returns its result (its token total);
+ * - tool: a tool call of an agent (short label, as in AgentNode.currentTool); Agent calls appear as spawns;
+ * - text: a short assistant text (≤ 160 chars);
+ * - prompt: a user prompt of the main agent (≤ 160 chars);
+ * - compact: a compaction (auto or manual, tokens before it when known);
+ * - status: the session's status changed (working / waiting / idle), with a localized reason and its code;
+ * - tokens: one API turn of an agent ([input, output, cacheRead, cacheWrite]); `context` = the main agent's
+ *   context size after that turn (input + cacheRead + cacheWrite); on sampled lists a turn may stand for several.
+ */
+export type ReplayEvent =
+  | { kind: 'spawn'; ts: number; agentId: string; parentId: string; agentType: string; description: string | null; model?: string | null; effort?: string | null }
+  | { kind: 'finish'; ts: number; agentId: string; tokens: number }
+  | { kind: 'tool'; ts: number; agentId: string; label: string }
+  | { kind: 'text'; ts: number; agentId: string; text: string }
+  | { kind: 'prompt'; ts: number; text: string }
+  | { kind: 'compact'; ts: number; auto: boolean; preTokens: number | null }
+  | { kind: 'status'; ts: number; status: SessionStatus; reason: string | null; code: string | null; arg: string | null }
+  | { kind: 'tokens'; ts: number; agentId: string; t: [number, number, number, number]; context?: number };
+
+export type ReplayEventKind = ReplayEvent['kind'];
+
+/** GET /api/session/:id/replay — everything needed to replay a session in the galaxy. */
+export interface SessionReplay {
+  sessionId: string;
+  project: string;
+  cwd: string;
+  title: string | null;
+  model: string | null;
+  effort: string | null;
+  /** 200000 or 1000000 (from the model / [1m] / the peak context); null if unknown. */
+  contextLimit: number | null;
+  startedAt: number;
+  /** The last event; for a live session, the moment the replay was built. */
+  endedAt: number;
+  /** The session's process was alive when the replay was built: it ends at "now" (see generatedAt). */
+  live: boolean;
+  generatedAt: number;
+  /** Every transcript is gone from disk: structure only (agents, their lifetimes, hourly tokens), no fine timeline. */
+  archived?: boolean;
+  /** Present when the list was capped (REPLAY_MAX_EVENTS): [kept, total] per sampled kind. Structural events are never dropped. */
+  sampled?: { tool: [number, number]; text: [number, number]; tokens: [number, number] };
+  events: ReplayEvent[];
+}
+
 export interface Insight {
   id: string;
   severity: 'info' | 'warn' | 'high';
@@ -354,6 +404,7 @@ export interface AboutInfo {
 //   /api/analytics/attribution?from&to          → AttributionReport
 //   /api/analytics/sessions?from&to&project     → SessionSummary[]
 //   /api/session/:id                            → SessionDetail
+//   /api/session/:id/replay                     → SessionReplay (time-ordered replay events; archived sessions: structure only)
 //   /api/insights?from&to                       → Insight[]
 //   /api/limits/history?from&to                 → LimitsPoint[] (from/to: 'YYYY-MM-DD' or epoch ms; default last 7 days)
 //   /api/limits/forecast                        → LimitsForecast (source 'none' without the status-line capture)

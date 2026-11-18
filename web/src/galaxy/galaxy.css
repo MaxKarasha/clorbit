@@ -257,3 +257,7 @@
 .gx-pinrow__glyph::before { content: ''; position: absolute; left: 1px; top: 0; width: 6px; height: 6px; border-radius: 50%; background: #9fe3ff; }
 .gx-pinrow__glyph::after { content: ''; position: absolute; left: 3.4px; top: 5px; width: 1.3px; height: 7px; background: #9fe3ff; }
 .gx-pinrow .gx-btn { padding: 5px 10px; font-size: 12px; }
+
+/* Replay links elsewhere: the session panel, the cluster list. */
+.gx-btn--replay { border-color: rgba(181, 140, 255, 0.5); background: rgba(120, 80, 220, 0.18); }
+.gx-cl-go--replay { color: #c7b8ff; font-size: 11px; }

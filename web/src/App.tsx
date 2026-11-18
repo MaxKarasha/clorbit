@@ -11,6 +11,7 @@ import NotificationCenter from './notify/NotificationCenter';
 import { startMainBridge } from './console/store';
 
 const ConsolePage = lazy(() => import('./console/ConsolePage'));
+const ReplayPage = lazy(() => import('./galaxy/ReplayPage'));
 import { Empty, Loading } from './components/ui';
 import Overview from './pages/Overview';
 
@@ -97,7 +98,16 @@ export default function App() {
   }
   return (
     <DataProvider>
-      {parts.length === 0 ? <GalaxyPage key={demo ? 'demo' : 'live'} /> : <AnalyticsRoute />}
+      {parts.length === 0 ? (
+        <GalaxyPage key={demo ? 'demo' : 'live'} />
+      ) : parts[0] === 'replay' && parts[1] ? (
+        // The time machine: one session replayed in the galaxy.
+        <Suspense fallback={<Loading label={t('gx.replay.loading')} />}>
+          <ReplayPage key={`${parts[1]}:${demo ? 'demo' : 'live'}`} id={parts[1]} />
+        </Suspense>
+      ) : (
+        <AnalyticsRoute />
+      )}
       <NotificationCenter />
       <SettingsPanel />
     </DataProvider>

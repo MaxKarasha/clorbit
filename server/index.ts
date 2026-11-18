@@ -17,6 +17,7 @@ import { RecentEvents } from './recent-events';
 import { ServerNotifications, SystemNotifier, notifyTestBody } from './notifier';
 import { SettingsStore } from './settings';
 import { sessionDetail } from './session-detail';
+import { sessionReplay } from './replay';
 import { Store } from './store';
 
 const t0 = Date.now();
@@ -162,6 +163,13 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/analytics/overview') return json(res, 200, overview(store, parseRange(url.searchParams)));
     if (p === '/api/analytics/attribution') return json(res, 200, attribution(store, parseRange(url.searchParams), lang));
     if (p === '/api/analytics/sessions') return json(res, 200, sessions(store, parseRange(url.searchParams), url.searchParams.get('project')));
+    const rp = /^\/api\/session\/([^/]+)\/replay$/.exec(p);
+    if (rp) {
+      const id = decodeURIComponent(rp[1]);
+      if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: err.badSession });
+      const r = await sessionReplay(store, id, !!live.pids.get(id)?.alive, lang);
+      return r ? json(res, 200, r) : json(res, 404, { error: err.notFound });
+    }
     if (p.startsWith('/api/session/')) {
       const id = decodeURIComponent(p.slice('/api/session/'.length));
       if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: err.badSession });

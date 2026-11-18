@@ -180,8 +180,15 @@ export class GalaxyEngine {
   lastUser = -99;
   /** Auto tour is opt-in (toggle in the HUD). */
   tourOn = false;
-  /** Reduce motion: orbits crawl, the camera jumps instead of flying (setting or OS preference). */
+  /** Reduce motion: orbits crawl, the camera jumps instead of flying, births and returns are instant, no trails
+   *  (setting or OS preference). */
   reduceMotion = false;
+  /**
+   * Replay mode (the time machine): one session, framed by the camera; no dragging or pins; seeded randomness,
+   * so a scene rebuilt for a moment (resetScene + sync) looks the same every time.
+   */
+  private replayMode = false;
+  private rnd: () => number = Math.random;
   /** User camera offset on top of the focus target: drag pans, wheel/buttons zoom. */
   private pan = { x: 0, y: 0 };
   private zoomMul = 1;
@@ -237,6 +244,29 @@ export class GalaxyEngine {
   }
 
   getFocus() { return this.focus; }
+
+  /** Replay mode on/off (see `replayMode`). */
+  setReplayMode(on: boolean, seed = 'replay') {
+    this.replayMode = on;
+    this.rnd = on ? seeded(seed) : Math.random;
+    this.replaySeed = seed;
+  }
+  private replaySeed = 'replay';
+
+  /**
+   * Replay: forget the scene, so the next sync shows its state at once (a seek): no births, returns or flashes,
+   * the belt already full. Group positions are kept, so the camera does not jump.
+   */
+  resetScene() {
+    this.systems.clear();
+    this.bodies.clear();
+    this.clusters.clear();
+    this.folded.clear();
+    this.firstSync = true;
+    if (this.replayMode) this.rnd = seeded(this.replaySeed);
+  }
+
+  hasBody(sessionId: string, agentId: string): boolean { return this.bodies.has(`${sessionId}:${agentId}`); }
 
   setDistant(list: Distant[]) {
     const max = Math.max(1, ...list.map((d) => d.total));
@@ -360,7 +390,8 @@ export class GalaxyEngine {
   }
 
   private dust(born: number): Dust {
-    return { ang: Math.random() * 6.283, r: (Math.random() - 0.5) * 8, s: 0.35 + Math.random() * 0.9, hs: (Math.random() - 0.5) * 70, a: 0.25 + Math.random() * 0.5, born };
+    const r = this.rnd;
+    return { ang: r() * 6.283, r: (r() - 0.5) * 8, s: 0.35 + r() * 0.9, hs: (r() - 0.5) * 70, a: 0.25 + r() * 0.5, born };
   }
 
   private makeBody(sessionId: string, node: AgentNode, parent: Body | null, born: number, sysHue: number, slot: number): Body {
@@ -373,9 +404,9 @@ export class GalaxyEngine {
     }
     const b: Body = {
       key: `${sessionId}:${node.id}`, sessionId, node, depth, parent, children: [], slot,
-      ang: Math.random() * 6.283,
+      ang: (this.replayMode ? hashStr(`${sessionId}:${node.id}`) : Math.random()) * 6.283,
       speed: depth === 1 ? 0.42 / (1 + slot * 0.35) : depth === 2 ? 1.2 / (1 + slot * 0.3) : 2.2,
-      born, ret: null, flare: -9, flareLabel: '', absorb: -9,
+      born: this.reduceMotion ? -99 : born, ret: null, flare: -9, flareLabel: '', absorb: -9,
       col: branchCol(sysHue, depth, branchSlot, depth > 1 ? slot : 0), _f: -1, _p: [0, 0],
     };
     this.bodies.set(b.key, b);
@@ -404,7 +435,8 @@ export class GalaxyEngine {
       if (cb.ret !== null) cb.ret = null;
       this.syncBody(sys, cb, child, now);
     }
-    for (const c of body.children) if (!ids.has(c.node.id) && c.ret === null && now - c.born > 1.3) c.ret = now;
+    // With reduce motion a returned body leaves at the next step (no spiral).
+    for (const c of body.children) if (!ids.has(c.node.id) && c.ret === null && now - c.born > 1.3) c.ret = this.reduceMotion ? now - 2 : now;
   }
 
   private *walk(b: Body): Generator<Body> {
@@ -582,7 +614,7 @@ export class GalaxyEngine {
       }
     } else if (e.kind === 'finish') {
       const b = this.bodies.get(`${e.sessionId}:${e.agentId}`);
-      if (b && b.ret === null && b.depth > 0) b.ret = now;
+      if (b && b.ret === null && b.depth > 0) b.ret = this.reduceMotion ? now - 2 : now;
     } else if (e.kind === 'prompt' || e.kind === 'compact') {
       const sys = this.systems.get(e.sessionId);
       if (sys) sys.root.absorb = now;
@@ -699,6 +731,7 @@ export class GalaxyEngine {
 
   /** A star or cluster under the pointer that can be dragged: not a planet, and not what the camera is framing. */
   private movableAt(mx: number, my: number): Sys | Clu | null {
+    if (this.replayMode) return null;
     const h = this.hitAt(mx, my);
     if (!h || h.body) return null;
     const f = this.focus;
@@ -812,6 +845,19 @@ export class GalaxyEngine {
 
   private baseTarget() {
     const panel = 200;
+    if (this.replayMode && this.focus.t === 'none') {
+      const sys = this.systems.values().next().value as Sys | undefined;
+      if (sys) {
+        // Frame the whole system (its widest orbit or the belt) in the space the HUD leaves: the top bar above,
+        // the scrubber and the ticker below.
+        const u = this.U;
+        let R = this.beltR(sys) + 12 * u;
+        for (const b of sys.root.children) if (b.ret === null) R = Math.max(R, this.orbR(b, sys) + 10 * u);
+        const s = clamp(Math.min((this.W * 0.36) / R, (this.H * 0.34) / (R * 0.42 + 26 * u)), 0.6, 4.2);
+        const c = this.pos(sys.root);
+        return { x: c[0], y: c[1] + 34 / s, s };
+      }
+    }
     if (this.focus.t === 'sys') {
       const sys = this.systems.get(this.focus.sessionId);
       if (sys) { const c = this.pos(sys.root); return { x: c[0] + panel / 4.2, y: c[1], s: 4.2 }; }
@@ -1178,7 +1224,7 @@ export class GalaxyEngine {
       }
       // trails
       for (const b of all) {
-        if (!b.depth || b.ret !== null || T - b.born < 1.3 || (b.depth > 1 && k < 2.5)) continue;
+        if (this.reduceMotion || !b.depth || b.ret !== null || T - b.born < 1.3 || (b.depth > 1 && k < 2.5)) continue;
         const pp = this.pos(b.parent!), R = this.orbR(b, sys), c2 = this.colOf(b);
         for (let q = 1; q <= 12; q++) {
           const an = b.ang - q * 0.07, s = this.S([pp[0] + Math.cos(an) * R, pp[1] + Math.sin(an) * R * 0.42]);
@@ -1483,6 +1529,16 @@ export class GalaxyEngine {
 }
 
 function rand(n: number) { const x = Math.sin(n * 12.9898) * 43758.5453; return x - Math.floor(x); }
+/** A seeded PRNG (mulberry32), for scenes that must look the same when rebuilt (replay). */
+function seeded(seed: string): () => number {
+  let a = Math.floor(hashStr(seed) * 4294967295) >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 export function short(s: string, n: number) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 export function prettyModel(m: string | null) {
   if (!m) return '—';

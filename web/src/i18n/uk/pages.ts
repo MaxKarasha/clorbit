@@ -261,6 +261,9 @@ export default {
 
   // Session detail
   'session.opening': 'Відкриваю сесію…',
+  'session.replay': '▶ Повтор у галактиці',
+  'session.replayTitle': 'Переглянути цю сесію знову в галактиці: агенти народжуються, працюють і повертаються, а хронологію можна перемотувати',
+  'sessions.replay': 'Повтор у галактиці',
   'session.projectSessions': 'Сесії проєкту',
   'session.untitled': 'Сесія без назви',
   'session.archived': 'архів',

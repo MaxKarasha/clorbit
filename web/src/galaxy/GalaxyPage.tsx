@@ -21,7 +21,7 @@ import './galaxy.css';
 
 const statusWord = (s: string) => (['working', 'waiting', 'idle', 'stopped', 'done'].includes(s) ? t(`gx.status.${s}` as MsgKey) : '');
 
-function findAgent(root: AgentNode, id: string): { node: AgentNode; chain: AgentNode[] } | null {
+export function findAgent(root: AgentNode, id: string): { node: AgentNode; chain: AgentNode[] } | null {
   if (root.id === id) return { node: root, chain: [root] };
   for (const c of root.children) {
     const r = findAgent(c, id);
@@ -437,7 +437,9 @@ function PinRow({ onUnpin }: { onUnpin: () => void }) {
   );
 }
 
-function SessionPanel({ s, eng, onAgent, pin }: { s: LiveSession; eng: GalaxyEngine | null; onAgent: (id: string) => void; pin: (() => void) | null }) {
+/** `now`: the clock the panel measures against (a replay's current moment); `replay`: inside the time machine. */
+export function SessionPanel({ s, eng, onAgent, pin, now, replay = false }: { s: LiveSession; eng: GalaxyEngine | null; onAgent: (id: string) => void; pin: (() => void) | null; now?: number; replay?: boolean }) {
+  const at = now ?? Date.now();
   const ctx = s.contextTokens && s.contextLimit ? s.contextTokens / s.contextLimit : null;
   const col = eng?.colorOf(s.sessionId, 'main');
   return (
@@ -453,11 +455,12 @@ function SessionPanel({ s, eng, onAgent, pin }: { s: LiveSession; eng: GalaxyEng
       {s.root.lastText && <blockquote className="gx-quote">{quote(s.root.lastText, 220)}</blockquote>}
       <div className="gx-grid">
         <div><label>{t('gx.panel.sessionTokens')}</label><b>{fmtTok(tSum(s.tokens))}</b></div>
-        <div><label>{t('gx.panel.24h')}</label><b>{fmtTok(s.tokens24h)}</b></div>
+        {/* In a replay the star's size is the tokens spent so far, not the last 24 h. */}
+        {!replay && <div><label>{t('gx.panel.24h')}</label><b>{fmtTok(s.tokens24h)}</b></div>}
         <div><label>{t('gx.panel.subagents')}</label><b>{s.subagentsActive}<em> / {s.subagentsTotal}</em></b></div>
         <div><label>{t('gx.panel.compactions')}</label><b>{s.compactions}</b></div>
-        <div><label>{t('gx.panel.running')}</label><b>{fmtDur(Date.now() - s.startedAt)}</b></div>
-        <div><label>{t('gx.panel.activity')}</label><b>{fmtAgo(s.lastActivity)}</b></div>
+        <div><label>{t('gx.panel.running')}</label><b>{fmtDur(at - s.startedAt)}</b></div>
+        <div><label>{t('gx.panel.activity')}</label><b>{fmtAgo(s.lastActivity, at)}</b></div>
       </div>
       {ctx != null && (
         <div className="gx-ctx">
@@ -470,13 +473,15 @@ function SessionPanel({ s, eng, onAgent, pin }: { s: LiveSession; eng: GalaxyEng
       <div className="gx-tree"><Tree s={s} node={s.root} eng={eng} onAgent={onAgent} /></div>
       <div className="gx-actions">
         <a className="gx-btn primary" href={href(`/session/${encodeURIComponent(s.sessionId)}`)}>{t('gx.panel.details')}</a>
+        {!replay && <a className="gx-btn gx-btn--replay" href={href(`/replay/${encodeURIComponent(s.sessionId)}`)} title={t('gx.replay.openTitle')}>{t('gx.replay.open')}</a>}
         <a className="gx-btn" href={href('/analytics/sessions', { project: s.project })}>{t('gx.panel.allSessions', { project: s.project })}</a>
       </div>
     </aside>
   );
 }
 
-function AgentPanel({ s, a, parent, eng, onAgent }: { s: LiveSession; a: AgentNode; parent: AgentNode | null; eng: GalaxyEngine | null; onAgent: (id: string) => void }) {
+export function AgentPanel({ s, a, parent, eng, onAgent, now }: { s: LiveSession; a: AgentNode; parent: AgentNode | null; eng: GalaxyEngine | null; onAgent: (id: string) => void; now?: number }) {
+  const at = now ?? Date.now();
   const col = eng?.colorOf(s.sessionId, a.id);
   return (
     <aside className="gx-panel" style={{ ['--acc' as string]: col }}>
@@ -495,10 +500,10 @@ function AgentPanel({ s, a, parent, eng, onAgent }: { s: LiveSession; a: AgentNo
       <div className="gx-grid">
         <div><label>{t('gx.panel.tokens')}</label><b>{fmtTok(tSum(a.tokens))}</b></div>
         <div><label>{t('gx.panel.calls')}</label><b>{a.toolCalls}</b></div>
-        <div><label>{t('gx.panel.workingFor')}</label><b>{fmtDur(Date.now() - a.startedAt)}</b></div>
+        <div><label>{t('gx.panel.workingFor')}</label><b>{fmtDur(at - a.startedAt)}</b></div>
         <div><label>{t('gx.panel.children')}</label><b>{a.children.length}</b></div>
         <div><label>{t('gx.panel.finishedChildren')}</label><b>{a.finishedChildren}</b></div>
-        <div><label>{t('gx.panel.activity')}</label><b>{fmtAgo(a.lastActivity)}</b></div>
+        <div><label>{t('gx.panel.activity')}</label><b>{fmtAgo(a.lastActivity, at)}</b></div>
       </div>
       <TokBars t={a.tokens} />
       {a.children.length > 0 && (<><h4>{t('gx.panel.children')}</h4><div className="gx-tree">{a.children.map((c) => <Tree key={c.id} s={s} node={c} eng={eng} onAgent={onAgent} />)}</div></>)}
@@ -563,6 +568,7 @@ function ClusterPanel({ c, onReveal, pin }: { c: ClusterInfo; onReveal: (session
                 <a className="gx-cl-row" href={detail} title={t('gx.cluster.open')}>{body}</a>
               )}
               {s.alive && <a className="gx-cl-go" href={detail} title={t('gx.cluster.open')} aria-label={t('gx.cluster.open')}>↗</a>}
+              <a className="gx-cl-go gx-cl-go--replay" href={href(`/replay/${encodeURIComponent(s.sessionId)}`)} title={t('gx.replay.openTitle')} aria-label={t('gx.replay.openTitle')}>▶</a>
             </li>
           );
         })}

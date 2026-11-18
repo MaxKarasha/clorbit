@@ -48,6 +48,7 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 - **Edge arrows:** zoomed into one system, you still see chips at the screen edge pointing to waiting (orange) and working sessions out of view; click one to fly there.
 - **Asteroid belts** hold finished subagents. **Distant stars** on the rim are projects from the last 30 days (click one to open its sessions).
 - **Live events:** a flash for every tool call, a comet when an agent is born, a spiral when a result returns to its parent, orange waves when a session is waiting for you.
+- **Time machine:** "▶ Replay" (in a session's panel, the cluster list, the Sessions page and the Session page) replays a session in the galaxy from its transcripts — agents are born, work and return, the belt grows and the context ring fills, the console shows what happened with the original times. A timeline at the bottom scrubs through it, with speeds up to 60×, an **auto** speed that squeezes idle gaps, and markers for spawns, waits, compactions and prompts (space, ←/→ and Shift+←/→ work too). Live sessions replay up to now and can follow along.
 - **Drill-down levels:** fleet → session (agent tree, tokens, context, effort, current status) → agent (the task from its parent, what it is doing now, its latest thought, its subordinates). Click empty space to go back up.
 - **Status bar:** tokens over 24 h with a burn-rate sparkline, tokens per minute, subscription limits with a forecast (optional, see below), live sessions, working subagents and cache hit rate. On narrower screens the less important metrics (cache, then speed) give way instead of overlapping.
 - An automatic **tour** cycles through the most active systems when you are not interacting (opt-in).
@@ -64,7 +65,7 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 | Subagents | Subagent types, their average cost, duration and nesting depth. |
 | Startup context | What lands in every session before the first prompt: system prompt, tool definitions, skill listing, MCP instructions, CLAUDE.md, plugin hooks. |
 | Sessions | Every session in the range, sortable, filterable by project. |
-| Session | The agent tree, a timeline of prompts, tool calls, spawns and compactions, and a context-size chart. |
+| Session | The agent tree, a timeline of prompts, tool calls, spawns and compactions, a context-size chart, and "▶ Replay in galaxy". |
 | Insights | Rules that turn the numbers into advice: each insight has evidence and a concrete fix (often a config snippet to copy). |
 
 Examples of insights: a plugin whose SessionStart hook adds thousands of tokens to every session, enabled plugins or MCP servers that were never used, tool results over 20K tokens, files read again and again in the same session, auto-compactions, days with a low cache hit rate, noisy or failing hooks, and (with hooks installed) how long agents waited for your permission or reply.
@@ -224,7 +225,8 @@ Upgrading from a pre-release that stored its database in `<repo>/data/fleet.db`:
 
 - Without the hooks plugin, "waiting for permission" is a guess: a long-running Bash command can look the same.
 - Startup context and tool result sizes are estimates (see above).
-- The first open of a very large session (hundreds of subagents) can take a few seconds; after that it is cached.
+- The first open of a very large session (hundreds of subagents) can take a few seconds; after that it is cached. The same goes for its replay; replays of very long sessions sample tool calls (every spawn, return, prompt, wait and compaction is kept).
+- Replays of archived sessions (transcripts already cleaned up by Claude Code) show only their structure: agents, their lifetimes and hourly tokens.
 - The "24 h" preset in analytics means yesterday + today, because the analytics API works with dates.
 - Live updates rely on `fs.watch` with a polling fallback; on unusual file systems updates may lag by a few seconds.
 - Clorbit reads the transcript format of current Claude Code versions; a future format change may need an update.

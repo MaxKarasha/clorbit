@@ -6,16 +6,17 @@ import { t } from '../i18n';
 import type enMock from '../i18n/en/mock';
 import { mockLimits } from '../mock/limits';
 import { rng } from '../mock/rng';
+import { demoSessions } from '../mock/demo-sessions';
 
 type MK = keyof typeof enMock;
 
 const TYPES = ['Explore', 'Plan', 'general-purpose', 'code-reviewer', 'test-runner', 'web-fetch'];
-const TOOLS = [
+export const TOOLS = [
   'Read webhook.ts', 'Grep "useAuth"', 'Glob **/*.tsx', 'Edit orders.ts', 'Bash: pnpm test', 'WebFetch hono.dev/docs',
   'WebSearch', 'Read README.md', 'Bash: git diff --stat', 'Write PLAN.md', 'Grep "rateLimit"', 'Edit rate-limit.ts',
   'Bash: pnpm lint', 'claude-in-chrome · screenshot', 'context7 · get-library-docs',
 ];
-const TASKS: Record<string, MK[]> = {
+export const TASKS: Record<string, MK[]> = {
   Explore: ['mock.task.explore.1', 'mock.task.explore.2'],
   Plan: ['mock.task.plan.1', 'mock.task.plan.2'],
   'code-reviewer': ['mock.task.review.1', 'mock.task.review.2'],
@@ -23,7 +24,7 @@ const TASKS: Record<string, MK[]> = {
   'general-purpose': ['mock.task.general.1', 'mock.task.general.2', 'mock.task.sql.1'],
   'web-fetch': ['mock.task.web.1', 'mock.task.web.2'],
 };
-const THOUGHTS: MK[] = ['mock.thought.1', 'mock.thought.2', 'mock.thought.3', 'mock.thought.4', 'mock.thought.5', 'mock.thought.6', 'mock.thought.7'];
+export const THOUGHTS: MK[] = ['mock.thought.1', 'mock.thought.2', 'mock.thought.3', 'mock.thought.4', 'mock.thought.5', 'mock.thought.6', 'mock.thought.7'];
 const EFFORTS = ['high', 'medium', 'high', 'xhigh', 'low'];
 const tok = (n: number): Tokens => ({ input: n * 0.02, output: n * 0.05, cacheRead: n * 0.85, cacheWrite: n * 0.08 });
 const sum = (x: Tokens) => x.input + x.output + x.cacheRead + x.cacheWrite;
@@ -164,6 +165,8 @@ export class MockFeed {
     s.tokens24h = sum(s.tokens);
     s.subagentsTotal = d.finished;
     this.list.push({ s, next: 0, titleKey: d.title, titleN: d.titleN, wait: d.wait ?? null, lastByMain: true });
+    // A demo replay of this star looks like it (same project, title and model).
+    demoSessions.set(s.sessionId, { project: d.project, title: () => (d.titleN != null ? t(d.title, { n: d.titleN }) : t(d.title)), model: s.model, effort: s.effort, alive: d.alive });
   }
 
   private walk(n: AgentNode, out: AgentNode[] = []) { out.push(n); n.children.forEach((c) => this.walk(c, out)); return out; }

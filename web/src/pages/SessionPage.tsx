@@ -65,6 +65,9 @@ function Body({ d }: { d: SessionDetail }) {
           )}
         </h1>
         <div className="session-meta">
+          <a className="btn btn--replay" href={href(`/replay/${encodeURIComponent(s.sessionId)}`)} title={t('session.replayTitle')}>
+            {t('session.replay')}
+          </a>
           <span className="mono">{fmtDateTime(s.startedAt)}</span>
           <span className="sep">·</span>
           <span>{fmtDuration(s.durationMs)}</span>

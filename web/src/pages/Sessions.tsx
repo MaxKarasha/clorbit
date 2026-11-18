@@ -133,6 +133,9 @@ function Body({ list }: { list: SessionSummary[] }) {
                       {s.title ?? <span className="muted">{t('sessions.untitled')}</span>}
                     </a>
                     <span className="trow__id mono">{s.sessionId.slice(0, 8)}</span>
+                    <a className="trow__replay" href={href(`/replay/${encodeURIComponent(s.sessionId)}`)} onClick={(e) => e.stopPropagation()} title={t('sessions.replay')} aria-label={t('sessions.replay')}>
+                      ▶
+                    </a>
                   </td>
                   <td className="col-startedAt mono">{fmtDateTime(s.startedAt)}</td>
                   <td className="ta-r mono">{fmtDuration(s.durationMs)}</td>
