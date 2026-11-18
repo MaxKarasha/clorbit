@@ -20,11 +20,15 @@
 /* Camera controls */
 .gx-zoom { position: absolute; right: 22px; bottom: 22px; z-index: 3; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; transition: right 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .gx-zoom.gx-zoom--panel { right: 392px; }
+/* The column is as wide as the hint; only the pad takes the pointer, the rest of it is the canvas. */
+.gx-zoom { pointer-events: none; }
+.gx-zoom-pad { pointer-events: auto; }
 .gx-zoom-pad { display: flex; flex-direction: column; overflow: hidden; border-radius: 12px; border: 1px solid var(--line); background: rgba(10, 14, 28, 0.78); backdrop-filter: blur(12px); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); }
 .gx-zoom-pad button { all: unset; width: 38px; height: 36px; display: grid; place-items: center; cursor: pointer; color: var(--txt); font: 500 18px Inter, system-ui, sans-serif; transition: background 0.15s; }
 .gx-zoom-pad button + button { border-top: 1px solid var(--line); }
 .gx-zoom-pad button:hover { background: rgba(120, 160, 255, 0.16); }
 .gx-zoom-pad button:focus-visible { outline: 2px solid #8fd8ff; outline-offset: -2px; }
+.gx-zoom-pad button.gx-zoom-layout svg { width: 18px; height: 18px; }
 .gx-zoom-hint { font-family: var(--mono); font-size: 11.5px; color: var(--mut); background: rgba(8, 12, 24, 0.6); padding: 4px 8px; border-radius: 8px; white-space: nowrap; }
 .gx a { color: inherit; text-decoration: none; }
 
@@ -232,3 +236,11 @@
 .gx-legend b.wait { color: #FFB15C; }
 /* The console drawer stops short of an open side panel. */
 :root[data-gx='panel'] .gx-console { right: 386px; }
+
+/* A pinned body's panel: "Pinned here · Unpin". */
+.gx-pinrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0 2px; padding: 6px 6px 6px 10px; border-radius: 10px; border: 1px solid rgba(159, 227, 255, 0.22); background: rgba(40, 80, 120, 0.14); font: 500 12px var(--mono); color: #bfe9ff; }
+.gx-pinrow > span { display: inline-flex; align-items: center; gap: 8px; }
+.gx-pinrow__glyph { position: relative; width: 8px; height: 12px; transform: rotate(28deg); }
+.gx-pinrow__glyph::before { content: ''; position: absolute; left: 1px; top: 0; width: 6px; height: 6px; border-radius: 50%; background: #9fe3ff; }
+.gx-pinrow__glyph::after { content: ''; position: absolute; left: 3.4px; top: 5px; width: 1.3px; height: 7px; background: #9fe3ff; }
+.gx-pinrow .gx-btn { padding: 5px 10px; font-size: 12px; }

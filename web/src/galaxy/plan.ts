@@ -170,16 +170,18 @@ export function labelWanted(o: { primary: boolean; hovered: boolean; waiting: bo
 /** Camera scale from which every star of a crowded group gets its label. */
 export const LABEL_ZOOM = 1.6;
 
-export interface GroupDisc { x: number; y: number; r: number }
+export interface GroupDisc { x: number; y: number; r: number; /** Never moves (pinned bodies, placed active groups). */ fixed?: boolean }
 
 /**
  * Pushes project groups (discs in px: centre and footprint radius) apart so they do not overlap, and
  * keeps each inside the box. Deterministic (fixed iteration order), so the same groups always land in
- * the same places. Discs that cannot all fit end up as evenly squeezed as the box allows.
+ * the same places. Discs that cannot all fit end up as evenly squeezed as the box allows. Fixed discs
+ * stay put and push the others away.
  */
 export function relaxGroups(discs: GroupDisc[], box: { left: number; top: number; right: number; bottom: number }, iterations = 80): GroupDisc[] {
   const out = discs.map((d) => ({ ...d }));
   const clampIn = (d: GroupDisc) => {
+    if (d.fixed) return;
     const cx = (box.left + box.right) / 2, cy = (box.top + box.bottom) / 2;
     d.x = d.r * 2 >= box.right - box.left ? cx : Math.min(box.right - d.r, Math.max(box.left + d.r, d.x));
     d.y = d.r * 2 >= box.bottom - box.top ? cy : Math.min(box.bottom - d.r, Math.max(box.top + d.r, d.y));
@@ -193,10 +195,10 @@ export function relaxGroups(discs: GroupDisc[], box: { left: number; top: number
         let dx = b.x - a.x, dy = b.y - a.y;
         let d = Math.hypot(dx, dy);
         const need = a.r + b.r;
-        if (d >= need) continue;
+        if (d >= need || (a.fixed && b.fixed)) continue;
         if (d < 1e-6) { dx = Math.cos(i * 2.39996 + j); dy = Math.sin(i * 2.39996 + j); d = 1; }
-        // The bigger disc moves less.
-        const push = need - d, wa = b.r / (a.r + b.r || 1), wb = 1 - wa;
+        // The bigger disc moves less; a fixed one does not move at all.
+        const push = need - d, wa = a.fixed ? 0 : b.fixed ? 1 : b.r / (a.r + b.r || 1), wb = 1 - wa;
         a.x -= (dx / d) * push * wa; a.y -= (dy / d) * push * wa;
         b.x += (dx / d) * push * wb; b.y += (dy / d) * push * wb;
         moved = true;

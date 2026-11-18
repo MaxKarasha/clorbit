@@ -1,7 +1,9 @@
 // Galaxy engine: canvas scene, camera, animations. Data comes from outside (snapshot + events).
 import type { AgentNode, ClorbitEvent, LiveSession, LiveSnapshot } from '@shared/api';
 import { t, tp } from '../i18n';
-import { clusterKey, labelWanted, planGalaxy, primaryOf, relaxGroups, ringRadius, type ClusterInfo } from './plan';
+import { clusterKey, labelWanted, planGalaxy, primaryOf, relaxGroups, ringRadius, type ClusterInfo, type GroupDisc } from './plan';
+import { clusterPinKey, gravityLayout, maxPull, pinnedSessions, pullOf, starPinKey, withPin, withoutPin, type Pins, type Pull } from './gravity';
+import { edgeView, inRect, placeEdgeChips, type Side } from './edge';
 
 export type Col = { h: number; s: number; l: number };
 export type Focus =
@@ -52,11 +54,29 @@ interface Body {
   _p: P;
 }
 interface Dust { ang: number; r: number; s: number; hs: number; a: number; born: number }
-interface Sys {
+/**
+ * Position of a star or cluster: fx/fy is where it is drawn, tx/ty where it is heading (fractions of the
+ * canvas). It follows its project group's centre plus its slot on the group's ring (ox/oy, px), or its pin.
+ */
+interface Placed {
+  fx: number; fy: number; tx: number; ty: number;
+  ox: number; oy: number;
+  /** Has had a position since it appeared. */
+  placed: boolean;
+  /** Pinned by the user: sits at its pin, ignores gravity, is an obstacle for the rest. */
+  pinned: boolean;
+}
+/**
+ * A project group's centre: (ax, ay) is the target from the layout (gravity or classic), (x, y) the drawn
+ * centre, which follows it on a critically damped spring of angular frequency w (slow: 15–30 s).
+ */
+interface GroupState { ax: number; ay: number; x: number; y: number; vx: number; vy: number; w: number }
+/** Spring frequency by pull: inactive groups pushed aside (≈ 26 s), working (≈ 22 s), waiting (≈ 15 s). */
+const SPRING: Record<Pull, number> = { 0: 0.25, 1: 0.3, 2: 0.45 };
+interface Sys extends Placed {
   s: LiveSession;
   root: Body;
   hue: number;
-  fx: number; fy: number; tx: number; ty: number;
   belt: Dust[];
   appear: number;
   /** Eased label opacity (labels fade in and out instead of popping) and the side it sits on. */
@@ -64,11 +84,10 @@ interface Sys {
   labelPos?: number;
 }
 /** A project's folded sessions: one star cluster in a soft nebula. */
-interface Clu {
+interface Clu extends Placed {
   key: string;
   info: ClusterInfo;
   hue: number;
-  fx: number; fy: number; tx: number; ty: number;
   appear: number;
   absorb: number;
   flare: number;
@@ -82,7 +101,11 @@ interface LabelCand {
   key: string; bx: number; by: number; br: number; ox: number; oy: number;
   lines: LabelLine[]; alpha: number; prio: number; must: boolean; want: boolean;
   ent: { labelA: number; labelPos?: number };
+  /** Draw a pin glyph after the first line. */
+  pin?: boolean;
 }
+/** An edge chip as drawn last frame (for clicks and hover). */
+interface EdgeHit { key: string; x: number; y: number; w: number; h: number; focus: Focus }
 
 /** Branch colors: a star has its project's base hue, each level-1 planet its own color, descendants shades of it. */
 export function branchCol(sysHue: number, depth: number, branchSlot: number, slot: number): Col {
@@ -99,6 +122,13 @@ export interface EngineCallbacks {
    * avoid soft ones (ticker lines, zoom controls) unless a must-show label has nowhere else to go.
    */
   hud?(): { el: Element; soft?: boolean }[];
+  /**
+   * Edge indicators: HUD elements that take a strip of the screen (status bar and breadcrumbs from the top,
+   * the side panel from the right, the console drawer from the bottom) and elements chips must not cover.
+   */
+  edges?(): { cuts: { el: Element; side: Side }[]; avoid: Element[] };
+  /** The user pinned or unpinned a body (the whole map, to persist). */
+  onPins?(pins: Pins): void;
 }
 
 /** Distant stars: projects of the last 30 days without live sessions. */
@@ -125,7 +155,19 @@ export class GalaxyEngine {
   private folded = new Map<string, string>();
   private lastSnap: LiveSnapshot | null = null;
   /** Sessions revealed from a cluster's list: shown as stars while they are in focus. */
-  private pinned = new Set<string>();
+  private revealed = new Set<string>();
+  /** Bodies the user dragged into place (Settings.layout.pins). */
+  private pins: Pins = {};
+  /** Activity gravity (Settings.layout.gravity). */
+  private gravity = true;
+  private groups = new Map<string, GroupState>();
+  /** Next layout starts from the classic positions instead of the current anchors ("Reset layout"). */
+  private resetAnchors = false;
+  private edgeHits: EdgeHit[] = [];
+  private edgeA = new Map<string, number>();
+  private hoverEdge: string | null = null;
+  /** Chips as placed last frame: kept still while one is hovered, so a drifting target cannot slide it away. */
+  private lastChips: ReturnType<typeof placeEdgeChips> = [];
   private needSync = false;
   private showAutomated = false;
   private hover: string | null = null;
@@ -143,7 +185,8 @@ export class GalaxyEngine {
   /** User camera offset on top of the focus target: drag pans, wheel/buttons zoom. */
   private pan = { x: 0, y: 0 };
   private zoomMul = 1;
-  private drag: { lastX: number; lastY: number; dist: number } | null = null;
+  /** A press: pans the camera, or moves a star/cluster (`ent`) when it started on one; `edge` — on an edge chip. */
+  private drag: { lastX: number; lastY: number; dist: number; ent?: Sys | Clu; offX: number; offY: number; moved: boolean; edge: boolean } | null = null;
   private suppressClick = false;
   private lastTour = 0;
   private tourI = 0;
@@ -161,6 +204,8 @@ export class GalaxyEngine {
     window.addEventListener('pointerup', this.onPointerUp);
     window.addEventListener('keydown', this.onKey);
     canvas.addEventListener('pointerleave', this.onLeave);
+    canvas.addEventListener('dblclick', this.onDblClick);
+    canvas.addEventListener('contextmenu', this.onContext);
     this.lastUser = this.T;
     this.raf = requestAnimationFrame(this.frame);
   }
@@ -175,6 +220,8 @@ export class GalaxyEngine {
     window.removeEventListener('pointerup', this.onPointerUp);
     window.removeEventListener('keydown', this.onKey);
     this.canvas.removeEventListener('pointerleave', this.onLeave);
+    this.canvas.removeEventListener('dblclick', this.onDblClick);
+    this.canvas.removeEventListener('contextmenu', this.onContext);
   }
 
   private resize() {
@@ -222,7 +269,7 @@ export class GalaxyEngine {
     this.focus = f;
     // A revealed session goes back into its cluster once the focus moves elsewhere.
     const keep = f.t === 'sys' || f.t === 'agent' ? f.sessionId : null;
-    for (const id of [...this.pinned]) if (id !== keep) { this.pinned.delete(id); this.needSync = true; }
+    for (const id of [...this.revealed]) if (id !== keep) { this.revealed.delete(id); this.needSync = true; }
     // A new focus flies to its own framing; drop the manual pan/zoom.
     this.pan = { x: 0, y: 0 };
     this.zoomMul = 1;
@@ -248,7 +295,7 @@ export class GalaxyEngine {
   reveal(sessionId: string, agentId?: string) {
     if (!this.systems.has(sessionId)) {
       if (!this.lastSnap?.sessions.some((s) => s.sessionId === sessionId)) return;
-      this.pinned.add(sessionId);
+      this.revealed.add(sessionId);
       this.sync(this.lastSnap);
     }
     if (!this.systems.has(sessionId)) return;
@@ -260,7 +307,8 @@ export class GalaxyEngine {
     const now = this.T;
     this.lastSnap = snap;
     const seen = new Set<string>();
-    const pinned = new Set(this.pinned);
+    // Revealed, focused and user-pinned sessions stay stars.
+    const pinned = new Set([...this.revealed, ...pinnedSessions(this.pins)]);
     const f = this.focus;
     if (f.t === 'sys' || f.t === 'agent') pinned.add(f.sessionId);
     const plan = planGalaxy(snap.sessions, { showAutomated: this.showAutomated, pinned });
@@ -271,7 +319,7 @@ export class GalaxyEngine {
       for (const s of info.sessions) this.folded.set(s.sessionId, info.project);
       let c = this.clusters.get(info.project);
       if (!c) {
-        c = { key: info.key, info, hue: Math.round(hashStr(info.project) * 360), fx: 0.5, fy: 0.5, tx: 0.5, ty: 0.5, appear: this.firstSync ? -99 : now, absorb: -9, flare: -9, labelA: 1 };
+        c = { key: info.key, info, hue: Math.round(hashStr(info.project) * 360), fx: 0.5, fy: 0.5, tx: 0.5, ty: 0.5, ox: 0, oy: 0, placed: false, pinned: false, appear: this.firstSync ? -99 : now, absorb: -9, flare: -9, labelA: 1 };
         this.clusters.set(info.project, c);
       } else if (info.sessions.length > c.info.sessions.length) c.absorb = now;
       c.info = info;
@@ -287,10 +335,10 @@ export class GalaxyEngine {
       if (!sys) {
         const hue = Math.round(hashStr(s.project) * 360);
         const root = this.makeBody(s.sessionId, s.root, null, this.firstSync ? -99 : now, hue, 0);
-        sys = { s, root, hue, fx: 0.5, fy: 0.5, tx: 0.5, ty: 0.5, belt: [], appear: this.firstSync ? -99 : now, labelA: 1 };
+        sys = { s, root, hue, fx: 0.5, fy: 0.5, tx: 0.5, ty: 0.5, ox: 0, oy: 0, placed: false, pinned: false, belt: [], appear: this.firstSync ? -99 : now, labelA: 1 };
         // A session leaving its cluster starts where the cluster is.
         const from = [...this.clusters.values()].find((c) => c.info.project === s.project);
-        if (from && !this.firstSync) { sys.fx = from.fx; sys.fy = from.fy; }
+        if (from && !this.firstSync) { sys.fx = from.fx; sys.fy = from.fy; sys.placed = true; }
         this.systems.set(s.sessionId, sys);
       }
       sys.s = s;
@@ -364,11 +412,73 @@ export class GalaxyEngine {
     for (const c of b.children) yield* this.walk(c);
   }
 
+  /* ---------- layout: groups, gravity, pins ---------- */
+
+  /** Activity gravity on/off (Settings → Interface). Off: the classic layout by project name. */
+  setGravity(v: boolean) {
+    if (v === this.gravity) return;
+    this.gravity = v;
+    this.layout();
+  }
+
+  /** The saved pins (Settings.layout.pins). */
+  setPins(pins: Pins) {
+    if (JSON.stringify(pins) === JSON.stringify(this.pins)) return;
+    this.pins = { ...pins };
+    // Pinned sessions must stay stars, so the plan is redone, not just the layout.
+    if (this.lastSnap) this.needSync = true;
+    else this.layout();
+  }
+
+  /** Unpins everything and lets the galaxy arrange itself again (the move is animated like any other). */
+  resetLayout() {
+    this.resetAnchors = true;
+    this.pins = {};
+    if (this.lastSnap) this.sync(this.lastSnap);
+    else this.layout();
+  }
+
+  isPinned(key: string): boolean { return key in this.pins; }
+
+  unpin(key: string) {
+    if (!(key in this.pins)) return;
+    this.pins = withoutPin(this.pins, key);
+    this.cb.onPins?.(this.pins);
+    if (this.lastSnap) this.sync(this.lastSnap);
+    else this.layout();
+  }
+
+  private pinAt(m: Sys | Clu, x: number, y: number) {
+    this.pins = withPin(this.pins, this.memberKey(m), { x, y });
+    this.cb.onPins?.(this.pins);
+    if (this.lastSnap) this.sync(this.lastSnap);
+    else this.layout();
+  }
+
+  private memberKey(m: Sys | Clu) { return 'info' in m ? clusterPinKey(m.info.project) : starPinKey(m.s.project, m.s.sessionId); }
+  private memberProject(m: Sys | Clu) { return 'info' in m ? m.info.project : m.s.project; }
+  /** A body's radius on the layout (incl. glow), px. */
+  private memberSize(m: Sys | Clu) { return 'info' in m ? this.cluR(m) * 1.1 : Math.max(this.starR(m) * 1.8, 12 * this.U); }
+
+  /** Where a body is heading right now: its pin, or its group's (moving) centre plus its ring slot. */
+  private memberTarget(m: Sys | Clu): [number, number] {
+    if (m.pinned) return [m.tx, m.ty];
+    const g = this.groups.get(this.memberProject(m));
+    if (!g) return [m.tx, m.ty];
+    const W = Math.max(1, this.W), H = Math.max(1, this.H);
+    return [clamp((g.x * W + m.ox) / W, 0.02, 0.98), clamp((g.y * H + m.oy) / H, 0.1, 0.96)];
+  }
+
   /**
-   * Layout: projects on a sunflower spiral in a stable order (by name); a project's bodies (its cluster
-   * first, then its stars by start time) on a ring around the project's spot. The ring grows with the
-   * number and size of bodies so neighbours never overlap. Positions depend only on membership, so they
-   * do not jump between polls.
+   * Layout. A project's free bodies (its cluster first, then its stars by start time) sit on a ring around
+   * the group's centre; the ring grows with the number and size of bodies so neighbours never overlap.
+   * Pinned bodies sit at their pins and are obstacles. Group centres:
+   * - classic (gravity off, and the starting point of new groups): a sunflower spiral by project name,
+   *   overlaps pushed apart — a function of membership only;
+   * - gravity on: working/waiting groups are pulled into the centre region, the rest stays where it was
+   *   unless an active group needs its space (gravity.ts). The result is a fixed point, so polls with the
+   *   same data do not move anything.
+   * Drawn centres follow the targets on a slow spring (step()).
    */
   private layout() {
     const groups = new Map<string, { clu: Clu | null; stars: Sys[] }>();
@@ -378,31 +488,70 @@ export class GalaxyEngine {
     const names = [...groups.keys()].sort((a, b) => a.localeCompare(b));
     const n = names.length;
     const W = Math.max(1, this.W), H = Math.max(1, this.H), u = this.U;
-    const plans = names.map((name, i) => {
+    const obstacles: GroupDisc[] = [];
+    const plans: { name: string; members: (Clu | Sys)[]; R: number; pull: Pull; disc: GroupDisc }[] = [];
+    names.forEach((name, i) => {
       const grp = groups.get(name)!;
-      const r = n === 1 ? 0 : Math.sqrt((i + 0.6) / n) * 0.4;
-      const a = i * 2.39996 + 0.6;
       grp.stars.sort((x, y) => x.s.startedAt - y.s.startedAt || x.s.sessionId.localeCompare(y.s.sessionId));
-      const members: (Clu | Sys)[] = [...(grp.clu ? [grp.clu] : []), ...grp.stars];
-      const sizes = members.map((m) => ('info' in m ? this.cluR(m) * 1.1 : Math.max(this.starR(m) * 1.8, 12 * u)));
+      const members: (Clu | Sys)[] = [];
+      for (const m of [...(grp.clu ? [grp.clu] : []), ...grp.stars]) {
+        const pin = this.pins[this.memberKey(m)];
+        m.pinned = !!pin;
+        if (!pin) { members.push(m); continue; }
+        m.tx = clamp(pin.x, 0.02, 0.98);
+        m.ty = clamp(pin.y, 0.06, 0.97);
+        if (!m.placed) { m.fx = m.tx; m.fy = m.ty; m.placed = true; }
+        obstacles.push({ x: m.tx * W, y: m.ty * H, r: this.memberSize(m) + 30 * u, fixed: true });
+      }
+      if (!members.length) return;
+      const sizes = members.map((m) => this.memberSize(m));
       const R = ringRadius(sizes, 38 * u, 30 * u);
       // Footprint: the ring, its biggest body and room for the labels around it.
       const foot = R + Math.max(...sizes) + 34 * u;
-      return { i, members, R, disc: { x: (0.5 + r * Math.cos(a) * 0.98) * W, y: (0.53 + r * Math.sin(a) * 0.82) * H, r: foot } };
+      const r = n === 1 ? 0 : Math.sqrt((i + 0.6) / n) * 0.4;
+      const a = i * 2.39996 + 0.6;
+      const pull = members.reduce<Pull>((acc, m) => Math.max(acc, 'info' in m ? maxPull(m.info.sessions) : pullOf(m.s)) as Pull, 0);
+      plans.push({ name, members, R, pull, disc: { x: (0.5 + r * Math.cos(a) * 0.98) * W, y: (0.53 + r * Math.sin(a) * 0.82) * H, r: foot } });
     });
+    const box = { left: 12, top: Math.min(H * 0.14, 110), right: W - 12, bottom: H - 36 };
     // Groups never overlap: a big ring pushes its neighbours away instead of swallowing them.
-    const discs = relaxGroups(plans.map((p) => p.disc), { left: 12, top: Math.min(H * 0.14, 110), right: W - 12, bottom: H - 36 });
-    plans.forEach((p, k) => {
-      const { x: gx, y: gy } = discs[k];
-      p.members.forEach((m, j) => {
-        const aa = (j / p.members.length) * 6.283 + p.i;
-        const tx = clamp((gx + Math.cos(aa) * p.R) / W, 0.02, 0.98);
-        const ty = clamp((gy + Math.sin(aa) * p.R) / H, 0.1, 0.96);
-        m.tx = tx;
-        m.ty = ty;
-        if (m.fx === 0.5 && m.fy === 0.5 && m.appear === -99) { m.fx = tx; m.fy = ty; }
+    const classic = relaxGroups([...obstacles, ...plans.map((p) => p.disc)], box).slice(obstacles.length);
+    let pos: { x: number; y: number }[] = classic;
+    if (this.gravity) {
+      const nodes = plans.map((p, k) => {
+        const st = this.resetAnchors ? undefined : this.groups.get(p.name);
+        return { key: p.name, x: st ? st.ax * W : classic[k].x, y: st ? st.ay * H : classic[k].y, r: p.disc.r, pull: p.pull };
       });
+      pos = gravityLayout(nodes, obstacles, box, { x: 0.5 * W, y: 0.53 * H }, { region: 0.15 * Math.min(W, H) });
+    }
+    this.resetAnchors = false;
+    const seen = new Set<string>();
+    plans.forEach((p, k) => {
+      seen.add(p.name);
+      const ax = pos[k].x / W, ay = pos[k].y / H;
+      // The ring's phase comes from the name, so it does not turn when other projects come and go.
+      const phase = hashStr(p.name) * 6.283;
+      p.members.forEach((m, j) => {
+        const aa = (j / p.members.length) * 6.283 + phase;
+        m.ox = Math.cos(aa) * p.R;
+        m.oy = Math.sin(aa) * p.R;
+      });
+      let st = this.groups.get(p.name);
+      if (!st) {
+        // A new group starts where one of its bodies already is (e.g. one just unpinned), else at its classic
+        // place, and drifts from there; on page load it starts settled.
+        const settled = this.firstSync || !this.gravity;
+        const from = p.members.find((m) => m.placed);
+        const sx = settled ? ax : from ? from.fx - from.ox / W : classic[k].x / W;
+        const sy = settled ? ay : from ? from.fy - from.oy / H : classic[k].y / H;
+        st = { ax, ay, x: sx, y: sy, vx: 0, vy: 0, w: SPRING[p.pull] };
+        this.groups.set(p.name, st);
+      } else if (Math.hypot(ax - st.ax, ay - st.ay) > 1e-3) st.w = SPRING[p.pull];
+      st.ax = ax;
+      st.ay = ay;
+      for (const m of p.members) if (!m.placed) { [m.tx, m.ty] = this.memberTarget(m); m.fx = m.tx; m.fy = m.ty; m.placed = true; }
     });
+    for (const k of [...this.groups.keys()]) if (!seen.has(k)) this.groups.delete(k);
   }
 
   /* ---------- events ---------- */
@@ -538,9 +687,59 @@ export class GalaxyEngine {
     this.zoomAt(e.clientX - r.left, e.clientY - r.top, factor);
   };
 
+  /** Canvas px → galaxy fractions (the space fx/fy and pins live in). */
+  private toWorld(mx: number, my: number): [number, number] {
+    const W = Math.max(1, this.W), H = Math.max(1, this.H);
+    return [((mx - W / 2) / this.cam.s + this.cam.x) / W, ((my - H / 2) / this.cam.s + this.cam.y) / H];
+  }
+
+  private edgeAt(mx: number, my: number): EdgeHit | null {
+    return this.edgeHits.find((h) => mx >= h.x && mx <= h.x + h.w && my >= h.y && my <= h.y + h.h) ?? null;
+  }
+
+  /** A star or cluster under the pointer that can be dragged: not a planet, and not what the camera is framing. */
+  private movableAt(mx: number, my: number): Sys | Clu | null {
+    const h = this.hitAt(mx, my);
+    if (!h || h.body) return null;
+    const f = this.focus;
+    if (h.clu) return f.t === 'cluster' && f.project === h.clu.info.project ? null : h.clu;
+    if (h.sys) return (f.t === 'sys' || f.t === 'agent') && f.sessionId === h.sys.s.sessionId ? null : h.sys;
+    return null;
+  }
+
+  /** The pin key of a pinned star/cluster under the pointer. */
+  private pinnedAt(mx: number, my: number): string | null {
+    const h = this.hitAt(mx, my);
+    const m = h && !h.body ? h.clu ?? h.sys : undefined;
+    return m && m.pinned ? this.memberKey(m) : null;
+  }
+
+  private local(e: MouseEvent): [number, number] {
+    const r = this.canvas.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  }
+
+  // Press on a star or cluster and move: it is dragged (and pinned where it is dropped). Press on empty
+  // space: the camera pans, as before. A press without movement stays a click.
   private onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
-    this.drag = { lastX: e.clientX, lastY: e.clientY, dist: 0 };
+    const [mx, my] = this.local(e);
+    const edge = !!this.edgeAt(mx, my);
+    const ent = edge || e.altKey ? null : this.movableAt(mx, my);
+    const w = this.toWorld(mx, my);
+    this.drag = { lastX: e.clientX, lastY: e.clientY, dist: 0, ent: ent ?? undefined, offX: ent ? ent.fx - w[0] : 0, offY: ent ? ent.fy - w[1] : 0, moved: false, edge };
+  };
+
+  private onDblClick = (e: MouseEvent) => {
+    const key = this.pinnedAt(...this.local(e));
+    if (key) this.unpin(key);
+  };
+
+  private onContext = (e: MouseEvent) => {
+    const key = this.pinnedAt(...this.local(e));
+    if (!key) return;
+    e.preventDefault();
+    this.unpin(key);
   };
 
   private hitAt(mx: number, my: number): Hit | null {
@@ -554,25 +753,35 @@ export class GalaxyEngine {
   }
 
   private onLeave = () => {
-    if (!this.drag) { this.hover = null; this.canvas.style.cursor = ''; }
+    if (!this.drag) { this.hover = null; this.hoverEdge = null; this.canvas.style.cursor = ''; }
   };
 
   private onPointerMove = (e: PointerEvent) => {
     const d = this.drag;
     if (!d) {
       if (e.target !== this.canvas) return;
-      const r = this.canvas.getBoundingClientRect();
-      const h = this.hitAt(e.clientX - r.left, e.clientY - r.top);
+      const [mx, my] = this.local(e);
+      const eh = this.edgeAt(mx, my);
+      this.hoverEdge = eh?.key ?? null;
+      const h = eh ? null : this.hitAt(mx, my);
       this.hover = h ? (h.clu ? h.clu.key : h.body ? h.body.key : h.sys!.s.sessionId) : null;
-      this.canvas.style.cursor = h ? 'pointer' : '';
+      this.canvas.style.cursor = h || eh ? 'pointer' : '';
       return;
     }
     const dx = e.clientX - d.lastX, dy = e.clientY - d.lastY;
     d.lastX = e.clientX;
     d.lastY = e.clientY;
     d.dist += Math.abs(dx) + Math.abs(dy);
-    if (d.dist < 5) return;
+    if (d.dist < 5 || d.edge) return;
     this.canvas.style.cursor = 'grabbing';
+    if (d.ent) {
+      const [wx, wy] = this.toWorld(...this.local(e));
+      d.moved = true;
+      d.ent.fx = d.ent.tx = clamp(wx + d.offX, 0.02, 0.98);
+      d.ent.fy = d.ent.ty = clamp(wy + d.offY, 0.06, 0.97);
+      this.lastUser = this.T;
+      return;
+    }
     const s = this.cam.s;
     this.pan.x -= dx / s;
     this.pan.y -= dy / s;
@@ -582,9 +791,11 @@ export class GalaxyEngine {
   };
 
   private onPointerUp = () => {
-    if (this.drag && this.drag.dist >= 5) this.suppressClick = true;
+    const d = this.drag;
+    if (d && d.dist >= 5) this.suppressClick = true;
     this.drag = null;
     this.canvas.style.cursor = '';
+    if (d?.ent && d.moved) this.pinAt(d.ent, d.ent.fx, d.ent.fy);
   };
 
   private onKey = (e: KeyboardEvent) => {
@@ -621,6 +832,10 @@ export class GalaxyEngine {
     const mx = e.clientX - r.left, my = e.clientY - r.top;
     this.lastUser = this.T;
     if (this.suppressClick) { this.suppressClick = false; return; }
+    const eh = this.edgeAt(mx, my);
+    if (eh) return this.setFocus(eh.focus, true);
+    // Alt-click unpins (as do double-click and right-click).
+    if (e.altKey) { const key = this.pinnedAt(mx, my); if (key) return this.unpin(key); }
     const best = this.hitAt(mx, my);
     const f = this.focus;
     if (!best && f.t === 'none') {
@@ -682,13 +897,26 @@ export class GalaxyEngine {
   private step(dt: number) {
     const ts = this.focus.t === 'agent' ? 0.25 : this.focus.t === 'sys' ? 0.45 : 1;
     this.timeScale += (ts - this.timeScale) * Math.min(1, dt * 2);
-    for (const c of this.clusters.values()) {
-      c.fx += (c.tx - c.fx) * Math.min(1, dt * 1.5);
-      c.fy += (c.ty - c.fy) * Math.min(1, dt * 1.5);
+    // Group centres follow their targets on a critically damped spring: an eased drift, never a jump.
+    // Reduce motion: they arrive at once.
+    for (const g of this.groups.values()) {
+      if (this.reduceMotion) { g.x = g.ax; g.y = g.ay; g.vx = g.vy = 0; continue; }
+      const w = g.w;
+      g.vx += (w * w * (g.ax - g.x) - 2 * w * g.vx) * dt;
+      g.vy += (w * w * (g.ay - g.y) - 2 * w * g.vy) * dt;
+      g.x += g.vx * dt;
+      g.y += g.vy * dt;
+    }
+    // Bodies follow their group (or pin) closely; the one being dragged follows the pointer.
+    const ease = this.reduceMotion ? 1 : Math.min(1, dt * 1.5);
+    const moving = this.drag?.moved ? this.drag.ent : undefined;
+    for (const m of [...this.clusters.values(), ...this.systems.values()]) {
+      if (m === moving) continue;
+      [m.tx, m.ty] = this.memberTarget(m);
+      m.fx += (m.tx - m.fx) * ease;
+      m.fy += (m.ty - m.fy) * ease;
     }
     for (const sys of this.systems.values()) {
-      sys.fx += (sys.tx - sys.fx) * Math.min(1, dt * 1.5);
-      sys.fy += (sys.ty - sys.fy) * Math.min(1, dt * 1.5);
       for (const b of [...this.walk(sys.root)]) {
         const working = b.node.status === 'working';
         b.ang += dt * b.speed * this.timeScale * (b.ret !== null ? 3 : 1) * (working ? 1 : 0.35) * (this.reduceMotion ? 0.12 : 1);
@@ -988,7 +1216,9 @@ export class GalaxyEngine {
           key: sys.s.sessionId, bx: c[0], by: c[1], br: sr * k * 1.5 + 9, ox: ob, oy: ob, lines, alpha: nameA, ent: sys,
           prio: hovered ? 7 : waiting ? 6 : isP ? (sys.s.alive ? 5 : 4) : sys.s.alive ? 2 : 1,
           must: isP || hovered || waiting || isF,
-          want: labelWanted({ primary: isP, hovered, waiting, zoom: k, groupSize: gs }),
+          // A pinned star always says so (its pin glyph is on the label).
+          want: sys.pinned || labelWanted({ primary: isP, hovered, waiting, zoom: k, groupSize: gs }),
+          pin: sys.pinned,
         });
       }
       if (isF) {
@@ -1007,6 +1237,99 @@ export class GalaxyEngine {
       ctx.restore();
     }
     this.placeLabels(cands);
+    this.drawEdges();
+  }
+
+  /** A small push-pin after a pinned body's name. */
+  private pinGlyph(x: number, y: number, a: number) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(0.5);
+    ctx.strokeStyle = cA('#9FE3FF', 0.9 * a);
+    ctx.fillStyle = cA('#9FE3FF', 0.95 * a);
+    ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.moveTo(0, 0.5); ctx.lineTo(0, 6); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, -1.6, 2.7, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+
+  /**
+   * Edge indicators: one chip per project with a waiting (orange) or working (lighter, blue) body outside
+   * the free part of the screen, pointing at it; a click flies there. Placement is in edge.ts.
+   */
+  private drawEdges() {
+    const { ctx, T } = this;
+    this.edgeHits = [];
+    if (!this.cb.edges) return;
+    const cr = this.canvas.getBoundingClientRect();
+    const rel = (el: Element) => { const r = el.getBoundingClientRect(); return { x: r.left - cr.left, y: r.top - cr.top, w: r.width, h: r.height }; };
+    const hud = this.cb.edges();
+    const view = edgeView(this.W, this.H, hud.cuts.map((c) => ({ side: c.side, rect: rel(c.el) })));
+    type Cand = { pull: Pull; count: number; x: number; y: number; last: number; focus: Focus };
+    const per = new Map<string, Cand>();
+    const consider = (project: string, pull: Pull, p: P, last: number, focus: Focus) => {
+      if (!pull || inRect(p[0], p[1], view, 8)) return;
+      const c = per.get(project);
+      if (!c) per.set(project, { pull, count: 1, x: p[0], y: p[1], last, focus });
+      else {
+        c.count++;
+        if (pull > c.pull || (pull === c.pull && last > c.last)) Object.assign(c, { pull, x: p[0], y: p[1], last, focus });
+      }
+    };
+    for (const sys of this.systems.values()) consider(sys.s.project, pullOf(sys.s), this.S(this.pos(sys.root)), sys.s.lastActivity, { t: 'sys', sessionId: sys.s.sessionId });
+    for (const c of this.clusters.values()) consider(c.info.project, maxPull(c.info.sessions), this.S([c.fx * this.W, c.fy * this.H]), c.info.lastActivity, { t: 'cluster', project: c.info.project });
+    if (!per.size) { this.edgeA.clear(); this.lastChips = []; return; }
+    const H = 26, font = `600 11.5px ${MONO}`;
+    ctx.save();
+    ctx.font = font;
+    const texts = new Map<string, { name: string; st: string }>();
+    const targets = [...per.entries()].map(([project, c]) => {
+      const name = short(project, 24);
+      const st = `${t(c.pull === 2 ? 'gx.edge.waiting' : 'gx.edge.working')}${c.count > 1 ? ` ×${c.count}` : ''}`;
+      texts.set(project, { name, st });
+      const w = ctx.measureText(`${name} · ${st}`).width + 36;
+      return { key: project, x: c.x, y: c.y, w, h: H, prio: c.pull * 1e13 + c.last };
+    });
+    const frozen = this.hoverEdge && this.lastChips.some((c) => c.key === this.hoverEdge)
+      ? this.lastChips.filter((c) => per.has(c.key)).map((c) => { const p = per.get(c.key)!; return { ...c, ang: Math.atan2(p.y - (c.y + c.h / 2), p.x - (c.x + c.w / 2)) }; })
+      : null;
+    const chips = frozen ?? placeEdgeChips(targets, view, hud.avoid.map(rel), { margin: 10, gap: 6, max: 8 });
+    this.lastChips = chips;
+    const shown = new Set<string>();
+    const ease = Math.min(1, this.dt * 6);
+    for (const chip of chips) {
+      const c = per.get(chip.key)!;
+      const { name, st } = texts.get(chip.key)!;
+      shown.add(chip.key);
+      const a = (this.edgeA.get(chip.key) ?? 0) + (1 - (this.edgeA.get(chip.key) ?? 0)) * ease;
+      this.edgeA.set(chip.key, a);
+      const wait = c.pull === 2;
+      const col = wait ? WAIT : '#5CC8FF';
+      const hov = this.hoverEdge === chip.key;
+      ctx.globalAlpha = a * (wait ? 1 : 0.86);
+      ctx.fillStyle = hov ? 'rgba(18,26,48,.94)' : 'rgba(8,12,24,.88)';
+      ctx.strokeStyle = cA(col, wait ? 0.55 + 0.3 * Math.max(0, Math.sin(T * 4)) : hov ? 0.7 : 0.38);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(chip.x, chip.y, chip.w, chip.h, 8); ctx.fill(); ctx.stroke();
+      // The arrow points from the chip to the body.
+      ctx.save();
+      ctx.translate(chip.x + 14, chip.y + H / 2);
+      ctx.rotate(chip.ang);
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(-4, -4.5); ctx.lineTo(-1.5, 0); ctx.lineTo(-4, 4.5); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      ctx.textAlign = 'left';
+      ctx.font = font;
+      ctx.fillStyle = '#E6EBF5';
+      ctx.fillText(name, chip.x + 26, chip.y + 17);
+      const nw = ctx.measureText(`${name} · `).width;
+      ctx.fillStyle = wait ? WAIT : '#9FDFFF';
+      ctx.fillText(st, chip.x + 26 + nw, chip.y + 17);
+      this.edgeHits.push({ key: chip.key, x: chip.x, y: chip.y, w: chip.w, h: chip.h, focus: c.focus });
+    }
+    ctx.restore();
+    for (const k of [...this.edgeA.keys()]) if (!shown.has(k)) this.edgeA.delete(k);
   }
 
   /**
@@ -1036,8 +1359,14 @@ export class GalaxyEngine {
     ctx.save();
     ctx.textAlign = 'center';
     for (const c of cands) {
-      let w = 0;
-      for (const l of c.lines) { ctx.font = l.font; w = Math.max(w, ctx.measureText(l.text).width); }
+      let w = 0, w0 = 0;
+      const pinW = c.pin ? 14 : 0;
+      c.lines.forEach((l, i) => {
+        ctx.font = l.font;
+        const lw = ctx.measureText(l.text).width;
+        if (i === 0) w0 = lw;
+        w = Math.max(w, lw + (i === 0 ? pinW : 0));
+      });
       const h = c.lines.length * 15 + 4;
       // Label centre x and top y for each side: below, above, right, left.
       const at = (pos: number): R => {
@@ -1068,8 +1397,9 @@ export class GalaxyEngine {
       c.lines.forEach((l, i) => {
         ctx.font = l.font;
         ctx.fillStyle = cA(l.color, 0.95 * a);
-        ctx.fillText(l.text, cx, r.y + 13 + (i === 0 ? 0 : 16 + (i - 1) * 15));
+        ctx.fillText(l.text, i === 0 ? cx - pinW / 2 : cx, r.y + 13 + (i === 0 ? 0 : 16 + (i - 1) * 15));
       });
+      if (c.pin) this.pinGlyph(cx - pinW / 2 + w0 / 2 + 9, r.y + 9, a);
     }
     ctx.restore();
   }
@@ -1147,7 +1477,7 @@ export class GalaxyEngine {
     if (parts.length) lines.push({ text: parts.join(' · '), font: `11px ${MONO}`, color: '#8D99B0' });
     cands.push({
       key: c.key, bx: sx, by: sy, br: rr * 0.8 + 8, ox: rr * 1.05, oy: rr * 0.75, lines, alpha, ent: c,
-      prio: hov ? 7 : alone ? 4 : 3, must: hov || isF || alone, want: true,
+      prio: hov ? 7 : alone ? 4 : 3, must: hov || isF || alone, want: true, pin: c.pinned,
     });
   }
 }

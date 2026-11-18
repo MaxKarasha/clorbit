@@ -3893,12 +3893,23 @@ var init_api = __esm({
       },
       sound: { enabled: true, volume: 0.6, theme: "orbit" },
       dnd: { enabled: false, quietHours: { enabled: false, from: "22:00", to: "08:00" }, mutedUntil: null },
-      interface: { lang: "en", autoTour: false, reduceMotion: false, showAutomated: false }
+      interface: { lang: "en", autoTour: false, reduceMotion: false, showAutomated: false },
+      layout: { gravity: true, pins: {} }
     };
   }
 });
 
 // shared/settings.ts
+function normalizePins(v) {
+  if (!isObj(v)) return null;
+  const ok = [];
+  for (const [k, p] of Object.entries(v)) {
+    if (!PIN_KEY.test(k) || !isObj(p)) continue;
+    const x = unit(p.x), y = unit(p.y);
+    if (x !== null && y !== null) ok.push([k, { x, y }]);
+  }
+  return Object.fromEntries(ok.slice(-MAX_PINS));
+}
 function cloneSettings(s) {
   return JSON.parse(JSON.stringify(s));
 }
@@ -3945,6 +3956,12 @@ function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
     out.interface.reduceMotion = bool(i.reduceMotion, out.interface.reduceMotion);
     out.interface.showAutomated = bool(i.showAutomated, out.interface.showAutomated);
   }
+  const l = patch.layout;
+  if (isObj(l)) {
+    out.layout.gravity = bool(l.gravity, out.layout.gravity);
+    const pins = normalizePins(l.pins);
+    if (pins) out.layout.pins = pins;
+  }
   return out;
 }
 function parseHHMM(s) {
@@ -3964,7 +3981,7 @@ function isSilenced(s, now = Date.now()) {
   const q = s.dnd.quietHours;
   return q.enabled && inQuietHours(q.from, q.to, new Date(now));
 }
-var isObj, bool, HHMM, time, MAX_MUTE_MS;
+var isObj, bool, HHMM, time, MAX_MUTE_MS, MAX_PINS, PIN_KEY, unit;
 var init_settings = __esm({
   "shared/settings.ts"() {
     "use strict";
@@ -3974,6 +3991,9 @@ var init_settings = __esm({
     HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
     time = (v, d) => typeof v === "string" && HHMM.test(v.trim()) ? v.trim() : d;
     MAX_MUTE_MS = 7 * 24 * 36e5;
+    MAX_PINS = 64;
+    PIN_KEY = /^(star|cluster):[^\u0000-\u001f]{1,240}$/;
+    unit = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(Math.min(1, Math.max(0, v)) * 1e4) / 1e4 : null;
   }
 });
 

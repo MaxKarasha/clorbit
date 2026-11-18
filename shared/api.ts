@@ -264,7 +264,15 @@ export interface Settings {
   /** showAutomated: automated sessions (claude -p, SDK, CI) are separate stars and may notify;
    *  off (default) — they join their project's cluster, are grouped in the console and never notify. */
   interface: { lang: 'en' | 'uk'; autoTour: boolean; reduceMotion: boolean; showAutomated: boolean };
+  /** Galaxy layout. gravity: working and waiting sessions drift to the centre (default on).
+   *  pins: bodies the user dragged into place, keyed 'star:<project>:<sessionId>' or 'cluster:<project>';
+   *  positions are fractions (0..1) of the galaxy's width and height, so they do not depend on the screen.
+   *  A PUT replaces the whole pins map (that is how a pin is removed); at most MAX_PINS (shared/settings.ts). */
+  layout: { gravity: boolean; pins: Record<string, LayoutPin> };
 }
+
+/** A pinned body's position: fractions of the galaxy's width and height. */
+export interface LayoutPin { x: number; y: number }
 
 const rule = (sound: boolean, browser: boolean, toast: boolean, browserHiddenOnly = false): NotifyRule => ({ sound, browser, browserHiddenOnly, toast, system: false });
 
@@ -283,6 +291,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sound: { enabled: true, volume: 0.6, theme: 'orbit' },
   dnd: { enabled: false, quietHours: { enabled: false, from: '22:00', to: '08:00' }, mutedUntil: null },
   interface: { lang: 'en', autoTour: false, reduceMotion: false, showAutomated: false },
+  layout: { gravity: true, pins: {} },
 };
 
 /** GET /api/about — read-only facts for the Connection section of the settings panel. */

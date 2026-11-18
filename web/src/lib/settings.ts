@@ -197,3 +197,19 @@ export function syncDemoMode(demo: boolean): void {
     void loadSettings();
   }
 }
+
+// ---------- galaxy layout ----------
+
+const layoutResetListeners = new Set<() => void>();
+
+/** "Reset layout": drops every pin (saved like any setting) and tells the galaxy to arrange itself again. */
+export function resetLayout(): void {
+  updateSettings({ layout: { pins: {} } });
+  layoutResetListeners.forEach((l) => l());
+}
+
+/** The galaxy listens for "Reset layout" from the settings panel or its own controls. */
+export function onLayoutReset(cb: () => void): () => void {
+  layoutResetListeners.add(cb);
+  return () => void layoutResetListeners.delete(cb);
+}

@@ -2,6 +2,18 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Activity gravity in the galaxy.** Projects with a working or waiting session slowly drift into the centre (an eased 15–30 s move, never a jump); waiting ones get the spot closest to the centre. When a session stops being active it stays where it is; idle projects move aside, outward, only when an active one needs their space. Targets are deterministic and do not change between polls with the same data. Settings → Interface → "Gravity: pull active sessions to the centre" (on by default); off restores the fixed layout by project name. With reduce motion on, moves happen at once.
+- **Pinning.** Drag a star or a cluster to put it somewhere else (pressing on empty space still pans); it stays there, marked with a pin next to its label, ignores gravity and the others make room for it. Double-click, right-click or Alt-click it — or "Unpin" in its side panel — to let it go. Pins are saved on the server (`Settings.layout.pins`, keyed `star:<project>:<sessionId>` / `cluster:<project>`, positions as fractions of the galaxy so they survive a different screen; at most 64; pins of sessions that are gone are dropped). "Reset layout" in Settings → Interface and in the zoom controls unpins everything and lets the galaxy rearrange itself. In demo mode pins live in memory only.
+- **Edge indicators.** While you are zoomed in elsewhere, a waiting (orange) or working (blue) project out of view gets a chip at the edge of the screen pointing at it — project, status and count. Chips stack without overlapping, stay clear of the status bar, breadcrumbs, side panel, console, ticker, zoom controls and toasts, and disappear once the project is on screen. Click one to fly there.
+
+### Fixed
+
+- The transparent part of the zoom-controls column no longer swallows clicks on the galaxy behind it.
+
 ## 0.2.2
 
 ### Fixed

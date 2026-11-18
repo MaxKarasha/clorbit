@@ -1,5 +1,5 @@
 // Settings validation and the "should this be silent now" math, shared by the server and the web app.
-import { DEFAULT_SETTINGS, NOTIFY_EVENTS, SOUND_THEMES, type NotifyRule, type Settings, type SoundTheme } from './api';
+import { DEFAULT_SETTINGS, NOTIFY_EVENTS, SOUND_THEMES, type LayoutPin, type NotifyRule, type Settings, type SoundTheme } from './api';
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d);
@@ -7,6 +7,25 @@ const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const time = (v: unknown, d: string) => (typeof v === 'string' && HHMM.test(v.trim()) ? v.trim() : d);
 /** A "mute for N" can never reach further than a week ahead. */
 const MAX_MUTE_MS = 7 * 24 * 3_600_000;
+
+export type { LayoutPin };
+/** How many bodies can be pinned in the galaxy (the oldest pins go first). */
+export const MAX_PINS = 64;
+/** Pin keys: 'star:<project>:<sessionId>' or 'cluster:<project>'. */
+const PIN_KEY = /^(star|cluster):[^\u0000-\u001f]{1,240}$/;
+const unit = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.min(1, Math.max(0, v)) * 1e4) / 1e4 : null);
+
+/** Validates a pins map: known key shapes only, coordinates clamped to 0..1, at most MAX_PINS (the newest win). */
+export function normalizePins(v: unknown): Record<string, LayoutPin> | null {
+  if (!isObj(v)) return null;
+  const ok: [string, LayoutPin][] = [];
+  for (const [k, p] of Object.entries(v)) {
+    if (!PIN_KEY.test(k) || !isObj(p)) continue;
+    const x = unit(p.x), y = unit(p.y);
+    if (x !== null && y !== null) ok.push([k, { x, y }]);
+  }
+  return Object.fromEntries(ok.slice(-MAX_PINS));
+}
 
 export function cloneSettings(s: Settings): Settings {
   return JSON.parse(JSON.stringify(s)) as Settings;
@@ -58,6 +77,13 @@ export function normalizeSettings(patch: unknown, base: Settings = DEFAULT_SETTI
     out.interface.autoTour = bool(i.autoTour, out.interface.autoTour);
     out.interface.reduceMotion = bool(i.reduceMotion, out.interface.reduceMotion);
     out.interface.showAutomated = bool(i.showAutomated, out.interface.showAutomated);
+  }
+  const l = patch.layout;
+  if (isObj(l)) {
+    out.layout.gravity = bool(l.gravity, out.layout.gravity);
+    // The pins map is replaced as a whole, so removing a pin is just sending the map without it.
+    const pins = normalizePins(l.pins);
+    if (pins) out.layout.pins = pins;
   }
   return out;
 }

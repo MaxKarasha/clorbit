@@ -97,6 +97,13 @@ export default {
   'ui.motion.d': 'Slows orbits, stops twinkling and drifting, and cuts camera flights.',
   'ui.automated': 'Show automated sessions as separate stars',
   'ui.automated.d': 'Runs nobody types into: claude -p from scripts and CI, the Agent SDK, scheduled routines. Off: they join their project’s star cluster, are grouped in the console and never notify.',
+  'ui.gravity': 'Gravity: pull active sessions to the centre',
+  'ui.gravity.d': 'Working and waiting sessions slowly drift to the middle of the galaxy, waiting ones closest; finished ones stay where they are. Off: projects keep a fixed order by name.',
+  'ui.layout': 'Reset layout',
+  'ui.layout.d': 'Unpins every star and cluster you dragged into place and lets the galaxy arrange itself again.',
+  'ui.layout.pinned': '{n} pinned now|{n} pinned now',
+  'ui.layout.btn': 'Reset',
+  'ui.layout.done': 'Done',
 
   // Connection
   'con.version': 'Server',

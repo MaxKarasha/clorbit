@@ -7,13 +7,14 @@ import { DemoStrip, ServerOffline } from '../components/ServerState';
 import { locale, t, tp, useLang, withLang, type MsgKey } from '../i18n';
 import { enterDemo, isDemo } from '../lib/demo';
 import { href } from '../lib/router';
-import { updateSettings, useSetting } from '../lib/settings';
+import { getSettings, onLayoutReset, resetLayout, updateSettings, useSetting } from '../lib/settings';
 import { feed, focusSession, onFocusRequest, takePendingFocus, type FocusRequest } from '../notify/feed';
 import { ConsoleDrawer, popOutConsole, Ticker } from '../console/Console';
 import { consoleStore, loadRecent, projectColor, setColorProvider, setColorSource, shareColors } from '../console/store';
 import { GalaxyEngine, prettyModel, short, type Focus } from './engine';
 import { MockFeed } from './mock';
 import type { ClusterInfo } from './plan';
+import { clusterPinKey, prunePins, starPinKey, withoutPin } from './gravity';
 import { fmtAgo, fmtDur, fmtPct, fmtTok, tSum } from './format';
 import './galaxy.css';
 
@@ -47,6 +48,8 @@ export default function GalaxyPage() {
   const setTour = (v: boolean) => updateSettings({ interface: { autoTour: v } });
   const reduceMotion = useSetting((s) => s.interface.reduceMotion);
   const showAutomated = useSetting((s) => s.interface.showAutomated);
+  const gravity = useSetting((s) => s.layout.gravity);
+  const pins = useSetting((s) => s.layout.pins);
   const lang = useLang();
 
   /** Focuses a session, or one of its live agents (a finished agent falls back to its session). */
@@ -69,6 +72,22 @@ export default function GalaxyPage() {
         const soft = [...root.querySelectorAll('.gx-ticker__bar, .gx-tick .cl-line, .gx-zoom-pad, .gx-zoom-hint')].map((el) => ({ el, soft: true }));
         return [...hard, ...soft];
       },
+      // Edge chips stay inside what the HUD leaves free and step around the rest.
+      edges: () => {
+        const root = rootRef.current;
+        if (!root) return { cuts: [], avoid: [] };
+        const all = (sel: string) => [...root.querySelectorAll(sel)];
+        return {
+          cuts: [
+            ...all('.gx-status, .gx-crumbs, .gx-demo, .gx-banner').map((el) => ({ el, side: 'top' as const })),
+            ...all('.gx-panel').map((el) => ({ el, side: 'right' as const })),
+            ...all('.gx-console').map((el) => ({ el, side: 'bottom' as const })),
+          ],
+          avoid: [...all('.gx-ticker__bar, .gx-tick, .gx-zoom-pad, .gx-zoom-hint, .gx-legend'), ...document.querySelectorAll('.toast')],
+        };
+      },
+      // Pins are a setting (saved on the server; only in memory in demo mode).
+      onPins: (p) => updateSettings({ layout: { pins: p } }),
     });
     engineRef.current = eng;
     // The console takes its colors from the scene (and shares them with console windows).
@@ -81,6 +100,9 @@ export default function GalaxyPage() {
 
   useEffect(() => { if (engineRef.current) engineRef.current.tourOn = tour; }, [tour]);
   useEffect(() => { engineRef.current?.setShowAutomated(showAutomated); }, [showAutomated]);
+  useEffect(() => { engineRef.current?.setGravity(gravity); }, [gravity]);
+  useEffect(() => { engineRef.current?.setPins(pins); }, [pins]);
+  useEffect(() => onLayoutReset(() => engineRef.current?.resetLayout()), []);
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
     const apply = () => { if (engineRef.current) engineRef.current.reduceMotion = reduceMotion || mq.matches; };
@@ -103,6 +125,11 @@ export default function GalaxyPage() {
     const detach = feed.attachSource();
     const onSnap = (s: LiveSnapshot) => {
       snapRef.current = s; setSnap(s); engineRef.current?.sync(s);
+      // Pins of sessions that are gone are dropped lazily (never while the history scan may still be incomplete).
+      if (s.scan.done) {
+        const pruned = prunePins(getSettings().layout.pins, s.sessions);
+        if (pruned) updateSettings({ layout: { pins: pruned } });
+      }
       feed.snapshot(s);
       shareColors();
       const pending = takePendingFocus();
@@ -180,6 +207,8 @@ export default function GalaxyPage() {
   const fCluster: ClusterInfo | null = focus.t === 'cluster' ? eng?.cluster(focus.project) ?? null : null;
   const fAgent = focus.t === 'agent' && fSession ? findAgent(fSession.root, focus.agentId) : null;
   const go = (f: Focus) => engineRef.current?.setFocus(f, true);
+  /** The panel's "Pinned here · Unpin" row, when the focused body is pinned. */
+  const pinOf = (key: string) => (key in pins ? () => updateSettings({ layout: { pins: withoutPin(getSettings().layout.pins, key) } }) : null);
 
   // Numbers are shown only while they are current: never stale ones under the offline screen.
   const shown = offline ? null : snap;
@@ -229,8 +258,8 @@ export default function GalaxyPage() {
         </div>
       )}
 
-      {!offline && fSession && focus.t === 'sys' && <SessionPanel s={fSession} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
-      {!offline && fCluster && <ClusterPanel c={fCluster} onReveal={(id) => engineRef.current?.reveal(id)} />}
+      {!offline && fSession && focus.t === 'sys' && <SessionPanel s={fSession} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} pin={pinOf(starPinKey(fSession.project, fSession.sessionId))} />}
+      {!offline && fCluster && <ClusterPanel c={fCluster} onReveal={(id) => engineRef.current?.reveal(id)} pin={pinOf(clusterPinKey(fCluster.project))} />}
       {!offline && fSession && fAgent && <AgentPanel s={fSession} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
 
       {!offline && (
@@ -239,6 +268,13 @@ export default function GalaxyPage() {
             <button onClick={() => engineRef.current?.zoomBy(1.3)} title={t('gx.zoom.in')} aria-label={t('gx.zoom.in')}>+</button>
             <button onClick={() => engineRef.current?.zoomBy(1 / 1.3)} title={t('gx.zoom.out')} aria-label={t('gx.zoom.out')}>−</button>
             <button onClick={() => engineRef.current?.resetView()} title={t('gx.zoom.reset')} aria-label={t('gx.zoom.reset')}>⟲</button>
+            <button className="gx-zoom-layout" onClick={resetLayout} title={t('gx.zoom.layout')} aria-label={t('gx.zoom.layout')}>
+              <svg viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
+                <circle cx="12" cy="12" r="7.5" strokeOpacity=".45" strokeDasharray="2 3" />
+                <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" />
+              </svg>
+            </button>
           </div>
           <div className="gx-zoom-hint">{t('gx.zoom.hint')}</div>
         </div>
@@ -364,7 +400,17 @@ function Tree({ s, node, eng, onAgent, depth = 0 }: { s: LiveSession; node: Agen
   );
 }
 
-function SessionPanel({ s, eng, onAgent }: { s: LiveSession; eng: GalaxyEngine | null; onAgent: (id: string) => void }) {
+/** "Pinned here · Unpin" under a pinned body's panel header. */
+function PinRow({ onUnpin }: { onUnpin: () => void }) {
+  return (
+    <div className="gx-pinrow">
+      <span><i aria-hidden className="gx-pinrow__glyph" />{t('gx.panel.pinned')}</span>
+      <button type="button" className="gx-btn" onClick={onUnpin} title={t('gx.panel.unpinTitle')}>{t('gx.panel.unpin')}</button>
+    </div>
+  );
+}
+
+function SessionPanel({ s, eng, onAgent, pin }: { s: LiveSession; eng: GalaxyEngine | null; onAgent: (id: string) => void; pin: (() => void) | null }) {
   const ctx = s.contextTokens && s.contextLimit ? s.contextTokens / s.contextLimit : null;
   const col = eng?.colorOf(s.sessionId, 'main');
   return (
@@ -375,6 +421,7 @@ function SessionPanel({ s, eng, onAgent }: { s: LiveSession; eng: GalaxyEngine |
         <p>{s.title ?? s.name ?? s.sessionId.slice(0, 8)}</p>
         <div className="gx-meta">{prettyModel(s.model)}{s.effort && <> · {t('gx.panel.effort')} <b>{s.effort}</b></>}{s.gitBranch && <> · {s.gitBranch}</>}{s.kind === 'automated' && <> · <span className="gx-kind">{t('gx.panel.automatedRun')}</span></>}</div>
       </div>
+      {pin && <PinRow onUnpin={pin} />}
       {s.statusReason && <div className={`gx-reason ${s.status}`}>{s.statusReason}</div>}
       {s.root.lastText && <blockquote className="gx-quote">{quote(s.root.lastText, 220)}</blockquote>}
       <div className="gx-grid">
@@ -436,12 +483,12 @@ function AgentPanel({ s, a, parent, eng, onAgent }: { s: LiveSession; a: AgentNo
   );
 }
 
-const LEGEND_ITEMS: MsgKey[] = ['gx.legend.star', 'gx.legend.planets', 'gx.legend.belt', 'gx.legend.events', 'gx.legend.waves', 'gx.legend.dim', 'gx.legend.cluster'];
+const LEGEND_ITEMS: MsgKey[] = ['gx.legend.star', 'gx.legend.planets', 'gx.legend.belt', 'gx.legend.events', 'gx.legend.waves', 'gx.legend.dim', 'gx.legend.cluster', 'gx.legend.gravity'];
 
 /** Rows shown in a cluster's list; the rest is one click away on the sessions page. */
 const CLUSTER_ROWS = 150;
 
-function ClusterPanel({ c, onReveal }: { c: ClusterInfo; onReveal: (sessionId: string) => void }) {
+function ClusterPanel({ c, onReveal, pin }: { c: ClusterInfo; onReveal: (sessionId: string) => void; pin: (() => void) | null }) {
   const col = projectColor(c.project);
   const rows = c.sessions.slice(0, CLUSTER_ROWS);
   const more = c.sessions.length - rows.length;
@@ -454,6 +501,7 @@ function ClusterPanel({ c, onReveal }: { c: ClusterInfo; onReveal: (sessionId: s
         <p>{tp('gx.cluster.count', c.sessions.length)}</p>
         <div className="gx-meta">{t('gx.cluster.sub')}</div>
       </div>
+      {pin && <PinRow onUnpin={pin} />}
       <div className="gx-grid">
         <div><label>{t('gx.cluster.tokens')}</label><b>{fmtTok(c.tokens24h)}</b></div>
         <div><label>{t('gx.cluster.sessions')}</label><b>{c.sessions.length}</b></div>

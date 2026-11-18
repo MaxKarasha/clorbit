@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NOTIFY_EVENTS, SOUND_THEMES, type NotifyChannel, type NotifyEventType, type NotifyRule, type SoundTheme } from '@shared/api';
 import { isSilenced } from '@shared/settings';
-import { LANGS, locale, setLang, t, useLang, type MsgKey } from '../i18n';
+import { LANGS, locale, setLang, t, tp, useLang, type MsgKey } from '../i18n';
 import { fmtAgo, fmtInt } from '../lib/format';
 import {
   closeSettings,
   loadAbout,
   openSettings,
+  resetLayout,
   sendTestNotification,
   updateSettings,
   useAbout,
@@ -399,6 +400,10 @@ function Dnd() {
 function Interface() {
   const s = useSettings();
   const lang = useLang();
+  const [reset, setReset] = useState(false);
+  const timer = useRef<number>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const pinned = Object.keys(s.layout.pins).length;
   return (
     <Section id="interface" title={t('set.sec.interface')}>
       <Row title={t('ui.lang')}>
@@ -418,6 +423,23 @@ function Interface() {
       </Row>
       <Row title={t('ui.automated')} desc={t('ui.automated.d')}>
         <Orbit on={s.interface.showAutomated} onChange={(v) => updateSettings({ interface: { showAutomated: v } })} label={t('ui.automated')} />
+      </Row>
+      <Row title={t('ui.gravity')} desc={t('ui.gravity.d')}>
+        <Orbit on={s.layout.gravity} onChange={(v) => updateSettings({ layout: { gravity: v } })} label={t('ui.gravity')} />
+      </Row>
+      <Row title={t('ui.layout')} desc={<>{t('ui.layout.d')}{pinned > 0 && <> {tp('ui.layout.pinned', pinned)}.</>}</>}>
+        <button
+          type="button"
+          className="set-btn"
+          onClick={() => {
+            resetLayout();
+            setReset(true);
+            window.clearTimeout(timer.current);
+            timer.current = window.setTimeout(() => setReset(false), 1600);
+          }}
+        >
+          {reset ? t('ui.layout.done') : t('ui.layout.btn')}
+        </button>
       </Row>
     </Section>
   );
