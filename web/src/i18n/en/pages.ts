@@ -132,6 +132,8 @@ export default {
   'limits.limit': '100%',
   'limits.aria': 'Subscription limit history',
   'limits.noPoints': 'No limit changes were recorded in this period. The forecast appears once the status line reports new values.',
+  'limits.no5h': 'Your plan has no 5-hour window, so only the 7-day limit is shown.',
+  'limits.no5hPlan': 'Your plan has no 5-hour window (from your plan), so only the 7-day limit will be shown.',
   'limits.emptyTitle': 'No subscription-limit data yet',
   'limits.openSettings': 'Settings → Connection',
   'limits.atReset': '{pct}% at reset',

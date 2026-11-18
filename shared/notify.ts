@@ -246,7 +246,7 @@ export class NotifyDetector {
   }
 
   private limitOf(l: Limits | null, w: '5h' | '7d'): { pct: number | null; key: string } {
-    if (!l) return { pct: null, key: '' };
+    if (!l || (w === '5h' && l.fiveHourWindow === 'none')) return { pct: null, key: '' };
     const pct = w === '5h' ? l.fiveHourPct : l.sevenDayPct;
     const at = w === '5h' ? l.fiveHourResetsAt : l.sevenDayResetsAt;
     return { pct, key: resetKey(at) };

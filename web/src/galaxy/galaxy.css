@@ -60,27 +60,49 @@
 .gx-metric .wait { color: var(--wait); font-weight: 500; margin-left: 6px; }
 .gx-row { display: flex; align-items: center; gap: 10px; }
 .gx-spark { display: block; }
-.gx-ring { display: flex; align-items: center; gap: 6px; }
-.gx-ring { min-width: 0; }
-.gx-ring > div { display: flex; flex-direction: column; min-width: 0; font-family: var(--mono); white-space: nowrap; }
-.gx-ring > div > * { overflow: hidden; text-overflow: ellipsis; }
-.gx-ring b { font-size: 12px; font-weight: 500; }
-.gx-ring span { font-size: 11px; color: var(--mut); }
-.gx-ring-t { font-family: var(--mono); font-size: 11.5px; fill: #e6ebf5; font-weight: 600; }
-.gx-hint { font-size: 12px !important; }
-.gx-hint a { color: #9fd4ff !important; text-decoration: underline dotted !important; }
 .gx-linkbtn { appearance: none; border: 0; padding: 0; background: none; font: inherit; color: #9fd4ff; text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
 .gx-linkbtn:hover { color: #cdeaff; }
 .gx-linkbtn:focus-visible { outline: 2px solid #8fd8ff; outline-offset: 2px; border-radius: 3px; }
-/* Forecast line under a subscription ring: calm when it lasts, amber / red when it runs out early. */
-.gx-ring { cursor: default; }
-.gx-ring span.gx-fc--ok { color: #8fcfba; }
-.gx-ring span.gx-fc--warn { color: #FFD66B; }
-.gx-ring span.gx-fc--out { color: #FF8BA3; font-weight: 600; }
-.gx-ring--out svg { animation: gx-ring-pulse 2.4s ease-in-out infinite; }
-@keyframes gx-ring-pulse { 50% { filter: drop-shadow(0 0 6px rgba(255, 107, 139, 0.55)); } }
-@media (prefers-reduced-motion: reduce) { .gx-ring--out svg { animation: none; } }
-:root[data-reduce-motion] .gx-ring--out svg { animation: none; }
+/*
+ * Subscription block: the label with the plan badge, then two gauge bars side by side (5 h, 7 d).
+ * The fill is the used %, painted with a calm → amber → red ramp that spans the whole scale (so 80 %
+ * reads amber wherever it is); a hatched stretch and a thin marker show the projected % at the reset.
+ */
+.gx-lim-head { display: flex; align-items: center; gap: 8px; min-width: 0; height: 17px; }
+.gx-lim-head .plan-badge { height: 17px; }
+.gx-lim-head label { flex: 0 1 auto; min-width: 0; }
+.gx-lims { display: grid; grid-template-columns: repeat(2, minmax(88px, 132px)); column-gap: 12px; align-items: start; }
+.gx-lim { display: flex; flex-direction: column; min-width: 0; font-family: var(--mono); cursor: default; }
+.gx-lim__top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; height: 14px; line-height: 14px; }
+.gx-lim__top b { font-size: 12px; font-weight: 500; color: #cfd9ec; white-space: nowrap; }
+.gx-lim__pct { font-size: 13px; font-weight: 650; white-space: nowrap; text-shadow: 0 0 12px color-mix(in srgb, currentColor 45%, transparent); }
+.gx-lim__pct small { font-size: 10px; font-weight: 500; opacity: 0.7; margin-left: 1px; }
+.gx-lim__track { position: relative; height: 6px; margin: 3px 0 2px; border-radius: 999px; background: rgba(150, 170, 220, 0.13); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.55); }
+.gx-lim__fill {
+  position: absolute; left: 0; top: 0; bottom: 0; border-radius: inherit;
+  background-image: linear-gradient(90deg, #4fd6b4 0%, #7fe0c4 48%, #ffd66b 72%, #ff9a6b 86%, #ff6b8b 100%);
+  background-repeat: no-repeat;
+  box-shadow: 0 0 9px color-mix(in srgb, currentColor 55%, transparent);
+  transition: width 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* A bright leading edge, like a filament. */
+.gx-lim__fill::after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 2px; border-radius: 1px; background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 6px 1px currentColor; }
+.gx-lim__proj { position: absolute; top: 0; bottom: 0; border-radius: 0 999px 999px 0; background: repeating-linear-gradient(-55deg, color-mix(in srgb, currentColor 60%, transparent) 0 2px, transparent 2px 5px); opacity: 0.7; }
+.gx-lim__mark { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: currentColor; box-shadow: 0 0 6px currentColor; }
+.gx-lim__sub { font-size: 10.5px; line-height: 13px; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Forecast line: calm when it lasts, amber / red when it runs out early. */
+.gx-lim__sub.gx-fc--ok { color: #8fcfba; }
+.gx-lim__sub.gx-fc--warn { color: #FFD66B; }
+.gx-lim__sub.gx-fc--out { color: #FF8BA3; font-weight: 600; }
+.gx-lim--out .gx-lim__track { animation: gx-lim-pulse 2.4s ease-in-out infinite; }
+@keyframes gx-lim-pulse { 50% { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 10px rgba(255, 107, 139, 0.6); } }
+@media (prefers-reduced-motion: reduce) { .gx-lim--out .gx-lim__track { animation: none; } .gx-lim__fill { transition: none; } }
+:root[data-reduce-motion] .gx-lim--out .gx-lim__track { animation: none; }
+:root[data-reduce-motion] .gx-lim__fill { transition: none; }
+/* No source yet: dashed empty scales and one "connect" line under both. */
+.gx-lims--ghost .gx-lim__track { background: transparent; border: 1px dashed rgba(150, 170, 220, 0.32); box-shadow: none; box-sizing: border-box; }
+.gx-lims--ghost .gx-lim__top b, .gx-lims--ghost .gx-lim__pct { color: var(--mut); text-shadow: none; }
+.gx-lims__hint { grid-column: 1 / -1; font-family: var(--mono); font-size: 11px; line-height: 13px; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* "Hooks not installed": the last item of the breadcrumb row, so it never covers the side panel. */
 .gx-pill { margin-left: 10px; font-family: var(--mono); font-size: 11.5px; color: var(--mut); border: 1px dashed var(--line); border-radius: 999px; padding: 3px 9px; white-space: nowrap; background: rgba(8, 12, 24, 0.7); cursor: help; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
@@ -222,21 +244,16 @@
 
 /*
  * Progressive disclosure by the width left for metrics (the container, not the window).
- * Thresholds come from the natural widths of the metrics in EN and UK (UK is wider), with
- * subscription rings, or with the much narrower "no source" hint (.gx-metrics--hint). The forecast line
- * under each ring ("runs out at 14:20") outranks the subagent count, so it stays visible at 1440 px.
+ * Thresholds come from the natural widths of the metrics in EN and UK (UK is wider) with the
+ * subscription bars (the "no source" state is as wide). The forecast line under each bar
+ * ("runs out at 14:20") outranks the subagent count, so it stays visible at 1440 px.
  */
-@container gx-metrics (max-width: 1250px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.cache { display: none; } }
-@container gx-metrics (max-width: 1110px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.speed { display: none; } }
-@container gx-metrics (max-width: 900px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.subagents { display: none; } }
-@container gx-metrics (max-width: 830px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.tokens > span { display: none; } }
-@container gx-metrics (max-width: 640px) { .gx-ring > div > span { display: none; } }
-@container gx-metrics (max-width: 560px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.sessions > span { display: none; } }
-@container gx-metrics (max-width: 1130px) { .gx-metrics--hint .gx-metric.cache { display: none; } }
-@container gx-metrics (max-width: 980px) { .gx-metrics--hint .gx-metric.speed { display: none; } }
-@container gx-metrics (max-width: 830px) { .gx-metrics--hint .gx-metric.tokens > span { display: none; } }
-@container gx-metrics (max-width: 740px) { .gx-metrics--hint .gx-metric.subagents { display: none; } }
-@container gx-metrics (max-width: 560px) { .gx-metrics--hint .gx-metric.sessions > span { display: none; } }
+@container gx-metrics (max-width: 1250px) { .gx-metric.cache { display: none; } }
+@container gx-metrics (max-width: 1110px) { .gx-metric.speed { display: none; } }
+@container gx-metrics (max-width: 900px) { .gx-metric.subagents { display: none; } }
+@container gx-metrics (max-width: 830px) { .gx-metric.tokens > span { display: none; } }
+@container gx-metrics (max-width: 640px) { .gx-lim__sub { display: none; } }
+@container gx-metrics (max-width: 560px) { .gx-metric.sessions > span { display: none; } }
 @media (max-width: 1600px) {
   .gx-metric { padding: 2px 11px; }
   .gx-nav { gap: 5px; }
@@ -261,3 +278,12 @@
 /* Replay links elsewhere: the session panel, the cluster list. */
 .gx-btn--replay { border-color: rgba(181, 140, 255, 0.5); background: rgba(120, 80, 220, 0.18); }
 .gx-cl-go--replay { color: #c7b8ff; font-size: 11px; }
+
+/* A window the plan does not have (∞): an open-ended scale with a soft aurora instead of a fill. */
+.gx-lim__inf { color: #c7b8ff; font-size: 15px; line-height: 14px; text-shadow: 0 0 10px rgba(181, 140, 255, 0.6); }
+.gx-lim__track--inf {
+  background: linear-gradient(90deg, rgba(143, 216, 255, 0.05), rgba(167, 139, 250, 0.32) 45%, rgba(143, 216, 255, 0.22) 75%, rgba(143, 216, 255, 0));
+  box-shadow: none;
+}
+.gx-lim--inf .gx-lim__sub { color: #b9b0de; }
+.gx-lims--ghost .gx-lim--inf .gx-lim__top b { color: #cfd9ec; }

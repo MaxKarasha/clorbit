@@ -7,15 +7,18 @@
 //   clorbit stop     stop a server that this CLI started
 //   clorbit status   is it running? URL, version, data dir, hooks
 //   clorbit ensure   silent start-if-not-running for the plugin's SessionStart hook; never prints, always exits 0
+//   clorbit statusline [--apply] [--remove] [--create]
+//                    connect the subscription-limits capture to Claude Code's status line (dry run without --apply)
 //
 // Environment: CLORBIT_PORT (default 4980), CLORBIT_DATA_DIR (default ~/.clorbit), CLORBIT_AUTOSTART=0
-// turns `ensure` into a no-op. The legacy FLEET_* names are read as fallbacks, like the server does.
+// turns `ensure` into a no-op, CLORBIT_CLAUDE_DIR (default ~/.claude) is where `statusline` finds settings.json. The legacy FLEET_* names are read as fallbacks, like the server does.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyStatusLine, planStatusLine, readSettingsFile, settingsFile, writeSettingsFile } from './statusline.mjs';
 
 const MIN_NODE = [22, 5];
 const argv = process.argv.slice(2);
@@ -271,6 +274,77 @@ async function open() {
   return true;
 }
 
+/**
+ * `clorbit statusline`: shows (dry run) or applies the status-line capture. Only `statusLine.command`
+ * in settings.json changes, after a timestamped backup; --remove restores the original command.
+ */
+function statusline() {
+  const apply = flags.has('--apply');
+  const mode = flags.has('--remove') ? 'remove' : 'add';
+  const create = flags.has('--create');
+  const file = settingsFile();
+  let settings;
+  try { settings = readSettingsFile(file); } catch (e) { console.error(e.message); return false; }
+  const plan = planStatusLine(settings, { mode, create });
+  const show = (label, cmd) => say(`${label}\n  ${cmd.replace(/\n/g, '\n  ')}`);
+  const rerun = `clorbit statusline --apply${mode === 'remove' ? ' --remove' : ''}${plan.action === 'create' ? ' --create' : ''}`;
+
+  say(`Settings: ${tilde(file)}`);
+  say(apply ? 'Mode: write (--apply)' : 'Mode: dry run — nothing is written.');
+  say('');
+  switch (plan.action) {
+    case 'already':
+      say(`Nothing to do: your status line already saves its input to ~/.clorbit/statusline.json.`);
+      return true;
+    case 'none':
+      if (plan.note === 'not-captured') say('Nothing to remove: your status line does not save its input for Clorbit.');
+      else if (plan.note === 'custom-capture') {
+        say('Your status line saves its input for Clorbit, but not with the line this command adds, so it is left alone.');
+        say('Edit "statusLine.command" in settings.json by hand to remove it.');
+      } else {
+        say(plan.note === 'not-command'
+          ? 'Your status line is not of type "command", so there is no command to add the capture to.'
+          : 'You have no status line yet, so there is no command to add the capture to.');
+        say('');
+        say('Clorbit can create a minimal one that shows the model and both limits (e.g. "Opus · 5h 42% · 7d 18%")');
+        say('and saves its input for Clorbit. It needs Node.js on your PATH, like Clorbit itself:');
+        say('');
+        show('statusLine.command would be:', plan.after);
+        say('');
+        say(`To create it: ${slash ? '/clorbit statusline --apply --create' : 'clorbit statusline --apply --create'}`);
+      }
+      return true;
+    default:
+      break;
+  }
+  const what = {
+    wrap: 'Adds one step in front of your status-line command: it saves the input to ~/.clorbit/statusline.json, then passes it to your command unchanged.',
+    migrate: 'Moves the capture from the old ~/.fleet/statusline.json to ~/.clorbit/statusline.json.',
+    create: 'Creates a minimal status line (model and both limits) that also saves its input for Clorbit.',
+    restore: 'Removes the Clorbit capture and restores your original status-line command.',
+  }[plan.action];
+  say(what);
+  say('');
+  if (plan.before) show('Before:', plan.before);
+  if (plan.action === 'create' && !plan.before) say('Before:\n  (no status line)');
+  show('After:', plan.after);
+  say('');
+  if (!apply) {
+    say(`Only "statusLine${plan.action === 'create' ? '' : '.command'}" changes, with a timestamped backup next to settings.json.`);
+    say(`To apply: ${slash ? `/${rerun}` : rerun}`);
+    return true;
+  }
+  let backup;
+  try { backup = writeSettingsFile(file, applyStatusLine(settings, plan)); } catch (e) { console.error(`Could not write ${tilde(file)}: ${e.message}`); return false; }
+  say(`Done.${backup ? ` Backup: ${tilde(backup)}` : ''}`);
+  say(plan.action === 'restore'
+    ? 'Clorbit stops receiving limits once Claude Code next updates the status line.'
+    : 'Claude Code uses it on its next status-line update; the limits appear in Clorbit within a minute of that.');
+  if (plan.action === 'create') say('To undo, delete "statusLine" from settings.json.');
+  else if (plan.action !== 'restore') say(`Undo with: ${slash ? '/' : ''}clorbit statusline --apply --remove`);
+  return true;
+}
+
 function help() {
   console.log(`Clorbit ${VERSION}: a local dashboard for your Claude Code sessions.
 
@@ -281,10 +355,15 @@ Usage: clorbit [command]
   stop     stop the server started by this CLI
   status   show whether it runs, its URL, version, data dir and hooks
   ensure   start silently if not running (used by the plugin's SessionStart hook)
+  statusline [--apply] [--remove] [--create]
+           show how the subscription-limits capture changes your status line (writes nothing);
+           --apply writes it (backup first), --remove undoes it, --create makes a minimal
+           status line when you have none
   version  print the version
 
 Environment: CLORBIT_PORT (default 4980), CLORBIT_DATA_DIR (default ~/.clorbit),
-CLORBIT_AUTOSTART=0 disables the autostart hook.`);
+CLORBIT_AUTOSTART=0 disables the autostart hook, CLORBIT_CLAUDE_DIR (default ~/.claude)
+is where \`statusline\` finds settings.json.`);
 }
 
 async function main() {
@@ -293,6 +372,7 @@ async function main() {
     case 'start': return start();
     case 'stop': return stop();
     case 'status': return status();
+    case 'statusline': return statusline();
     case 'ensure':
       if (env('AUTOSTART') === '0') return true;
       try { await start(); } catch { /* never fail a hook */ }

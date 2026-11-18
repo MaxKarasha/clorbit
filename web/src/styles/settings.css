@@ -912,6 +912,10 @@ th.nmx__ev {
   color: var(--text);
   font-weight: 550;
 }
+.limhow__alt {
+  margin-top: 2px !important;
+  color: var(--muted);
+}
 .limhow__cmd {
   display: flex;
   align-items: center;
@@ -950,4 +954,17 @@ th.nmx__ev {
 }
 .limhow__never {
   color: var(--text-dim);
+}
+.set-plan {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.set-plan .set-dl__how {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+.set-plan__none {
+  color: var(--muted);
 }

@@ -21,6 +21,16 @@ export const CLAUDE_DIR = env('CLAUDE_DIR') || path.join(os.homedir(), '.claude'
 export const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 export const SESSIONS_DIR = path.join(CLAUDE_DIR, 'sessions');
 export const SETTINGS_FILE = path.join(CLAUDE_DIR, 'settings.json');
+/**
+ * Claude Code's account file (read-only; only the plan fields of `oauthAccount` are used, see plan.ts).
+ * CLORBIT_CLAUDE_JSON points at it directly. Otherwise it lives next to the Claude dir (~/.claude.json);
+ * with CLORBIT_CLAUDE_DIR set, a .claude.json inside that dir (Claude Code's CLAUDE_CONFIG_DIR layout) wins.
+ */
+export const CLAUDE_JSON_FILES: string[] = env('CLAUDE_JSON')
+  ? [env('CLAUDE_JSON')!]
+  : env('CLAUDE_DIR')
+    ? [path.join(CLAUDE_DIR, '.claude.json'), path.join(path.dirname(CLAUDE_DIR), '.claude.json')]
+    : [path.join(os.homedir(), '.claude.json')];
 export const HOME_DATA_DIR = path.join(os.homedir(), '.clorbit');
 /** Status-line capture file (written by the user's status-line command, see README). */
 export const STATUSLINE_FILE = env('STATUSLINE_FILE') || path.join(HOME_DATA_DIR, 'statusline.json');

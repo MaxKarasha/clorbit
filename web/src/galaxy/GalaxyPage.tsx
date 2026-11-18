@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentNode, AnalyticsOverview, ClorbitEvent, LiveSession, LiveSnapshot, WindowForecast } from '@shared/api';
 import LangSwitch from '../components/LangSwitch';
+import PlanBadge, { planLabel } from '../components/PlanBadge';
+import { dataFiveHour, fiveHourWindow } from '@shared/plan';
 import { ProfileButton } from '../components/SettingsPanel';
 import { DemoStrip, ServerOffline } from '../components/ServerState';
 import { t, tp, useLang, withLang, type MsgKey } from '../i18n';
@@ -219,7 +221,7 @@ export default function GalaxyPage() {
       <canvas ref={canvasRef} className="gx-canvas" />
       <header className="gx-status">
         <div className="gx-brand"><span className="gx-logo" />Clorbit</div>
-        <div className={`gx-metrics${shown && !shown.limits ? ' gx-metrics--hint' : ''}`}>{shown && <StatusMetrics snap={shown} />}</div>
+        <div className="gx-metrics">{shown && <StatusMetrics snap={shown} />}</div>
         <nav className="gx-nav">
           <a className="gx-btn" href={href('/analytics/overview')}>{t('gx.nav.analytics')}</a>
           <a className="gx-btn" href={href('/analytics/context')}>{t('gx.nav.context')}</a>
@@ -313,41 +315,99 @@ function Spark({ data }: { data: number[] }) {
 }
 
 
+const clampPct = (v: number) => Math.min(100, Math.max(0, v));
+/** Calm → amber → red by the used share (the same thresholds the rings used). */
+const rampColor = (pct: number | null) => (pct == null ? '#56607A' : pct > 85 ? '#FF6B8B' : pct > 60 ? '#FFD66B' : '#7FE0C4');
+
 /**
- * A subscription ring with a "fuel gauge" feel: the arc is the used %, a faint arc runs on to the
- * projected % at the reset, and a thin tick marks that projection.
+ * One subscription window as a horizontal gauge: the fill is the used %, coloured along a calm → amber → red
+ * ramp laid over the whole scale; a hatched stretch runs on to the projected % at the reset, where a thin
+ * marker sits. The forecast line ("runs out at 14:20" / "resets Fri 05:57") is under it.
  */
-function Ring({ pct, tick, sev, label, sub, title }: { pct: number | null; tick: number | null; sev: Severity; label: string; sub: string; title?: string }) {
-  const r = 15, c = 2 * Math.PI * r, f = pct == null ? 0 : Math.min(1, Math.max(0, pct / 100));
-  const col = pct == null ? '#56607A' : pct > 85 ? '#FF6B8B' : pct > 60 ? '#FFD66B' : '#7FE0C4';
-  const tk = tick == null ? null : Math.min(1, Math.max(0, tick / 100));
-  const tickCol = sev === 'none' ? '#E6EBF5' : SEV_COLOR[sev];
+function LimitBar({ f, pct, resetsAt, label, now }: { f: WindowForecast | null | undefined; pct: number | null; resetsAt: number | null; label: string; now: number }) {
+  // A server without the forecast (older than 0.3): the plain bar with the reset time.
+  const v = f
+    ? forecastView(f, label, now)
+    : { sub: resetsAt ? t('gx.bar.resets', { at: whenText(resetsAt, now) }) : '', sev: 'none' as Severity, tick: null, title: '' };
+  const used = f?.pct ?? pct;
+  const fill = used == null ? 0 : clampPct(used);
+  const tick = v.tick == null ? null : clampPct(v.tick);
+  const markCol = v.sev === 'none' ? '#E6EBF5' : SEV_COLOR[v.sev];
+  const col = rampColor(used);
   return (
-    <div className={`gx-ring gx-ring--${sev}`} title={title}>
-      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden>
-        <circle cx="20" cy="20" r={r} stroke="rgba(150,170,220,.15)" strokeWidth="4" fill="none" />
-        {tk != null && tk > f + 0.004 && (
-          <circle cx="20" cy="20" r={r} stroke={tickCol} strokeOpacity=".3" strokeWidth="4" fill="none" strokeDasharray={`0 ${c * f} ${c * (tk - f)} ${c}`} transform="rotate(-90 20 20)" />
+    <div className={`gx-lim gx-lim--${v.sev}`} title={v.title || undefined}>
+      <div className="gx-lim__top">
+        <b>{label}</b>
+        <span className="gx-lim__pct" style={{ color: col }}>{used == null ? '—' : Math.round(used)}<small>%</small></span>
+      </div>
+      <div
+        className="gx-lim__track"
+        role="meter"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={used == null ? undefined : Math.round(used)}
+        aria-label={t('gx.bar.meter', { w: label, pct: used == null ? '—' : Math.round(used) })}
+      >
+        {tick != null && tick > fill + 0.5 && <span className="gx-lim__proj" style={{ left: `${fill}%`, width: `${tick - fill}%`, color: markCol }} />}
+        {fill > 0 && (
+          <span
+            className="gx-lim__fill"
+            style={{ width: `${fill}%`, backgroundSize: `${(100 / Math.max(fill, 1)) * 100}% 100%`, color: col }}
+          />
         )}
-        <circle cx="20" cy="20" r={r} stroke={col} strokeWidth="4" fill="none" strokeDasharray={`${c * f} ${c}`} strokeLinecap="round" transform="rotate(-90 20 20)" style={{ filter: `drop-shadow(0 0 4px ${col})` }} />
-        {tk != null && (
-          <line x1="20" y1={20 - r + 4} x2="20" y2={20 - r - 4} stroke={tickCol} strokeWidth="1.6" strokeLinecap="round" transform={`rotate(${tk * 360} 20 20)`} className="gx-ring-tick" style={{ filter: `drop-shadow(0 0 2px ${tickCol})` }} />
-        )}
-        <text x="20" y="23.5" textAnchor="middle" className="gx-ring-t">{pct == null ? '—' : Math.round(pct)}</text>
-      </svg>
-      <div><b>{label}</b><span className={`gx-fc gx-fc--${sev}`}>{sub}</span></div>
+        {tick != null && <i className="gx-lim__mark" style={{ left: `${tick}%`, color: markCol }} />}
+      </div>
+      <span className={`gx-lim__sub gx-fc--${v.sev}`}>{v.sub || '\u00a0'}</span>
     </div>
   );
 }
 
-function LimitRing({ f, pct, resetsAt, label, now }: { f: WindowForecast | null | undefined; pct: number | null; resetsAt: number | null; label: string; now: number }) {
-  if (!f) {
-    // A server without the forecast (older than 0.3): the plain ring with the reset time.
-    const sub = resetsAt ? t('gx.bar.resets', { at: whenText(resetsAt, now) }) : '';
-    return <Ring pct={pct} tick={null} sev="none" label={label} sub={sub} />;
+/** A window the plan does not have (Ultra: no 5-hour limit): an open-ended scale marked ∞. */
+function NoWindowBar({ label, from, plan }: { label: string; from: 'data' | 'plan' | null; plan: string }) {
+  const title = from === 'plan' ? t('gx.lim.noWindowPlan', { plan: plan || '—' }) : t('gx.lim.noWindowData');
+  return (
+    <div className="gx-lim gx-lim--inf" title={title}>
+      <div className="gx-lim__top"><b>{label}</b><span className="gx-lim__pct gx-lim__inf" aria-hidden>∞</span></div>
+      <div className="gx-lim__track gx-lim__track--inf" role="img" aria-label={title} />
+      <span className="gx-lim__sub">{t('gx.lim.noWindow')}</span>
+    </div>
+  );
+}
+
+const connectLink = () => (
+  <>
+    {t('gx.bar.noSource')} ·{' '}
+    <button type="button" className="gx-linkbtn" onClick={(e) => openSettings(e.currentTarget, 'connection')}>{t('gx.bar.connect')}</button>
+  </>
+);
+
+/**
+ * The bars without a source: empty dashed scales and the way to connect one. When the plan is known
+ * to have no 5-hour window, that bar shows ∞ (from the plan) and the 7-day bar carries the link.
+ */
+function GhostBars({ fiveHourNone, plan }: { fiveHourNone: boolean; plan: string }) {
+  const ghost = (w: string, link: boolean) => (
+    <div key={w} className="gx-lim" title={t('gx.bar.noSourceTitle')}>
+      <div className="gx-lim__top"><b>{w}</b><span className="gx-lim__pct">—</span></div>
+      <div className="gx-lim__track" aria-hidden />
+      {link && <span className="gx-lim__sub">{connectLink()}</span>}
+    </div>
+  );
+  if (fiveHourNone) {
+    return (
+      <div className="gx-lims gx-lims--ghost">
+        <NoWindowBar label={t('gx.bar.5h')} from="plan" plan={plan} />
+        {ghost(t('gx.bar.7d'), true)}
+      </div>
+    );
   }
-  const v = forecastView(f, label, now);
-  return <Ring pct={f.pct ?? pct} tick={v.tick} sev={v.sev} label={label} sub={v.sub} title={v.title} />;
+  return (
+    <div className="gx-lims gx-lims--ghost">
+      {ghost(t('gx.bar.5h'), false)}
+      {ghost(t('gx.bar.7d'), false)}
+      <span className="gx-lims__hint" title={t('gx.bar.noSourceTitle')}>{connectLink()}</span>
+    </div>
+  );
 }
 
 /** The metrics of the HUD bar, in priority order; lower-priority ones give way on narrow screens (galaxy.css). */
@@ -355,6 +415,9 @@ function StatusMetrics({ snap }: { snap: LiveSnapshot }) {
   const tt = snap.totals;
   const L = snap.limits;
   const F = snap.limitsForecast?.source === 'statusline' ? snap.limitsForecast : null;
+  // Data from the status line wins; without a reading, the plan table says whether a 5 h window exists.
+  const w5 = fiveHourWindow(F?.fiveHour.noWindow ? 'none' : dataFiveHour(L), snap.plan);
+  const planName = planLabel(snap.plan);
   return (
     <>
       <div className="gx-metric tokens">
@@ -368,17 +431,19 @@ function StatusMetrics({ snap }: { snap: LiveSnapshot }) {
         <span>{t('gx.bar.last10')}</span>
       </div>
       <div className="gx-metric limits">
-        <label>{t('gx.bar.plan')}</label>
+        <div className="gx-lim-head">
+          <label>{t('gx.bar.plan')}</label>
+          <PlanBadge plan={snap.plan} />
+        </div>
         {L ? (
-          <div className="gx-row">
-            <LimitRing f={F?.fiveHour} pct={L.fiveHourPct} resetsAt={L.fiveHourResetsAt} label={t('gx.bar.5h')} now={snap.now} />
-            <LimitRing f={F?.sevenDay} pct={L.sevenDayPct} resetsAt={L.sevenDayResetsAt} label={t('gx.bar.7d')} now={snap.now} />
+          <div className="gx-lims">
+            {w5.state === 'none'
+              ? <NoWindowBar label={t('gx.bar.5h')} from={w5.from} plan={planName} />
+              : <LimitBar f={F?.fiveHour} pct={L.fiveHourPct} resetsAt={L.fiveHourResetsAt} label={t('gx.bar.5h')} now={snap.now} />}
+            <LimitBar f={F?.sevenDay} pct={L.sevenDayPct} resetsAt={L.sevenDayResetsAt} label={t('gx.bar.7d')} now={snap.now} />
           </div>
         ) : (
-          <span className="gx-hint" title={t('gx.bar.noSourceTitle')}>
-            {t('gx.bar.noSource')} ·{' '}
-            <button type="button" className="gx-linkbtn" onClick={(e) => openSettings(e.currentTarget, 'connection')}>{t('gx.bar.howTo')}</button>
-          </span>
+          <GhostBars fiveHourNone={w5.state === 'none'} plan={planName} />
         )}
       </div>
       <div className="gx-metric sessions">

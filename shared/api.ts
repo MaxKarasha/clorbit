@@ -69,12 +69,18 @@ export interface LiveSession {
 
 export type SessionKind = 'interactive' | 'automated';
 
+/** Whether a subscription window exists: reported by the status line ('present'), known to be absent
+ *  ('none' — e.g. plans with only a weekly limit), or not known. */
+export type WindowPresence = 'present' | 'none' | 'unknown';
+
 export interface Limits {
   fiveHourPct: number | null;
   fiveHourResetsAt: number | null;
   sevenDayPct: number | null;
   sevenDayResetsAt: number | null;
   updatedAt: number;
+  /** Additive (0.3+): 'none' when the status line reports the 7-day window but no 5-hour one. */
+  fiveHourWindow?: WindowPresence;
 }
 
 /** One recorded change of subscription limits (from the statusline capture).
@@ -105,6 +111,7 @@ export interface WindowForecast {
   points: number;              // limit points of the current window the forecast used
   exhausted?: boolean;         // already at 100%
   reset?: boolean;             // the last known reset time has passed; waiting for fresh data
+  noWindow?: boolean;          // additive (0.3+): the plan has no such window (the status line reports none)
 }
 
 /** GET /api/limits/forecast (also LiveSnapshot.limitsForecast). */
@@ -114,6 +121,15 @@ export interface LimitsForecast {
   updatedAt: number | null;    // when the status line last wrote the values
   fiveHour: WindowForecast;
   sevenDay: WindowForecast;
+}
+
+/** The signed-in Claude subscription, from `oauthAccount` in ~/.claude.json (only the plan fields are read).
+ *  Additive (0.3+): absent from older servers; null when Claude Code is not signed in with a subscription. */
+export interface Plan {
+  name: string | null;   // planDisplayName, e.g. 'Max', 'Pro' (or derived from the organization type)
+  tier: string | null;   // rate-limit multiplier from the rate-limit tier, e.g. '20×', '5×'
+  type: string | null;   // organizationType, e.g. 'claude_max'
+  since: string | null;  // subscriptionCreatedAt (ISO 8601)
 }
 
 export interface LiveSnapshot {
@@ -135,6 +151,8 @@ export interface LiveSnapshot {
   limits: Limits | null;        // null when there is no source (the status line does not save its input)
   /** Additive (0.3+): the forecast of both windows, so the HUD needs no extra request. */
   limitsForecast?: LimitsForecast | null;
+  /** Additive (0.3+): the subscription plan; null without a signed-in subscription. */
+  plan?: Plan | null;
   hooksInstalled: boolean;
   statuslineCapture: boolean;
   scan: { done: boolean; filesTotal: number; filesDone: number };
@@ -393,6 +411,8 @@ export interface AboutInfo {
   store: { enabled: boolean; fileSummaries: number; archived: number; hookEvents: number; limits: number };
   /** Whether the server can show system notifications on this machine. */
   system: { available: boolean; tool: 'osascript' | 'notify-send' | null; platform: string };
+  /** Additive (0.3+): the subscription plan; null without a signed-in subscription. */
+  plan?: Plan | null;
 }
 
 // Endpoints (all GET except /api/hook, PUT /api/settings and POST /api/notify/test). Every GET accepts `lang=en|uk` (default en):

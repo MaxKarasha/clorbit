@@ -247,11 +247,13 @@ export function forecastLimits({ now, limits, history, usage }: ForecastInput): 
     resetsAt: w === '5h' ? limits.fiveHourResetsAt : limits.sevenDayResetsAt,
     ts: limits.updatedAt || now,
   } : null);
+  // A plan without a 5-hour window: no forecast for it, whatever an older history says.
+  const no5h = has && limits?.fiveHourWindow === 'none';
   return {
     source: has ? 'statusline' : 'none',
     now,
     updatedAt: has && limits ? limits.updatedAt : null,
-    fiveHour: forecastWindow({ window: '5h', now, current: cur('5h'), history: windowSeries(history, '5h'), usage }),
+    fiveHour: no5h ? { ...none('5h', null, null), noWindow: true } : forecastWindow({ window: '5h', now, current: cur('5h'), history: windowSeries(history, '5h'), usage }),
     sevenDay: forecastWindow({ window: '7d', now, current: cur('7d'), history: windowSeries(history, '7d'), usage }),
   };
 }
@@ -266,5 +268,5 @@ export function forecastSeverity(f: WindowForecast, now: number): 'out' | 'warn'
 /** The early-warning rule: the 5 h window runs out more than `margin` before its reset, with at least medium confidence. */
 export const FORECAST_MARGIN_MS = 20 * MIN;
 export function forecastWarns(f: WindowForecast | null | undefined, margin = FORECAST_MARGIN_MS): boolean {
-  return !!f && !f.exhausted && f.hitsAt != null && f.resetsAt != null && f.resetsAt - f.hitsAt > margin && f.confidence !== 'low';
+  return !!f && !f.noWindow && !f.exhausted && f.hitsAt != null && f.resetsAt != null && f.resetsAt - f.hitsAt > margin && f.confidence !== 'low';
 }

@@ -2,8 +2,9 @@
 // one segment per window, reset markers) with the forecast extending to the next reset, or the
 // how-to-connect explanation when there is no data.
 import { useMemo, useState, type MouseEvent } from 'react';
-import type { LimitsForecast, LimitsPoint, LimitWindow, WindowForecast } from '@shared/api';
+import type { AboutInfo, LimitsForecast, LimitsPoint, LimitWindow, WindowForecast } from '@shared/api';
 import { resetMarkers, splitWindows, windowSeries, type WindowPoint } from '@shared/forecast';
+import { fiveHourWindow } from '@shared/plan';
 import { t } from '../i18n';
 import { useApi } from '../lib/api';
 import { fmtDateTime, fmtDay, fmtTime, parseDay } from '../lib/format';
@@ -11,6 +12,7 @@ import { forecastView, SEV_COLOR } from '../lib/forecast';
 import { openSettings } from '../lib/settings';
 import type { ActiveRange } from '../lib/router';
 import LimitsHowTo from '../components/LimitsHowTo';
+import PlanBadge from '../components/PlanBadge';
 import { Legend } from '../components/charts/small';
 import { Panel, TipRow, Tooltip, useTip, useWidth } from '../components/ui';
 import { rangeQs } from './common';
@@ -20,25 +22,32 @@ const COLOR: Record<LimitWindow, string> = { '5h': '#5cc8ff', '7d': '#a78bfa' };
 export default function LimitsPanel({ range }: { range: ActiveRange }) {
   const hist = useApi<LimitsPoint[]>(`/api/limits/history?${rangeQs(range)}`);
   const fc = useApi<LimitsForecast>('/api/limits/forecast');
+  // The plan badge in the header (servers older than 0.3 have no `plan`: no badge).
+  const about = useApi<AboutInfo>('/api/about');
   const points = hist.data ?? [];
   const f = fc.data;
   const hasSource = f?.source === 'statusline';
   const loading = (hist.loading || fc.loading) && !hist.data && !f;
+  // No 5-hour window (Ultra): from the status line when it reports, else from the plan table.
+  const w5 = fiveHourWindow(f?.fiveHour.noWindow ? 'none' : hasSource && f?.fiveHour.pct != null ? 'present' : 'unknown', about.data?.plan);
+  const no5h = w5.state === 'none';
   const legend = (
     <Legend
       items={[
-        { label: t('limits.w5h'), color: COLOR['5h'] },
+        ...(no5h ? [] : [{ label: t('limits.w5h'), color: COLOR['5h'] }]),
         { label: t('limits.w7d'), color: COLOR['7d'] },
       ]}
     />
   );
+  const no5hNote = no5h ? <p className="lim-note lim-note--inf"><span aria-hidden>∞</span> {t(w5.from === 'plan' ? 'limits.no5hPlan' : 'limits.no5h')}</p> : null;
   return (
-    <Panel title={t('limits.title')} hint={t('limits.hint')} actions={hasSource || points.length ? legend : undefined}>
+    <Panel title={<span className="lim-title">{t('limits.title')}<PlanBadge plan={about.data?.plan} /></span>} hint={t('limits.hint')} actions={hasSource || points.length ? legend : undefined}>
       {loading ? (
         <div className="lim-empty" style={{ minHeight: 120 }} />
       ) : !hasSource && !points.length ? (
         <div className="lim-empty">
           <div className="lim-empty__title">{t('limits.emptyTitle')}</div>
+          {no5hNote}
           <LimitsHowTo compact />
           <button type="button" className="btn btn--ghost btn--sm lim-empty__btn" onClick={(e) => openSettings(e.currentTarget, 'connection')}>
             {t('limits.openSettings')}
@@ -46,15 +55,16 @@ export default function LimitsPanel({ range }: { range: ActiveRange }) {
         </div>
       ) : (
         <>
-          {hasSource && f && <Summary f={f} />}
-          {points.length ? <LimitsChart points={points} forecast={hasSource ? f : null} range={range} /> : <p className="lim-note">{t('limits.noPoints')}</p>}
+          {hasSource && f && <Summary f={f} no5h={no5h} />}
+          {no5hNote}
+          {points.length ? <LimitsChart points={points} forecast={hasSource ? f : null} range={range} no5h={no5h} /> : <p className="lim-note">{t('limits.noPoints')}</p>}
         </>
       )}
     </Panel>
   );
 }
 
-function Summary({ f }: { f: LimitsForecast }) {
+function Summary({ f, no5h }: { f: LimitsForecast; no5h: boolean }) {
   const row = (w: WindowForecast, label: string) => {
     const v = forecastView(w, label, f.now);
     return (
@@ -69,7 +79,7 @@ function Summary({ f }: { f: LimitsForecast }) {
   };
   return (
     <div className="lim-sums">
-      {row(f.fiveHour, t('gx.bar.5h'))}
+      {!no5h && row(f.fiveHour, t('gx.bar.5h'))}
       {row(f.sevenDay, t('gx.bar.7d'))}
     </div>
   );
@@ -116,24 +126,24 @@ function timeTicks(x0: number, x1: number): number[] {
   return step < 24 * H ? out.filter((t) => new Date(t).getHours() % (step / H) === 0) : out;
 }
 
-function LimitsChart({ points, forecast, range, height = 260 }: { points: LimitsPoint[]; forecast: LimitsForecast | null | undefined; range: ActiveRange; height?: number }) {
+function LimitsChart({ points, forecast, range, no5h = false, height = 260 }: { points: LimitsPoint[]; forecast: LimitsForecast | null | undefined; range: ActiveRange; no5h?: boolean; height?: number }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const { tip, show, hide } = useTip();
   const [hx, setHx] = useState<number | null>(null);
   const now = forecast?.now ?? Date.now();
   const series = useMemo(() => {
     const out = {} as Record<LimitWindow, WindowPoint[][]>;
-    for (const w of ['5h', '7d'] as const) out[w] = splitWindows(windowSeries(points, w), w);
+    for (const w of ['5h', '7d'] as const) out[w] = w === '5h' && no5h ? [] : splitWindows(windowSeries(points, w), w);
     return out;
-  }, [points]);
+  }, [points, no5h]);
   const resets7 = useMemo(() => resetMarkers(points, '7d'), [points]);
-  const resets5 = useMemo(() => resetMarkers(points, '5h'), [points]);
+  const resets5 = useMemo(() => (no5h ? [] : resetMarkers(points, '5h')), [points, no5h]);
 
   const padL = 40, padR = 18, padT = 18, padB = 28;
   const from = parseDay(range.from).getTime();
   const toEnd = parseDay(range.to).getTime() + 86_400_000 - 1;
   const live = toEnd >= now;
-  const f5 = forecast?.fiveHour;
+  const f5 = no5h ? undefined : forecast?.fiveHour;
   const f7 = forecast?.sevenDay;
   // A range that includes now reaches to the 5 h reset, so the forecast is visible.
   const x0 = from;
@@ -190,7 +200,7 @@ function LimitsChart({ points, forecast, range, height = 260 }: { points: Limits
           </>
         ) : (
           <>
-            <TipRow color={COLOR['5h']} label={t('limits.w5h')} value={v5 == null ? '—' : `${Math.round(v5)}%`} />
+            {!no5h && <TipRow color={COLOR['5h']} label={t('limits.w5h')} value={v5 == null ? '—' : `${Math.round(v5)}%`} />}
             <TipRow color={COLOR['7d']} label={t('limits.w7d')} value={v7 == null ? '—' : `${Math.round(v7)}%`} />
           </>
         )}

@@ -2,6 +2,7 @@
 // Connects Claude Code's status line (and, optionally, raw hooks) to Clorbit.
 //
 // Default is a dry run: it only prints what would be added to ~/.claude/settings.json.
+// Plugin users have the same status-line step without a clone: `/clorbit statusline` (see README).
 // The recommended way to install hooks is the `clorbit` plugin (see README).
 // This script writes hooks into settings.json only with the explicit --hooks flag.
 //   node scripts/install-hooks.mjs                 show the changes (writes nothing)
@@ -11,9 +12,7 @@
 //
 // Hooks are fire-and-forget: curl with a 1 s timeout and errors ignored, so Claude Code is never
 // slowed down, even when Clorbit is not running.
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { CAPTURE, applyStatusLine, planStatusLine, readSettingsFile, settingsFile, writeSettingsFile } from '../plugin/app/statusline.mjs';
 
 const env = (name) => process.env[`CLORBIT_${name}`] || process.env[`FLEET_${name}`] || undefined;
 
@@ -22,7 +21,7 @@ const APPLY = args.has('--apply');
 const STATUSLINE = args.has('--statusline');
 const HOOKS = args.has('--hooks');
 const PORT = Number(env('PORT')) || 4980;
-const SETTINGS = path.join(env('CLAUDE_DIR') || path.join(os.homedir(), '.claude'), 'settings.json');
+const SETTINGS = settingsFile();
 const MARK = `127.0.0.1:${PORT}/api/hook`;
 
 const HOOK_COMMAND = `curl -s -m 1 -X POST --data-binary @- http://${MARK} >/dev/null 2>&1 || true`;
@@ -33,16 +32,11 @@ const EVENTS = [
 // Tool events need a matcher; for the others a missing matcher means "all".
 const WITH_MATCHER = new Set(['PreToolUse', 'PostToolUse']);
 
-const CAPTURE = '.clorbit/statusline.json';
-const LEGACY_CAPTURE = '.fleet/statusline.json';
-const STATUS_PREFIX = `input=$(cat); mkdir -p ~/.clorbit; printf '%s' "$input" > ~/${CAPTURE};`;
-
 function readSettings() {
   try {
-    return JSON.parse(fs.readFileSync(SETTINGS, 'utf8'));
+    return readSettingsFile(SETTINGS);
   } catch (e) {
-    if (e.code === 'ENOENT') return {};
-    console.error(`Could not read ${SETTINGS}: ${e.message}`);
+    console.error(e.message);
     process.exit(1);
   }
 }
@@ -62,18 +56,14 @@ function hooksPatch(settings) {
   return patch;
 }
 
-/** New status-line command: saves its input to ~/.clorbit/statusline.json and passes it on unchanged. */
+/** The status-line change (shared with `clorbit statusline`, see plugin/app/statusline.mjs). */
 function statuslinePatch(settings) {
-  const sl = settings.statusLine;
-  if (!sl || sl.type !== 'command' || typeof sl.command !== 'string') {
-    return { error: 'settings.json has no statusLine of type "command" — nothing to change.' };
+  const plan = planStatusLine(settings);
+  if (plan.action === 'already') return { already: true };
+  if (plan.action === 'none') {
+    return { error: 'settings.json has no statusLine of type "command" — nothing to change. `clorbit statusline --apply --create` (or /clorbit statusline --apply --create) can create a minimal one.' };
   }
-  if (sl.command.includes(CAPTURE)) return { already: true };
-  if (sl.command.includes(LEGACY_CAPTURE)) {
-    // A pre-rename capture: point it at the new location.
-    return { before: sl.command, after: sl.command.replaceAll(LEGACY_CAPTURE, CAPTURE).replaceAll('mkdir -p ~/.fleet', 'mkdir -p ~/.clorbit') };
-  }
-  return { before: sl.command, after: `${STATUS_PREFIX} printf '%s' "$input" | { ${sl.command}; }` };
+  return { plan, before: plan.before, after: plan.after };
 }
 
 function merge(settings, hp, sp) {
@@ -82,8 +72,7 @@ function merge(settings, hp, sp) {
     out.hooks = out.hooks ?? {};
     for (const [ev, groups] of Object.entries(hp)) out.hooks[ev] = [...(out.hooks[ev] ?? []), ...groups];
   }
-  if (sp && sp.after) out.statusLine = { ...out.statusLine, command: sp.after };
-  return out;
+  return sp && sp.plan ? applyStatusLine(out, sp.plan) : out;
 }
 
 const settings = readSettings();
@@ -115,13 +104,7 @@ if (APPLY) {
     console.log('\nNo changes — the file is left untouched.');
     process.exit(0);
   }
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const backup = `${SETTINGS}.clorbit-backup-${stamp}`;
-  if (fs.existsSync(SETTINGS)) fs.copyFileSync(SETTINGS, backup);
-  const merged = merge(settings, hp, useSl);
-  const tmp = `${SETTINGS}.clorbit-tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(merged, null, 2) + '\n');
-  fs.renameSync(tmp, SETTINGS);
-  console.log(`\nDone. Backup: ${backup}`);
+  const backup = writeSettingsFile(SETTINGS, merge(settings, hp, useSl));
+  console.log(`\nDone.${backup ? ` Backup: ${backup}` : ''}`);
   console.log('Changes apply to new Claude Code sessions.');
 }

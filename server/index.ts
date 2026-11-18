@@ -13,6 +13,7 @@ import { insights } from './insights';
 import { LimitsForecaster } from './limits-forecast';
 import { LimitsLog, parseTsRange } from './limits-log';
 import { Live, readLimits } from './live';
+import { readPlan } from './plan';
 import { RecentEvents } from './recent-events';
 import { ServerNotifications, SystemNotifier, notifyTestBody } from './notifier';
 import { SettingsStore } from './settings';
@@ -52,6 +53,7 @@ function about(): AboutInfo {
     limits: { capture: lim.capture, updatedAt: lim.limits?.updatedAt ?? null },
     store: { enabled: !!st, fileSummaries: st?.rows.fileSummaries ?? 0, archived: st?.rows.archived ?? 0, hookEvents: st?.rows.hookEvents ?? 0, limits: st?.rows.limits ?? 0 },
     system: { available: systemNotifier.available, tool: systemNotifier.tool, platform: process.platform },
+    plan: readPlan(),
   };
 }
 

@@ -6,6 +6,7 @@ import type { Limits, LimitsForecast, LiveSession, LiveSnapshot, SessionKind, Se
 import { sessionKind } from '../shared/automation';
 import { LEGACY_STATUSLINE_FILE, PROJECTS_DIR, SESSIONS_DIR, STATUSLINE_FILE, hookPluginEnabled } from './config';
 import type { Hooks } from './hooks';
+import { readPlan } from './plan';
 import { reasonCode, reasonText, type Lang, type Reason, type ServerEvent } from './i18n';
 import { listTranscripts, type Store } from './store';
 import { buildTree, sessionStatus, subagentDone } from './tree';
@@ -94,23 +95,32 @@ export function tokensSince(s: FileSummary, cutoff: number, into: T4): T4 {
   return into;
 }
 
+/**
+ * Limits from one status-line input. The 5-hour window counts as 'none' when the input reports the
+ * 7-day window but no 5-hour one (plans with only a weekly limit); it switches back to 'present' as
+ * soon as a 5-hour reading appears again.
+ */
+export function limitsFromStatusline(j: any, updatedAt: number): Limits {
+  const rl = j && typeof j.rate_limits === 'object' && j.rate_limits ? j.rate_limits : {};
+  const num = (v: any) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const sec = (v: any) => (num(v) === null ? null : (v < 1e12 ? v * 1000 : v));
+  const fiveHourPct = num(rl.five_hour?.used_percentage);
+  const sevenDayPct = num(rl.seven_day?.used_percentage);
+  const fiveHourWindow = fiveHourPct != null ? 'present' : sevenDayPct != null ? 'none' : 'unknown';
+  return {
+    fiveHourPct, fiveHourResetsAt: fiveHourPct == null ? null : sec(rl.five_hour?.resets_at),
+    sevenDayPct, sevenDayResetsAt: sec(rl.seven_day?.resets_at),
+    updatedAt,
+    fiveHourWindow,
+  };
+}
+
 /** Subscription limits from the status-line capture (new location first, then the legacy one). */
 export function readLimits(): { limits: Limits | null; capture: boolean } {
   try {
     const file = fs.existsSync(STATUSLINE_FILE) || !fs.existsSync(LEGACY_STATUSLINE_FILE) ? STATUSLINE_FILE : LEGACY_STATUSLINE_FILE;
     const st = fs.statSync(file);
-    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const rl = j.rate_limits ?? {};
-    const num = (v: any) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-    const sec = (v: any) => (num(v) === null ? null : (v < 1e12 ? v * 1000 : v));
-    return {
-      capture: true,
-      limits: {
-        fiveHourPct: num(rl.five_hour?.used_percentage), fiveHourResetsAt: sec(rl.five_hour?.resets_at),
-        sevenDayPct: num(rl.seven_day?.used_percentage), sevenDayResetsAt: sec(rl.seven_day?.resets_at),
-        updatedAt: Math.round(st.mtimeMs),
-      },
-    };
+    return { capture: true, limits: limitsFromStatusline(JSON.parse(fs.readFileSync(file, 'utf8')), Math.round(st.mtimeMs)) };
   } catch {
     return { limits: null, capture: false };
   }
@@ -444,6 +454,7 @@ export class Live extends EventEmitter {
       },
       limits: lim.limits,
       limitsForecast,
+      plan: readPlan(),
       // Hooks count as installed when the clorbit plugin (or legacy fleet-hooks) is enabled, or events already arrived.
       hooksInstalled: hookPluginEnabled() || this.hooks.installed,
       statuslineCapture: lim.capture,

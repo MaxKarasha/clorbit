@@ -2225,3 +2225,65 @@
 .lim-empty__btn {
   justify-self: start;
 }
+
+/* ---------- Subscription plan badge (status bar, Overview, Settings) ---------- */
+/* A dark pill with a gradient hairline border and a soft glow in the plan's colour family. */
+.plan-badge {
+  --pb-a: #ffd08a;
+  --pb-b: #c39bff;
+  --pb-bg-a: #2b2116;
+  --pb-bg-b: #221a38;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 18px;
+  padding: 0 8px 0 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(120deg, var(--pb-bg-a), var(--pb-bg-b)) padding-box,
+    linear-gradient(120deg, var(--pb-a), var(--pb-b)) border-box;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--pb-b) 28%, transparent), 0 0 3px color-mix(in srgb, var(--pb-a) 30%, transparent);
+  color: #fff2e0;
+  font: 600 10.5px/1 var(--font-mono);
+  letter-spacing: 0.03em;
+  text-transform: none;
+  white-space: nowrap;
+  vertical-align: middle;
+  cursor: default;
+}
+.plan-badge__glyph {
+  width: 9px;
+  height: 9px;
+  fill: var(--pb-a);
+  filter: drop-shadow(0 0 3px var(--pb-a));
+}
+.plan-badge--pro {
+  --pb-a: #8fe3ff;
+  --pb-b: #7b9bff;
+  --pb-bg-a: #12243a;
+  --pb-bg-b: #161d3c;
+  color: #e6f6ff;
+}
+.plan-badge--plain {
+  --pb-a: #b9c4d8;
+  --pb-b: #8792ab;
+  --pb-bg-a: #1a1f2e;
+  --pb-bg-b: #161a28;
+  color: #e6ebf5;
+}
+.lim-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.lim-note--inf {
+  margin: 0 0 10px;
+}
+.lim-note--inf span {
+  color: #c7b8ff;
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(181, 140, 255, 0.55);
+}

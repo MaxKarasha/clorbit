@@ -50,7 +50,7 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 - **Live events:** a flash for every tool call, a comet when an agent is born, a spiral when a result returns to its parent, orange waves when a session is waiting for you.
 - **Time machine:** "▶ Replay" (in a session's panel, the cluster list, the Sessions page and the Session page) replays a session in the galaxy from its transcripts — agents are born, work and return, the belt grows and the context ring fills, the console shows what happened with the original times. A timeline at the bottom scrubs through it, with speeds up to 60×, an **auto** speed that squeezes idle gaps, and markers for spawns, waits, compactions and prompts (space, ←/→ and Shift+←/→ work too). Live sessions replay up to now and can follow along.
 - **Drill-down levels:** fleet → session (agent tree, tokens, context, effort, current status) → agent (the task from its parent, what it is doing now, its latest thought, its subordinates). Click empty space to go back up.
-- **Status bar:** tokens over 24 h with a burn-rate sparkline, tokens per minute, subscription limits with a forecast (optional, see below), live sessions, working subagents and cache hit rate. On narrower screens the less important metrics (cache, then speed) give way instead of overlapping.
+- **Status bar:** tokens over 24 h with a burn-rate sparkline, tokens per minute, your plan badge and the subscription limits as two gauge bars with a forecast (optional, see below), live sessions, working subagents and cache hit rate. On narrower screens the less important metrics (cache, then speed) give way instead of overlapping.
 - An automatic **tour** cycles through the most active systems when you are not interacting (opt-in).
 - **Event console** in the bottom-left corner: tool calls, spawns, results, waits, prompts and compactions as they happen. Project names take their star's color and agent names their planet's; click either to fly there. Expand it into a docked drawer (resizable, with the last ~500 events from the server, filters by project and event kind, search, pause and "clear view"), or pop it out into its own window (`#/console`) whose clicks drive the galaxy in your main tab.
 
@@ -128,6 +128,7 @@ The `/clorbit` command takes an optional argument:
 | `/clorbit start` | Start the server in the background. |
 | `/clorbit stop` | Stop the server that the plugin or the CLI started. |
 | `/clorbit status` | Running or not, URL, version, data folder, whether hook events arrive. |
+| `/clorbit statusline` | Show how the subscription-limits capture would change your status line (writes nothing). Add `--apply` to write it, `--apply --remove` to undo it, `--apply --create` to make a minimal status line if you have none. See [Subscription limits](#subscription-limits-optional). |
 
 From a shell, the plugin can be managed with `claude plugin enable|disable|uninstall clorbit`. To try it without installing anything: `claude --plugin-dir ./plugin` from a clone.
 
@@ -166,6 +167,7 @@ node plugin/app/cli.mjs            # same as `open`
 node plugin/app/cli.mjs start      # start in the background, wait until it answers
 node plugin/app/cli.mjs status
 node plugin/app/cli.mjs stop
+node plugin/app/cli.mjs statusline # dry run of the status-line capture (--apply, --remove, --create)
 pnpm clorbit status                # the same through pnpm
 ```
 
@@ -173,22 +175,27 @@ The server runs detached with its pid file and log in `~/.clorbit` (`clorbit.pid
 
 ### Subscription limits (optional)
 
-Your 5-hour and 7-day subscription usage only exists in the JSON that Claude Code pipes into your **status-line command**. To show it, the status-line command has to save its input to `~/.clorbit/statusline.json` before doing whatever it did before. Clorbit can make that one-line change for you — after showing it to you:
+Your 5-hour and 7-day subscription usage only exists in the JSON that Claude Code pipes into your **status-line command**. To show it, the status-line command has to save its input to `~/.clorbit/statusline.json` before doing whatever it did before. Clorbit can make that one-line change for you — after showing it to you. With the plugin, in Claude Code:
 
-```bash
-node scripts/install-hooks.mjs                         # dry run: prints the change, writes nothing
-node scripts/install-hooks.mjs --apply --statusline    # applies it, with a timestamped backup of settings.json
+```text
+/clorbit statusline                  # dry run: prints the exact change, writes nothing
+/clorbit statusline --apply          # applies it, with a timestamped backup of settings.json
+/clorbit statusline --apply --remove # undoes it: restores your original command
 ```
 
-The script only touches `statusLine.command` in `~/.claude/settings.json`, keeps a backup next to it, and passes the input to your original command unchanged. You need an existing status line of type `command`. Clorbit never runs it by itself; Settings → Connection shows the same command with a copy button. Clorbit polls the file every 30 s and records a history of changes (`GET /api/limits/history`).
+No status line yet? `/clorbit statusline --apply --create` makes a minimal one (the model and both limits, e.g. `Opus · 5h 42% · 7d 18%`; it needs Node.js on your PATH) that also saves the input. From a clone of the repository the same change is `node scripts/install-hooks.mjs --apply --statusline` (dry run without `--apply`).
 
-**Forecast.** From that history Clorbit estimates when each window runs out (`GET /api/limits/forecast`): a regression over the current window that weighs recent minutes most (half-life 30 min for 5 h, 2 days for 7 d), started afresh at every reset. While a window has only a couple of points, your transcript token rate (output weighted ×5, cache reads ×0.1) is calibrated against the % those points gained. A reading older than 20 min (5 h) is projected from now, since the status line only writes while Claude Code runs. The ring's tick is the projected % at the reset; the tooltip shows the rate, confidence and basis. Usage outside Claude Code on this machine (claude.ai, other computers) moves the limits but not the token proxy, so the forecast adapts only as new readings arrive.
+Both only touch `statusLine.command` in `~/.claude/settings.json` (or add `statusLine` with `--create`), keep a backup next to it, and pass the input to your original command unchanged; running it again is a no-op. Clorbit never runs them by itself; Settings → Connection shows the commands with copy buttons. Clorbit polls the file every 30 s and records a history of changes (`GET /api/limits/history`).
+
+**Plan and windows.** The status bar shows your plan as a badge (e.g. «Max · 20×»), read from `~/.claude.json` — only the plan fields of the signed-in account (`planDisplayName`, organization type, rate-limit tier, subscription date), nothing else. Each window is a bar: the fill is the used %, the hatched stretch and marker show the projected % at the reset. Plans with only a weekly limit (Ultra) show the 5-hour bar as **∞**: Clorbit sees it in the status-line data (the 7-day window is reported, the 5-hour one is not), or, before the first reading, from a small plan table; the data always wins and a 5-hour window that comes back is picked up automatically.
+
+**Forecast.** From that history Clorbit estimates when each window runs out (`GET /api/limits/forecast`): a regression over the current window that weighs recent minutes most (half-life 30 min for 5 h, 2 days for 7 d), started afresh at every reset. While a window has only a couple of points, your transcript token rate (output weighted ×5, cache reads ×0.1) is calibrated against the % those points gained. A reading older than 20 min (5 h) is projected from now, since the status line only writes while Claude Code runs. The bar's marker is the projected % at the reset; the tooltip shows the rate, confidence and basis. Usage outside Claude Code on this machine (claude.ai, other computers) moves the limits but not the token proxy, so the forecast adapts only as new readings arrive.
 
 ## Privacy and safety
 
 - **Localhost only.** The server binds to `127.0.0.1`; nothing is exposed to your network and nothing is sent to the internet. The only external request the web page makes is for Google Fonts. Settings can only be changed from a local page (other origins get 403).
 - **System notifications** are shown with `osascript` (macOS) or `notify-send` (Linux), started with an argument list (no shell), rate-limited, and only for the events you switch on.
-- **Read-only over `~/.claude`.** Clorbit never writes to `~/.claude`. The only exception is `scripts/install-hooks.mjs`, and only when you run it with `--apply` yourself.
+- **Read-only over `~/.claude`.** Clorbit never writes to `~/.claude`. The only exception is the status-line capture (`/clorbit statusline`, or `scripts/install-hooks.mjs`), and only when you run it with `--apply` yourself.
 - **Your data stays in `~/.clorbit`.** That folder holds the SQLite database (`clorbit.db`, including your settings), the server's log and pid file when it was started by the plugin or the CLI, and the optional status-line capture. Delete it at any time; it will be rebuilt from your transcripts (except history of transcripts Claude Code has already deleted).
 - **Archived history.** Claude Code deletes transcripts older than 30 days by default. Clorbit keeps their summaries and marks them as archived, so analytics and insights still include that history. An archived session keeps its summary, agent tree, startup context and tools, but has no timeline or context chart.
 - **Demo mode** (`?demo=1`) uses invented data only — safe for screenshots and screen sharing. Clorbit never switches to it by itself: when the server is down you see an "isn't running" screen, not made-up numbers.
@@ -205,7 +212,8 @@ All settings are environment variables. The old `FLEET_*` names are still read a
 | `CLORBIT_DATA_DIR` | `~/.clorbit` | Where `clorbit.db` lives. |
 | `CLORBIT_URL` | `http://127.0.0.1:$CLORBIT_PORT` | Where the plugin's hooks send events. |
 | `CLORBIT_AUTOSTART` | — | Set to `0` to stop the plugin from starting the server when a session starts. |
-| `CLORBIT_CLAUDE_DIR` | `~/.claude` | Claude Code's data folder to read. |
+| `CLORBIT_CLAUDE_DIR` | `~/.claude` | Claude Code's data folder to read (and where `clorbit statusline` finds `settings.json`). |
+| `CLORBIT_CLAUDE_JSON` | `~/.claude.json` | Claude Code's account file; only the plan fields are read. With `CLORBIT_CLAUDE_DIR` set, a `.claude.json` inside it or next to it. |
 | `CLORBIT_STATUSLINE_FILE` | `~/.clorbit/statusline.json` | Status-line capture file. |
 | `CLORBIT_SERVE_WEB` | on in the built server | Serve the web app from the API server. The built server (`plugin/app/server.mjs`) does by default; under `pnpm dev`/`pnpm server` set it to `1` after `pnpm build`. |
 

@@ -828,10 +828,10 @@ function knownPlugins() {
   const names = /* @__PURE__ */ new Set();
   for (const k of Object.keys(readSettings().enabledPlugins)) names.add(k.split("@")[0]);
   try {
-    const cache2 = path2.join(CLAUDE_DIR, "plugins", "cache");
-    for (const mkt of fs.readdirSync(cache2)) {
+    const cache3 = path2.join(CLAUDE_DIR, "plugins", "cache");
+    for (const mkt of fs.readdirSync(cache3)) {
       try {
-        for (const p of fs.readdirSync(path2.join(cache2, mkt))) names.add(p);
+        for (const p of fs.readdirSync(path2.join(cache3, mkt))) names.add(p);
       } catch {
       }
     }
@@ -839,7 +839,7 @@ function knownPlugins() {
   }
   return [...names].filter((n) => n.length >= 4).sort((a, b) => b.length - a.length);
 }
-var BUNDLED, HERE, PROJECT_ROOT, CLAUDE_DIR, PROJECTS_DIR, SESSIONS_DIR, SETTINGS_FILE, HOME_DATA_DIR, STATUSLINE_FILE, LEGACY_STATUSLINE_FILE, DATA_DIR, DATA_DIR_EXPLICIT, DB_FILE, CACHE_DIR, DIST_DIR, SERVE_WEB, PORT, HOST, VERSION, LEGACY_DB_FILE, settingsCache;
+var BUNDLED, HERE, PROJECT_ROOT, CLAUDE_DIR, PROJECTS_DIR, SESSIONS_DIR, SETTINGS_FILE, CLAUDE_JSON_FILES, HOME_DATA_DIR, STATUSLINE_FILE, LEGACY_STATUSLINE_FILE, DATA_DIR, DATA_DIR_EXPLICIT, DB_FILE, CACHE_DIR, DIST_DIR, SERVE_WEB, PORT, HOST, VERSION, LEGACY_DB_FILE, settingsCache;
 var init_config = __esm({
   "server/config.ts"() {
     "use strict";
@@ -850,6 +850,7 @@ var init_config = __esm({
     PROJECTS_DIR = path2.join(CLAUDE_DIR, "projects");
     SESSIONS_DIR = path2.join(CLAUDE_DIR, "sessions");
     SETTINGS_FILE = path2.join(CLAUDE_DIR, "settings.json");
+    CLAUDE_JSON_FILES = env("CLAUDE_JSON") ? [env("CLAUDE_JSON")] : env("CLAUDE_DIR") ? [path2.join(CLAUDE_DIR, ".claude.json"), path2.join(path2.dirname(CLAUDE_DIR), ".claude.json")] : [path2.join(os.homedir(), ".claude.json")];
     HOME_DATA_DIR = path2.join(os.homedir(), ".clorbit");
     STATUSLINE_FILE = env("STATUSLINE_FILE") || path2.join(HOME_DATA_DIR, "statusline.json");
     LEGACY_STATUSLINE_FILE = path2.join(os.homedir(), ".fleet", "statusline.json");
@@ -2142,16 +2143,17 @@ function forecastLimits({ now, limits, history, usage }) {
     resetsAt: w === "5h" ? limits.fiveHourResetsAt : limits.sevenDayResetsAt,
     ts: limits.updatedAt || now
   } : null;
+  const no5h = has && limits?.fiveHourWindow === "none";
   return {
     source: has ? "statusline" : "none",
     now,
     updatedAt: has && limits ? limits.updatedAt : null,
-    fiveHour: forecastWindow({ window: "5h", now, current: cur("5h"), history: windowSeries(history, "5h"), usage }),
+    fiveHour: no5h ? { ...none("5h", null, null), noWindow: true } : forecastWindow({ window: "5h", now, current: cur("5h"), history: windowSeries(history, "5h"), usage }),
     sevenDay: forecastWindow({ window: "7d", now, current: cur("7d"), history: windowSeries(history, "7d"), usage })
   };
 }
 function forecastWarns(f, margin = FORECAST_MARGIN_MS) {
-  return !!f && !f.exhausted && f.hitsAt != null && f.resetsAt != null && f.resetsAt - f.hitsAt > margin && f.confidence !== "low";
+  return !!f && !f.noWindow && !f.exhausted && f.hitsAt != null && f.resetsAt != null && f.resetsAt - f.hitsAt > margin && f.confidence !== "low";
 }
 var H, MIN, WINDOW_MS, FORECAST_TUNING, TOKEN_WEIGHTS, none, LOWER, round2, FORECAST_MARGIN_MS;
 var init_forecast = __esm({
@@ -2349,8 +2351,65 @@ var init_automation = __esm({
   }
 });
 
+// server/plan.ts
+import fs3 from "node:fs";
+function str2(v, max = 40) {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s && s.length <= max && !/[\u0000-\u001f]/.test(s) ? s : null;
+}
+function tierOf(rateLimitTier) {
+  const m = typeof rateLimitTier === "string" ? /(?:^|_)(\d{1,3})x$/i.exec(rateLimitTier) : null;
+  return m ? `${Number(m[1])}\xD7` : null;
+}
+function planFrom(account) {
+  if (!account || typeof account !== "object" || Array.isArray(account)) return null;
+  const a = account;
+  const type = str2(a.organizationType);
+  const name = str2(a.planDisplayName) ?? (type ? NAMES[type] ?? null : null);
+  const tier = tierOf(a.userRateLimitTier) ?? tierOf(a.organizationRateLimitTier);
+  const sinceRaw = str2(a.subscriptionCreatedAt, 64);
+  const since = sinceRaw && Number.isFinite(Date.parse(sinceRaw)) ? sinceRaw : null;
+  if (!name && !tier && !type) return null;
+  return { name, tier, type, since };
+}
+function readPlan(files = CLAUDE_JSON_FILES) {
+  for (const file of files) {
+    let st;
+    try {
+      st = fs3.statSync(file);
+    } catch {
+      continue;
+    }
+    if (cache2 && cache2.file === file && cache2.mtime === st.mtimeMs && cache2.size === st.size) return cache2.plan;
+    let plan = null;
+    try {
+      plan = planFrom(JSON.parse(fs3.readFileSync(file, "utf8"))?.oauthAccount);
+    } catch {
+      if (cache2 && cache2.file === file) return cache2.plan;
+    }
+    cache2 = { file, mtime: st.mtimeMs, size: st.size, plan };
+    return plan;
+  }
+  return null;
+}
+var NAMES, cache2;
+var init_plan = __esm({
+  "server/plan.ts"() {
+    "use strict";
+    init_config();
+    NAMES = {
+      claude_pro: "Pro",
+      claude_max: "Max",
+      claude_team: "Team",
+      claude_enterprise: "Enterprise"
+    };
+    cache2 = null;
+  }
+});
+
 // server/lines.ts
-import fs3 from "node:fs/promises";
+import fs4 from "node:fs/promises";
 function classifyPrefix(head) {
   if (head[0] !== 123 || head[1] !== 34) return null;
   const p = head.subarray(0, 24).toString("latin1");
@@ -2358,7 +2417,7 @@ function classifyPrefix(head) {
   return null;
 }
 async function readLines(file, start, sink, maxBytes = Infinity) {
-  const fh = await fs3.open(file, "r");
+  const fh = await fs4.open(file, "r");
   try {
     const buf = Buffer.allocUnsafe(CHUNK);
     let pos = start;
@@ -2459,7 +2518,7 @@ var init_lines = __esm({
 });
 
 // server/scanner.ts
-import fs4 from "node:fs";
+import fs5 from "node:fs";
 import path5 from "node:path";
 function emptyCarry() {
   return {
@@ -2551,7 +2610,7 @@ function newSummary(file, id) {
 function readMeta(file) {
   const metaPath = file.replace(/\.jsonl$/, ".meta.json");
   try {
-    const m = JSON.parse(fs4.readFileSync(metaPath, "utf8"));
+    const m = JSON.parse(fs5.readFileSync(metaPath, "utf8"));
     const wf = path5.basename(path5.dirname(file));
     return {
       agentType: m.agentType || "general-purpose",
@@ -2601,7 +2660,7 @@ function detectPlugin(texts, known) {
 async function scanFile(projectsDir, file, prev, opts, onEvent) {
   let st;
   try {
-    st = fs4.statSync(file);
+    st = fs5.statSync(file);
   } catch {
     return null;
   }
@@ -2985,7 +3044,7 @@ var init_scanner = __esm({
 
 // server/store.ts
 import { EventEmitter } from "node:events";
-import fs5 from "node:fs";
+import fs6 from "node:fs";
 import os2 from "node:os";
 import path6 from "node:path";
 import { Worker } from "node:worker_threads";
@@ -2993,7 +3052,7 @@ function listTranscripts(projectsDir) {
   const out = [];
   let dirs = [];
   try {
-    dirs = fs5.readdirSync(projectsDir);
+    dirs = fs6.readdirSync(projectsDir);
   } catch {
     return out;
   }
@@ -3001,7 +3060,7 @@ function listTranscripts(projectsDir) {
     const pd = path6.join(projectsDir, d);
     let entries;
     try {
-      entries = fs5.readdirSync(pd, { withFileTypes: true });
+      entries = fs6.readdirSync(pd, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -3011,7 +3070,7 @@ function listTranscripts(projectsDir) {
         const sub = path6.join(pd, e.name, "subagents");
         let se;
         try {
-          se = fs5.readdirSync(sub, { withFileTypes: true });
+          se = fs6.readdirSync(sub, { withFileTypes: true });
         } catch {
           continue;
         }
@@ -3020,14 +3079,14 @@ function listTranscripts(projectsDir) {
           else if (x.isDirectory() && x.name === "workflows") {
             let wfs = [];
             try {
-              wfs = fs5.readdirSync(path6.join(sub, "workflows"));
+              wfs = fs6.readdirSync(path6.join(sub, "workflows"));
             } catch {
               continue;
             }
             for (const wf of wfs) {
               let af = [];
               try {
-                af = fs5.readdirSync(path6.join(sub, "workflows", wf));
+                af = fs6.readdirSync(path6.join(sub, "workflows", wf));
               } catch {
                 continue;
               }
@@ -3190,7 +3249,7 @@ var init_store = __esm({
         const list = listTranscripts(this.projectsDir);
         const withM = list.map((f) => {
           try {
-            const s = fs5.statSync(f);
+            const s = fs6.statSync(f);
             return { f, m: s.mtimeMs, size: s.size };
           } catch {
             return null;
@@ -3255,7 +3314,7 @@ var init_store = __esm({
       refresh(file) {
         return this.enqueue(file, async () => {
           if (!identify(this.projectsDir, file)) return;
-          if (!fs5.existsSync(file)) {
+          if (!fs6.existsSync(file)) {
             this.markMissing(file);
             return;
           }
@@ -3474,7 +3533,7 @@ var init_tree = __esm({
 
 // server/live.ts
 import { EventEmitter as EventEmitter2 } from "node:events";
-import fs6 from "node:fs";
+import fs7 from "node:fs";
 import path7 from "node:path";
 function isAlive(pid) {
   try {
@@ -3488,14 +3547,14 @@ function readPidFiles(dir = SESSIONS_DIR) {
   const out = /* @__PURE__ */ new Map();
   let names = [];
   try {
-    names = fs6.readdirSync(dir);
+    names = fs7.readdirSync(dir);
   } catch {
     return out;
   }
   for (const n of names) {
     if (!/^\d+\.json$/.test(n)) continue;
     try {
-      const j = JSON.parse(fs6.readFileSync(path7.join(dir, n), "utf8"));
+      const j = JSON.parse(fs7.readFileSync(path7.join(dir, n), "utf8"));
       const pid = Number(j.pid ?? n.split(".")[0]);
       if (!j.sessionId) continue;
       const info = {
@@ -3520,9 +3579,9 @@ function readHeadOrigin(file) {
   const out = { entrypoint: null, promptOrigin: null };
   let fd = null;
   try {
-    fd = fs6.openSync(file, "r");
+    fd = fs7.openSync(file, "r");
     const buf = Buffer.alloc(HEAD_BYTES);
-    const n = fs6.readSync(fd, buf, 0, HEAD_BYTES, 0);
+    const n = fs7.readSync(fd, buf, 0, HEAD_BYTES, 0);
     const lines = buf.subarray(0, n).toString("utf8").split("\n");
     if (n === HEAD_BYTES) lines.pop();
     for (const line of lines) {
@@ -3543,7 +3602,7 @@ function readHeadOrigin(file) {
   } catch {
   } finally {
     if (fd !== null) try {
-      fs6.closeSync(fd);
+      fs7.closeSync(fd);
     } catch {
     }
   }
@@ -3562,24 +3621,27 @@ function tokensSince(s, cutoff, into) {
   }
   return into;
 }
+function limitsFromStatusline(j, updatedAt) {
+  const rl = j && typeof j.rate_limits === "object" && j.rate_limits ? j.rate_limits : {};
+  const num = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+  const sec = (v) => num(v) === null ? null : v < 1e12 ? v * 1e3 : v;
+  const fiveHourPct = num(rl.five_hour?.used_percentage);
+  const sevenDayPct = num(rl.seven_day?.used_percentage);
+  const fiveHourWindow = fiveHourPct != null ? "present" : sevenDayPct != null ? "none" : "unknown";
+  return {
+    fiveHourPct,
+    fiveHourResetsAt: fiveHourPct == null ? null : sec(rl.five_hour?.resets_at),
+    sevenDayPct,
+    sevenDayResetsAt: sec(rl.seven_day?.resets_at),
+    updatedAt,
+    fiveHourWindow
+  };
+}
 function readLimits() {
   try {
-    const file = fs6.existsSync(STATUSLINE_FILE) || !fs6.existsSync(LEGACY_STATUSLINE_FILE) ? STATUSLINE_FILE : LEGACY_STATUSLINE_FILE;
-    const st = fs6.statSync(file);
-    const j = JSON.parse(fs6.readFileSync(file, "utf8"));
-    const rl = j.rate_limits ?? {};
-    const num = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
-    const sec = (v) => num(v) === null ? null : v < 1e12 ? v * 1e3 : v;
-    return {
-      capture: true,
-      limits: {
-        fiveHourPct: num(rl.five_hour?.used_percentage),
-        fiveHourResetsAt: sec(rl.five_hour?.resets_at),
-        sevenDayPct: num(rl.seven_day?.used_percentage),
-        sevenDayResetsAt: sec(rl.seven_day?.resets_at),
-        updatedAt: Math.round(st.mtimeMs)
-      }
-    };
+    const file = fs7.existsSync(STATUSLINE_FILE) || !fs7.existsSync(LEGACY_STATUSLINE_FILE) ? STATUSLINE_FILE : LEGACY_STATUSLINE_FILE;
+    const st = fs7.statSync(file);
+    return { capture: true, limits: limitsFromStatusline(JSON.parse(fs7.readFileSync(file, "utf8")), Math.round(st.mtimeMs)) };
   } catch {
     return { limits: null, capture: false };
   }
@@ -3590,6 +3652,7 @@ var init_live = __esm({
     "use strict";
     init_automation();
     init_config();
+    init_plan();
     init_i18n();
     init_store();
     init_tree();
@@ -3647,7 +3710,7 @@ var init_live = __esm({
       }
       start() {
         try {
-          const w = fs6.watch(PROJECTS_DIR, { recursive: true }, (_ev, name) => {
+          const w = fs7.watch(PROJECTS_DIR, { recursive: true }, (_ev, name) => {
             if (!name) return;
             const f = String(name);
             if (f.endsWith(".jsonl")) this.schedule(path7.join(PROJECTS_DIR, f));
@@ -3658,7 +3721,7 @@ var init_live = __esm({
           console.warn("[clorbit] fs.watch on projects is unavailable:", e.message);
         }
         try {
-          const w = fs6.watch(SESSIONS_DIR, () => this.schedule("__sessions__"));
+          const w = fs7.watch(SESSIONS_DIR, () => this.schedule("__sessions__"));
           this.watchers.push(w);
         } catch {
         }
@@ -3692,7 +3755,7 @@ var init_live = __esm({
           const live2 = this.pids.get(s.sessionId)?.alive || now - s.lastTs < 10 * 6e4;
           if (!live2) continue;
           try {
-            const st = fs6.statSync(s.path);
+            const st = fs7.statSync(s.path);
             if (st.size !== s.size || st.mtimeMs !== s.mtimeMs) void this.store.refresh(s.path);
           } catch {
           }
@@ -3704,7 +3767,7 @@ var init_live = __esm({
             const dir = main ? path7.join(path7.dirname(main.path), p.sessionId, "subagents") : null;
             if (!dir) continue;
             try {
-              for (const f of fs6.readdirSync(dir)) {
+              for (const f of fs7.readdirSync(dir)) {
                 if (f.startsWith("agent-") && f.endsWith(".jsonl")) {
                   const full = path7.join(dir, f);
                   if (!this.store.files.has(full)) void this.store.refresh(full);
@@ -3924,6 +3987,7 @@ var init_live = __esm({
           },
           limits: lim.limits,
           limitsForecast,
+          plan: readPlan(),
           // Hooks count as installed when the clorbit plugin (or legacy fleet-hooks) is enabled, or events already arrived.
           hooksInstalled: hookPluginEnabled() || this.hooks.installed,
           statuslineCapture: lim.capture,
@@ -4138,7 +4202,7 @@ var init_notify = __esm({
         }
       }
       limitOf(l, w) {
-        if (!l) return { pct: null, key: "" };
+        if (!l || w === "5h" && l.fiveHourWindow === "none") return { pct: null, key: "" };
         const pct2 = w === "5h" ? l.fiveHourPct : l.sevenDayPct;
         const at = w === "5h" ? l.fiveHourResetsAt : l.sevenDayResetsAt;
         return { pct: pct2, key: resetKey(at) };
@@ -4289,7 +4353,7 @@ var init_settings = __esm({
 
 // server/notifier.ts
 import { execFile } from "node:child_process";
-import fs7 from "node:fs";
+import fs8 from "node:fs";
 import path8 from "node:path";
 function escapeAppleScript(s) {
   return s.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -4304,8 +4368,8 @@ function notifierCommand(tool, title, body) {
 }
 function executable(file) {
   try {
-    fs7.accessSync(file, fs7.constants.X_OK);
-    return fs7.statSync(file).isFile();
+    fs8.accessSync(file, fs8.constants.X_OK);
+    return fs8.statSync(file).isFile();
   } catch {
     return false;
   }
@@ -5160,7 +5224,7 @@ var init_replay2 = __esm({
 
 // server/index.ts
 var index_exports = {};
-import fs8 from "node:fs";
+import fs9 from "node:fs";
 import http from "node:http";
 import path9 from "node:path";
 function about() {
@@ -5173,7 +5237,8 @@ function about() {
     hooks: { pluginEnabled: hookPluginEnabled(), eventsReceived: hooks.installed || (st?.rows.hookEvents ?? 0) > 0, lastEventAt: lastHook },
     limits: { capture: lim.capture, updatedAt: lim.limits?.updatedAt ?? null },
     store: { enabled: !!st, fileSummaries: st?.rows.fileSummaries ?? 0, archived: st?.rows.archived ?? 0, hookEvents: st?.rows.hookEvents ?? 0, limits: st?.rows.limits ?? 0 },
-    system: { available: systemNotifier.available, tool: systemNotifier.tool, platform: process.platform }
+    system: { available: systemNotifier.available, tool: systemNotifier.tool, platform: process.platform },
+    plan: readPlan()
   };
 }
 function localOrigin(req) {
@@ -5205,14 +5270,14 @@ function json(res, code, body) {
 function serveStatic(res, urlPath) {
   const safe = path9.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
   let file = path9.join(DIST_DIR, safe);
-  if (!file.startsWith(DIST_DIR) || !fs8.existsSync(file) || fs8.statSync(file).isDirectory()) file = path9.join(DIST_DIR, "index.html");
-  if (!fs8.existsSync(file)) {
+  if (!file.startsWith(DIST_DIR) || !fs9.existsSync(file) || fs9.statSync(file).isDirectory()) file = path9.join(DIST_DIR, "index.html");
+  if (!fs9.existsSync(file)) {
     res.writeHead(404);
     res.end("dist is not built: run pnpm build");
     return;
   }
   res.writeHead(200, { "content-type": MIME[path9.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
-  fs8.createReadStream(file).pipe(res);
+  fs9.createReadStream(file).pipe(res);
 }
 function readBody(req, limit = 2e6) {
   return new Promise((resolve, reject) => {
@@ -5243,6 +5308,7 @@ var init_index = __esm({
     init_limits_forecast();
     init_limits_log();
     init_live();
+    init_plan();
     init_recent_events();
     init_notifier();
     init_settings2();
@@ -5386,7 +5452,7 @@ var init_index = __esm({
     PID_FILE = env("PID_FILE");
     ownsPidFile = () => {
       try {
-        return PID_FILE && JSON.parse(fs8.readFileSync(PID_FILE, "utf8")).pid === process.pid;
+        return PID_FILE && JSON.parse(fs9.readFileSync(PID_FILE, "utf8")).pid === process.pid;
       } catch {
         return false;
       }
@@ -5399,14 +5465,14 @@ var init_index = __esm({
     server.listen(PORT, HOST, () => {
       if (PID_FILE) {
         try {
-          fs8.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
+          fs9.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
         } catch (e) {
           console.error(`[clorbit] could not write ${PID_FILE}:`, e.message);
         }
       }
       const lock = env("START_LOCK");
       if (lock) try {
-        fs8.rmSync(lock, { force: true });
+        fs9.rmSync(lock, { force: true });
       } catch {
       }
       console.log(`[clorbit] v${VERSION} http://${HOST}:${PORT} ready in ${Date.now() - t0} ms; ${store.files.size} files in the database, ${store.missing.size} archived (loaded in ${store.stats.loadMs} ms)`);
@@ -5429,7 +5495,7 @@ var init_index = __esm({
       }
       for (const c of clients.keys()) c.end();
       if (ownsPidFile()) try {
-        fs8.unlinkSync(PID_FILE);
+        fs9.unlinkSync(PID_FILE);
       } catch {
       }
       server.close();

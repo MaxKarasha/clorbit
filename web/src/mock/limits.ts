@@ -2,7 +2,7 @@
 // days, lunch breaks, quiet weekends) ending in a busy current 5 h window that is on course to run
 // out about an hour before its reset, and a 7-day window that lasts. The forecast is computed by
 // the real model (shared/forecast.ts), so the demo shows exactly what a user would see.
-import type { Limits, LimitsForecast, LimitsPoint } from '@shared/api';
+import type { AboutInfo, Limits, LimitsForecast, LimitsPoint, Plan } from '@shared/api';
 import { forecastLimits } from '@shared/forecast';
 import { rng } from './rng';
 
@@ -11,6 +11,22 @@ const H = 60 * MIN;
 const DAY = 24 * H;
 const STEP = 10 * MIN;
 const HISTORY = 28 * DAY;
+
+/** The demo subscription plan. */
+export const MOCK_PLAN: Plan = { name: 'Max', tier: '20×', type: 'claude_max', since: '2026-02-03T09:00:00Z' };
+
+/** GET /api/about in demo mode (the Overview's limits panel reads the plan from it). */
+export function mockAbout(now = Date.now()): AboutInfo {
+  return {
+    version: 'demo',
+    dataDir: '~/.clorbit',
+    hooks: { pluginEnabled: true, eventsReceived: true, lastEventAt: now - 4_000 },
+    limits: { capture: true, updatedAt: mockLimits(now).limits.updatedAt },
+    store: { enabled: true, fileSummaries: 1430, archived: 212, hookEvents: 18_400, limits: 2_016 },
+    system: { available: false, tool: null, platform: 'demo' },
+    plan: MOCK_PLAN,
+  };
+}
 
 export interface MockLimits { points: LimitsPoint[]; limits: Limits; forecast: LimitsForecast }
 
@@ -108,6 +124,7 @@ function build(now: number): MockLimits {
     sevenDayPct: end.sevenDayPct,
     sevenDayResetsAt: reset7,
     updatedAt: now - 20_000,
+    fiveHourWindow: 'present',
   };
   return { points, limits, forecast: forecastLimits({ now, limits, history: points }) };
 }

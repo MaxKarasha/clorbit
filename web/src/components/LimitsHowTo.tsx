@@ -1,10 +1,14 @@
-// How to connect the subscription-limits source: what it is, the exact command (with a copy
-// button), and that it edits ~/.claude/settings.json only when the user runs it. Clorbit never
-// runs it itself. Used in Settings → Connection and in the Overview's limits panel.
+// How to connect the subscription-limits source: what it is, the exact commands (with copy
+// buttons; the plugin's /clorbit command first, the repository script second), and that they edit
+// ~/.claude/settings.json only when the user runs them. Clorbit never runs them itself.
+// Used in Settings → Connection and in the Overview's limits panel.
 import { useEffect, useRef, useState } from 'react';
 import { t } from '../i18n';
 
-export const LIMITS_COMMAND = 'node scripts/install-hooks.mjs --apply --statusline';
+/** In Claude Code, with the plugin installed (no clone needed). */
+export const LIMITS_COMMAND = '/clorbit statusline --apply';
+/** From a clone of the repository. */
+export const LIMITS_REPO_COMMAND = 'node scripts/install-hooks.mjs --apply --statusline';
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -29,34 +33,43 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export default function LimitsHowTo({ compact = false }: { compact?: boolean }) {
+/** A command with a copy button; wraps only between arguments, never inside '--statusline'. */
+function CommandRow({ command, label }: { command: string; label: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<number>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   const copy = async () => {
-    if (!(await copyText(LIMITS_COMMAND))) return;
+    if (!(await copyText(command))) return;
     setCopied(true);
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setCopied(false), 1600);
   };
   return (
+    <div className="limhow__cmd">
+      <code className="mono">
+        {command.split(' ').map((w, i) => (
+          <span key={i}>{i > 0 && ' '}<span className="limhow__w">{w}</span></span>
+        ))}
+      </code>
+      <button type="button" className={`set-btn${copied ? ' is-done' : ''}`} onClick={copy} aria-label={label} title={label} aria-live="polite">
+        {copied ? t('ui.copied') : t('ui.copy')}
+      </button>
+    </div>
+  );
+}
+
+export default function LimitsHowTo({ compact = false }: { compact?: boolean }) {
+  return (
     <div className={`limhow${compact ? ' limhow--compact' : ''}`}>
       <p className="limhow__what">{t('con.lim.what')}</p>
-      <p className="limhow__run">{t('con.lim.run')}</p>
-      <div className="limhow__cmd">
-        {/* Wraps only between arguments, never inside '--statusline'. */}
-        <code className="mono">
-          {LIMITS_COMMAND.split(' ').map((w, i) => (
-            <span key={i}>{i > 0 && ' '}<span className="limhow__w">{w}</span></span>
-          ))}
-        </code>
-        <button type="button" className={`set-btn${copied ? ' is-done' : ''}`} onClick={copy} aria-label={t('con.lim.copy')} title={t('con.lim.copy')} aria-live="polite">
-          {copied ? t('ui.copied') : t('ui.copy')}
-        </button>
-      </div>
+      <p className="limhow__run">{t('con.lim.plugin')}</p>
+      <CommandRow command={LIMITS_COMMAND} label={t('con.lim.copy')} />
+      <p className="limhow__alt">{t('con.lim.repo')}</p>
+      <CommandRow command={LIMITS_REPO_COMMAND} label={t('con.lim.copyRepo')} />
       <ul className="limhow__notes">
-        <li>{t('con.lim.edits')}</li>
         <li>{t('con.lim.dry')}</li>
+        <li>{t('con.lim.edits')}</li>
+        <li>{t('con.lim.create')}</li>
         <li className="limhow__never">{t('con.lim.never')}</li>
       </ul>
     </div>

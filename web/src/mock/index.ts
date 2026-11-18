@@ -1,7 +1,7 @@
 import type { Range } from '@shared/api';
 import { demoValue } from '../lib/demo';
 import { mockAttribution, mockInsights, mockLive, mockOverview, mockSessionDetail, mockSessions } from './fixtures';
-import { mockLimits, mockLimitsHistory } from './limits';
+import { mockAbout, mockLimits, mockLimitsHistory } from './limits';
 import { mockReplay } from './replay';
 
 /** 'YYYY-MM-DD' (local day; `end` = its last millisecond) or epoch ms. */
@@ -39,6 +39,7 @@ export function mockResolve(path: string): unknown {
   if (p === '/api/analytics/sessions') return mockSessions(range, q.get('project'));
   if (p === '/api/insights') return mockInsights(range);
   if (p === '/api/limits/forecast') return mockLimits().forecast;
+  if (p === '/api/about') return mockAbout();
   if (p === '/api/limits/history') {
     const now = Date.now();
     const to = tsOf(q.get('to'), true, now);

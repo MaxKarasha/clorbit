@@ -17,7 +17,7 @@ Clorbit is two small programs that share one TypeScript contract:
 | `server/` | HTTP server (`index.ts`), scanner, store, SQLite layer, live status, analytics, insights, settings (`settings.ts`), system notifications (`notifier.ts`), recent-events ring (`recent-events.ts`), server-side i18n. Only Node built-ins plus `tsx` to run TypeScript. |
 | `web/` | Single-page app: the canvas galaxy (`web/src/galaxy/`), analytics pages (`web/src/pages/`), notifications and sounds (`web/src/notify/`), the event console (`web/src/console/`), the settings panel (`web/src/components/SettingsPanel.tsx`), the i18n runtime and dictionaries (`web/src/i18n/`), demo data (`web/src/mock/`). |
 | `shared/` | `api.ts` — the API contract: every type the server returns, the list of endpoints, `DEFAULT_SETTINGS`. `settings.ts` — settings validation and quiet-hours math. `notify.ts` — the notification detector. `forecast.ts` — the subscription-limit forecast. `replay.ts` — the session-replay model (time machine). Used by both sides. |
-| `plugin/` | The `clorbit` Claude Code plugin — the only folder Claude Code copies into its plugin cache, so everything the plugin runs lives here: `hooks/` (async event hooks and the silent autostart), `skills/clorbit/` (the `/clorbit` command), `app/` (build output, committed: `server.mjs`, `web/`, plus the hand-written `cli.mjs`). |
+| `plugin/` | The `clorbit` Claude Code plugin — the only folder Claude Code copies into its plugin cache, so everything the plugin runs lives here: `hooks/` (async event hooks and the silent autostart), `skills/clorbit/` (the `/clorbit` command), `app/` (build output, committed: `server.mjs`, `web/`, plus the hand-written `cli.mjs` and `statusline.mjs`, the status-line capture shared with `scripts/install-hooks.mjs`). |
 | `scripts/build.mjs` | `pnpm build`: Vite builds the web app into `plugin/app/web`, esbuild bundles `server/bundle.ts` into `plugin/app/server.mjs`, and the `package.json` version is synced into the plugin manifest. |
 | `scripts/install-hooks.mjs` | Optional, dry-run-by-default helper that adds the status-line capture (and, if forced, raw hooks) to `~/.claude/settings.json`. |
 
@@ -43,7 +43,8 @@ All of them are read-only:
 - **`~/.claude/sessions/<pid>.json`** — live Claude Code processes: pid, session id, cwd, start time. A pid that answers `kill(pid, 0)` means the session is alive.
 - **`~/.claude/settings.json`** — enabled plugins (to recognize plugin hooks and to detect the `clorbit` plugin) and `env`.
 - **Hook events** (optional) — POSTed by the plugin to `/api/hook`.
-- **Status-line capture** (optional) — `~/.clorbit/statusline.json`, the JSON Claude Code passes to the status-line command, which includes subscription rate limits.
+- **Status-line capture** (optional) — `~/.clorbit/statusline.json`, the JSON Claude Code passes to the status-line command, which includes subscription rate limits. When it reports the 7-day window but no 5-hour one, `Limits.fiveHourWindow` is `'none'` (plans with only a weekly limit, e.g. Ultra); the 5 h forecast then has `noWindow: true` and basis `none`, and no 5 h notifications fire. A 5-hour reading switches it back.
+- **`~/.claude.json`** (read-only, `CLORBIT_CLAUDE_JSON`; next to the Claude dir by default) — only the plan fields of `oauthAccount` (`planDisplayName`, `organizationType`, the rate-limit tiers, `subscriptionCreatedAt`) are read by `server/plan.ts` (cached by mtime) and returned as `Plan` (`LiveSnapshot.plan`, `AboutInfo.plan`); nothing else from that file is logged, stored or returned. `shared/plan.ts` holds a small plan → windows table (Ultra: no 5-hour window) that the UI uses only until the status line reports; data always wins.
 
 ## Scanning
 
@@ -203,7 +204,7 @@ Adding a language means adding a dictionary folder on the web, a column in the s
 ## Privacy model
 
 - The server binds to `127.0.0.1` only and has no authentication — anything on your machine can read it, nothing outside can.
-- Clorbit never writes to `~/.claude`. The only code that can is `scripts/install-hooks.mjs`, which is a dry run unless you pass `--apply`, and backs up `settings.json` first.
+- Clorbit never writes to `~/.claude`. The only code that can is the status-line capture — `clorbit statusline` (`/clorbit statusline` in Claude Code) and `scripts/install-hooks.mjs`, both through `plugin/app/statusline.mjs` — which is a dry run unless you pass `--apply`, backs up `settings.json` first and changes only `statusLine.command` (or, with `--create`, adds a minimal `statusLine`); `--remove` restores the original command.
 - Clorbit's own data lives in `~/.clorbit` (`CLORBIT_DATA_DIR`). The one-time copy of a pre-rename `<repo>/data/fleet.db` (`migrateLegacyDb` in `server/config.ts`) only targets the default folder; an explicitly set data dir always starts empty. Transcript content is not copied wholesale: summaries hold counts, labels (tool labels such as `Read index.ts` or the first 40 characters of a Bash command), session titles, the latest assistant text (≤ 240 chars) and file paths of repeated reads. Hook payloads are trimmed as described above.
 - There is no telemetry and no network access besides the Google Fonts stylesheet in `web/index.html`.
 - The only programs the server starts are the notifier (`osascript` / `notify-send`), and only for events the user enabled under System; the text is passed as arguments, never through a shell. Writes from the web (`PUT /api/settings`, `POST /api/notify/test`) are refused for non-local `Origin`s.

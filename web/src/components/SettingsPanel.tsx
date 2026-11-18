@@ -1,7 +1,7 @@
 // Profile button and the settings slide-over: notifications matrix, sounds, do not disturb,
 // interface and a read-only connection summary. One instance at the app root.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { NOTIFY_EVENTS, SOUND_THEMES, type NotifyChannel, type NotifyEventType, type NotifyRule, type SoundTheme } from '@shared/api';
+import { NOTIFY_EVENTS, SOUND_THEMES, type NotifyChannel, type NotifyEventType, type NotifyRule, type Plan, type SoundTheme } from '@shared/api';
 import { isSilenced } from '@shared/settings';
 import { LANGS, locale, setLang, t, tp, useLang, type MsgKey } from '../i18n';
 import { fmtAgo, fmtInt } from '../lib/format';
@@ -20,6 +20,8 @@ import {
 } from '../lib/settings';
 import { EVENT_COLOR, eventLabel } from '../notify/rules';
 import LimitsHowTo from './LimitsHowTo';
+import PlanBadge, { planLabel, planSince } from './PlanBadge';
+import { MOCK_PLAN } from '../mock/limits';
 import { playSound } from '../notify/sound';
 
 /* ---------------- profile button ---------------- */
@@ -447,6 +449,19 @@ function Interface() {
   );
 }
 
+/** "«Max · 20×» since Feb 2026" with where it comes from; or why there is none. */
+function PlanLine({ plan, demo = false }: { plan: Plan | null; demo?: boolean }) {
+  if (!plan || !planLabel(plan)) return <span className="set-plan__none">{t('con.plan.none')}</span>;
+  const since = planSince(plan);
+  return (
+    <span className="set-plan">
+      <PlanBadge plan={plan} />
+      {since && <span>{t('con.plan.since', { date: since })}</span>}
+      <span className="set-dl__how">{t(demo ? 'con.plan.demo' : 'con.plan.src')}</span>
+    </span>
+  );
+}
+
 function Connection({ demo, offline, focus }: { demo: boolean; offline: boolean; focus: boolean }) {
   const a = useAbout();
   const ref = useRef<HTMLDivElement>(null);
@@ -463,7 +478,17 @@ function Connection({ demo, offline, focus }: { demo: boolean; offline: boolean;
     return () => window.clearTimeout(id);
   }, [focus, a, demo, offline]);
   let body: ReactNode;
-  if (demo) body = <p className="set-hint">{t('con.demo')}</p>;
+  if (demo) {
+    body = (
+      <>
+        <p className="set-hint">{t('con.demo')}</p>
+        <dl className="set-dl">
+          <dt>{t('con.plan')}</dt>
+          <dd><PlanLine plan={MOCK_PLAN} demo /></dd>
+        </dl>
+      </>
+    );
+  }
   else if (offline || !a) body = <p className="set-hint">{t('con.offline')}</p>;
   else {
     const hooks = a.hooks.pluginEnabled
@@ -477,6 +502,12 @@ function Connection({ demo, offline, focus }: { demo: boolean; offline: boolean;
       <dl className="set-dl">
         <dt>{t('con.version')}</dt>
         <dd className="mono">Clorbit {a.version}</dd>
+        {'plan' in a && (
+          <>
+            <dt>{t('con.plan')}</dt>
+            <dd><PlanLine plan={a.plan ?? null} /></dd>
+          </>
+        )}
         <dt>{t('con.dataDir')}</dt>
         <dd className="mono set-dl__path" title={a.dataDir}>{a.dataDir}</dd>
         <dt>{t('con.hooks')}</dt>

@@ -1,7 +1,8 @@
 // Demo limits: believable history and a forecast that shows the feature.
 import { describe, expect, it } from 'vitest';
 import { forecastWarns, resetMarkers } from '@shared/forecast';
-import { mockLimits, mockLimitsHistory } from './limits';
+import { MOCK_PLAN, mockAbout, mockLimits, mockLimitsHistory } from './limits';
+import { dataFiveHour, fiveHourWindow } from '@shared/plan';
 
 describe('demo limits', () => {
   const now = new Date(2026, 10, 18, 15, 7).getTime();
@@ -29,5 +30,11 @@ describe('demo limits', () => {
     expect(f.sevenDay.pctAtReset!).toBeGreaterThan(f.sevenDay.pct!);
     expect(m.limits.sevenDayPct).toBeGreaterThan(30);
     expect(m.limits.sevenDayPct).toBeLessThan(60);
+  });
+
+  it('the demo plan is Max · 20× with both windows, so the forecast shows', () => {
+    expect(MOCK_PLAN).toMatchObject({ name: 'Max', tier: '20×' });
+    expect(fiveHourWindow(dataFiveHour(m.limits), MOCK_PLAN)).toEqual({ state: 'present', from: 'data' });
+    expect(mockAbout().plan).toEqual(MOCK_PLAN);
   });
 });
