@@ -2,7 +2,7 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.3.0
 
 ### Added
 
@@ -27,6 +27,7 @@ All notable changes to Clorbit are listed here. The format follows [Keep a Chang
 ### Changed
 
 - The `7 days` label in English is now `7 d`, to match the bars.
+- Stars and planets are never orange any more: project and branch hues skip the orange band, which stays reserved for "waiting for you".
 
 ### Fixed
 
