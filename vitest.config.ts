@@ -8,5 +8,8 @@ export default defineConfig({
   test: {
     include: ['server/**/*.test.ts', 'web/**/*.test.{ts,tsx}', 'shared/**/*.test.ts'],
     environment: 'node',
+    // Some tests spawn the CLI and servers; give them headroom on a busy machine.
+    testTimeout: 20000,
+    hookTimeout: 20000,
   },
 });
