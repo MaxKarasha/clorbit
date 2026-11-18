@@ -1,5 +1,5 @@
 // Home page: the galaxy of sessions and agents + HUD (status bar, panels, event ticker).
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentNode, AnalyticsOverview, ClorbitEvent, LiveSession, LiveSnapshot, WindowForecast } from '@shared/api';
 import LangSwitch from '../components/LangSwitch';
 import PlanBadge, { planLabel } from '../components/PlanBadge';
@@ -16,6 +16,7 @@ import { ConsoleDrawer, popOutConsole, Ticker } from '../console/Console';
 import { consoleStore, loadRecent, projectColor, setColorProvider, setColorSource, shareColors } from '../console/store';
 import { GalaxyEngine, prettyModel, short, type Focus } from './engine';
 import { MockFeed } from './mock';
+import { ChangesSection } from './AgentChanges';
 import type { ClusterInfo } from './plan';
 import { clusterPinKey, prunePins, starPinKey, withoutPin } from './gravity';
 import { fmtAgo, fmtDur, fmtPct, fmtTok, tSum } from './format';
@@ -261,9 +262,19 @@ export default function GalaxyPage() {
         </div>
       )}
 
-      {!offline && fSession && focus.t === 'sys' && <SessionPanel s={fSession} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} pin={pinOf(starPinKey(fSession.project, fSession.sessionId))} />}
+      {!offline && fSession && focus.t === 'sys' && (
+        <SessionPanel
+          s={fSession} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} pin={pinOf(starPinKey(fSession.project, fSession.sessionId))}
+          changes={<ChangesSection sessionId={fSession.sessionId} agentId="main" rev={`${fSession.root.lastActivity}:${fSession.root.toolCalls}:${fSession.status}`} live={fSession.alive && fSession.status === 'working'} />}
+        />
+      )}
       {!offline && fCluster && <ClusterPanel c={fCluster} onReveal={(id) => engineRef.current?.reveal(id)} pin={pinOf(clusterPinKey(fCluster.project))} />}
-      {!offline && fSession && fAgent && <AgentPanel s={fSession} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} />}
+      {!offline && fSession && fAgent && (
+        <AgentPanel
+          s={fSession} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })}
+          changes={<ChangesSection sessionId={fSession.sessionId} agentId={fAgent.node.id} rev={`${fAgent.node.lastActivity}:${fAgent.node.toolCalls}:${fAgent.node.status}`} live={fSession.alive && (fAgent.node.status === 'working' || fAgent.node.status === 'waiting')} />}
+        />
+      )}
 
       {!offline && (
         <div className={`gx-zoom${focus.t !== 'none' ? ' gx-zoom--panel' : ''}`}>
@@ -502,8 +513,9 @@ function PinRow({ onUnpin }: { onUnpin: () => void }) {
   );
 }
 
-/** `now`: the clock the panel measures against (a replay's current moment); `replay`: inside the time machine. */
-export function SessionPanel({ s, eng, onAgent, pin, now, replay = false }: { s: LiveSession; eng: GalaxyEngine | null; onAgent: (id: string) => void; pin: (() => void) | null; now?: number; replay?: boolean }) {
+/** `now`: the clock the panel measures against (a replay's current moment); `replay`: inside the time machine;
+ *  `changes`: the live "Changes / Steps" section (not in replays). */
+export function SessionPanel({ s, eng, onAgent, pin, now, replay = false, changes }: { s: LiveSession; eng: GalaxyEngine | null; onAgent: (id: string) => void; pin: (() => void) | null; now?: number; replay?: boolean; changes?: ReactNode }) {
   const at = now ?? Date.now();
   const ctx = s.contextTokens && s.contextLimit ? s.contextTokens / s.contextLimit : null;
   const col = eng?.colorOf(s.sessionId, 'main');
@@ -534,6 +546,7 @@ export function SessionPanel({ s, eng, onAgent, pin, now, replay = false }: { s:
         </div>
       )}
       <TokBars t={s.tokens} />
+      {changes}
       <h4>{t('gx.panel.hierarchy')}</h4>
       <div className="gx-tree"><Tree s={s} node={s.root} eng={eng} onAgent={onAgent} /></div>
       <div className="gx-actions">
@@ -545,7 +558,7 @@ export function SessionPanel({ s, eng, onAgent, pin, now, replay = false }: { s:
   );
 }
 
-export function AgentPanel({ s, a, parent, eng, onAgent, now }: { s: LiveSession; a: AgentNode; parent: AgentNode | null; eng: GalaxyEngine | null; onAgent: (id: string) => void; now?: number }) {
+export function AgentPanel({ s, a, parent, eng, onAgent, now, changes }: { s: LiveSession; a: AgentNode; parent: AgentNode | null; eng: GalaxyEngine | null; onAgent: (id: string) => void; now?: number; changes?: ReactNode }) {
   const at = now ?? Date.now();
   const col = eng?.colorOf(s.sessionId, a.id);
   return (
@@ -571,6 +584,7 @@ export function AgentPanel({ s, a, parent, eng, onAgent, now }: { s: LiveSession
         <div><label>{t('gx.panel.activity')}</label><b>{fmtAgo(a.lastActivity, at)}</b></div>
       </div>
       <TokBars t={a.tokens} />
+      {changes}
       {a.children.length > 0 && (<><h4>{t('gx.panel.children')}</h4><div className="gx-tree">{a.children.map((c) => <Tree key={c.id} s={s} node={c} eng={eng} onAgent={onAgent} />)}</div></>)}
       <div className="gx-actions">
         <a className="gx-btn primary" href={href(`/session/${encodeURIComponent(s.sessionId)}`)}>{t('gx.panel.timeline')}</a>

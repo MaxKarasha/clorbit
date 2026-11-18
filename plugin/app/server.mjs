@@ -828,10 +828,10 @@ function knownPlugins() {
   const names = /* @__PURE__ */ new Set();
   for (const k of Object.keys(readSettings().enabledPlugins)) names.add(k.split("@")[0]);
   try {
-    const cache3 = path2.join(CLAUDE_DIR, "plugins", "cache");
-    for (const mkt of fs.readdirSync(cache3)) {
+    const cache4 = path2.join(CLAUDE_DIR, "plugins", "cache");
+    for (const mkt of fs.readdirSync(cache4)) {
       try {
-        for (const p of fs.readdirSync(path2.join(cache3, mkt))) names.add(p);
+        for (const p of fs.readdirSync(path2.join(cache4, mkt))) names.add(p);
       } catch {
       }
     }
@@ -5222,11 +5222,422 @@ var init_replay2 = __esm({
   }
 });
 
+// server/changes.ts
+import fs9 from "node:fs/promises";
+import os3 from "node:os";
+import path9 from "node:path";
+function stringAt2(buf, at) {
+  const end = buf.indexOf(34, at);
+  return end > at ? buf.toString("latin1", at, end) : null;
+}
+function splitLines(s) {
+  if (typeof s !== "string" || s === "") return [];
+  const out = s.split("\n");
+  if (out[out.length - 1] === "") out.pop();
+  return out;
+}
+function diffOps(a, b) {
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  let s = 0;
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+  const am = a.slice(p, a.length - s);
+  const bm = b.slice(p, b.length - s);
+  const mid = [];
+  if (am.length && bm.length && am.length * bm.length <= CHANGE_LIMITS.lcsCells) {
+    const n = am.length, m = bm.length;
+    const w = m + 1;
+    const L = new Uint32Array((n + 1) * w);
+    for (let i2 = n - 1; i2 >= 0; i2--) {
+      for (let j2 = m - 1; j2 >= 0; j2--) {
+        L[i2 * w + j2] = am[i2] === bm[j2] ? L[(i2 + 1) * w + j2 + 1] + 1 : Math.max(L[(i2 + 1) * w + j2], L[i2 * w + j2 + 1]);
+      }
+    }
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (am[i] === bm[j]) {
+        mid.push(" " + am[i]);
+        i++;
+        j++;
+      } else if (L[(i + 1) * w + j] >= L[i * w + j + 1]) mid.push("-" + am[i++]);
+      else mid.push("+" + bm[j++]);
+    }
+    while (i < n) mid.push("-" + am[i++]);
+    while (j < m) mid.push("+" + bm[j++]);
+  } else {
+    for (const x of am) mid.push("-" + x);
+    for (const x of bm) mid.push("+" + x);
+  }
+  return [...a.slice(0, p).map((x) => " " + x), ...mid, ...a.slice(a.length - s).map((x) => " " + x)];
+}
+function lineDiff(oldText, newText) {
+  const ops = diffOps(splitLines(oldText), splitLines(newText));
+  let added = 0, removed = 0, first = -1, last = -1;
+  ops.forEach((o, i) => {
+    if (o[0] === " ") return;
+    if (o[0] === "+") added++;
+    else removed++;
+    if (first < 0) first = i;
+    last = i;
+  });
+  const view = first < 0 ? [] : ops.slice(Math.max(0, first - 2), last + 3);
+  const max = CHANGE_LIMITS.linesPerHunk;
+  return { added, removed, lines: view.slice(0, max).map(clip), more: Math.max(0, view.length - max) };
+}
+function changeOf(name, input, ts) {
+  if (!CHANGE_TOOLS.has(name) || !input || typeof input !== "object") return null;
+  const p = name === "NotebookEdit" ? input.notebook_path : input.file_path;
+  if (typeof p !== "string" || !p) return null;
+  const max = CHANGE_LIMITS.linesPerHunk;
+  if (name === "Write") {
+    const lines = splitLines(input.content);
+    return { path: p, added: lines.length, removed: 0, write: true, hunks: [{ ts, tool: "Write", lines: lines.slice(0, max).map((x) => clip("+" + x)), more: Math.max(0, lines.length - max) }] };
+  }
+  if (name === "NotebookEdit") {
+    const mode = typeof input.edit_mode === "string" ? input.edit_mode : "replace";
+    const lines = mode === "delete" ? [] : splitLines(input.new_source);
+    return { path: p, added: lines.length, removed: 0, write: false, hunks: [{ ts, tool: "NotebookEdit", mode, lines: lines.slice(0, max).map((x) => clip("+" + x)), more: Math.max(0, lines.length - max) }] };
+  }
+  const edits = name === "MultiEdit" ? Array.isArray(input.edits) ? input.edits : [] : [input];
+  let added = 0, removed = 0;
+  const hunks = [];
+  for (const e of edits) {
+    if (!e || typeof e !== "object") continue;
+    const d = lineDiff(e.old_string, e.new_string);
+    added += d.added;
+    removed += d.removed;
+    const h = { ts, tool: name, lines: d.lines, more: d.more };
+    if (e.replace_all === true) h.replaceAll = true;
+    hunks.push(h);
+  }
+  return { path: p, added, removed, hunks, write: false };
+}
+function relPath(abs, cwd, home = os3.homedir()) {
+  if (!path9.isAbsolute(abs)) return abs;
+  const norm = path9.normalize(abs);
+  if (cwd) {
+    const c = path9.normalize(cwd).replace(/\/+$/, "");
+    if (norm === c) return path9.basename(norm);
+    if (norm.startsWith(c + "/")) return norm.slice(c.length + 1);
+  }
+  if (home && norm.startsWith(home.replace(/\/+$/, "") + "/")) {
+    const rest = norm.slice(home.replace(/\/+$/, "").length + 1);
+    const parts2 = rest.split("/");
+    return parts2.length > 4 ? `~/\u2026/${parts2.slice(-3).join("/")}` : `~/${rest}`;
+  }
+  const parts = norm.split("/").filter(Boolean);
+  return parts.length > 3 ? `\u2026/${parts.slice(-3).join("/")}` : norm;
+}
+function mergeAccs(list) {
+  const out = /* @__PURE__ */ new Map();
+  for (const { agentId, files } of list) {
+    for (const f of files.values()) {
+      const m = out.get(f.abs);
+      if (!m) {
+        out.set(f.abs, { ...f, hunks: [...f.hunks], agents: f.edits || f.failed ? [agentId] : [] });
+        continue;
+      }
+      m.added += f.added;
+      m.removed += f.removed;
+      m.edits += f.edits;
+      m.failed += f.failed;
+      m.reads += f.reads;
+      m.lastTs = Math.max(m.lastTs, f.lastTs);
+      m.write = m.write === "created" || f.write === "created" ? "created" : m.write ?? f.write;
+      m.hunks.push(...f.hunks);
+      m.hunksDropped += f.hunksDropped;
+      if (f.edits || f.failed) m.agents.push(agentId);
+    }
+  }
+  for (const m of out.values()) {
+    m.hunks.sort((a, b) => a.ts - b.ts);
+    if (m.hunks.length > CHANGE_LIMITS.hunksPerFile) {
+      const drop = m.hunks.length - CHANGE_LIMITS.hunksPerFile;
+      m.hunks.splice(0, drop);
+      m.hunksDropped += drop;
+    }
+  }
+  return out;
+}
+function buildChanges(files, steps, stepsTotal, meta) {
+  const changed = [];
+  const reads = [];
+  let readsTotal = 0;
+  const totals = { files: 0, added: 0, removed: 0, edits: 0, failed: 0 };
+  for (const f of files) {
+    const rel = relPath(f.abs, meta.cwd, meta.home);
+    if (f.edits || f.failed) {
+      const c = {
+        path: rel,
+        name: path9.basename(f.abs),
+        added: f.added,
+        removed: f.removed,
+        edits: f.edits,
+        failed: f.failed,
+        reads: f.reads,
+        lastTs: f.lastTs,
+        write: f.write,
+        hunks: f.hunks.map((h) => ({ ...h, lines: [...h.lines] }))
+      };
+      if (f.hunksDropped) c.hunksDropped = f.hunksDropped;
+      if (f.agents?.length) c.agents = [...f.agents];
+      changed.push(c);
+      totals.failed += f.failed;
+      if (f.edits) {
+        totals.files++;
+        totals.added += f.added;
+        totals.removed += f.removed;
+        totals.edits += f.edits;
+      }
+    } else if (f.reads) {
+      readsTotal++;
+      reads.push({ path: rel, name: path9.basename(f.abs), count: f.reads, lastTs: f.lastTs });
+    }
+  }
+  changed.sort((a, b) => Number(b.edits > 0) - Number(a.edits > 0) || b.lastTs - a.lastTs || a.path.localeCompare(b.path));
+  reads.sort((a, b) => b.lastTs - a.lastTs || a.path.localeCompare(b.path));
+  return {
+    sessionId: meta.sessionId,
+    agentId: meta.agentId,
+    cwd: meta.cwd,
+    files: changed.slice(0, CHANGE_LIMITS.files),
+    filesTotal: changed.length,
+    reads: reads.slice(0, CHANGE_LIMITS.reads),
+    readsTotal,
+    totals,
+    steps: steps.slice(-CHANGE_LIMITS.steps).map((s) => ({ ...s })),
+    stepsTotal,
+    generatedAt: meta.now ?? Date.now()
+  };
+}
+async function sinkFor(f) {
+  let st;
+  try {
+    st = await fs9.stat(f.path);
+  } catch {
+    return null;
+  }
+  let hit = cache3.get(f.path);
+  if (hit && st.size < hit.size) hit = void 0;
+  if (!hit) hit = { offset: 0, mtimeMs: 0, size: 0, sink: new ChangesSink(f.agentId === null) };
+  if (st.size !== hit.offset) {
+    try {
+      hit.offset = await readLines(f.path, hit.offset, hit.sink);
+    } catch {
+      return null;
+    }
+  }
+  hit.size = st.size;
+  hit.mtimeMs = st.mtimeMs;
+  cache3.delete(f.path);
+  cache3.set(f.path, hit);
+  if (cache3.size > CACHE_MAX) cache3.delete(cache3.keys().next().value);
+  return hit.sink;
+}
+async function agentChanges(files, sessionId, agentId, opts = {}) {
+  if (!files.length) return null;
+  const missing = opts.isMissing ?? (() => false);
+  const main = files.find((f2) => f2.agentId === null) ?? null;
+  const baseCwd = main?.cwd ?? files[0].cwd ?? null;
+  const meta = { sessionId, agentId, now: opts.now, home: opts.home };
+  if (agentId === "all") {
+    const list = [];
+    let any = false;
+    for (const f2 of files) {
+      if (missing(f2.path)) continue;
+      const sink2 = await sinkFor(f2);
+      if (!sink2) continue;
+      any = true;
+      list.push({ agentId: f2.agentId ?? "main", files: sink2.files });
+    }
+    const out = buildChanges(mergeAccs(list).values(), [], 0, { ...meta, cwd: baseCwd });
+    if (!any) out.archived = true;
+    return out;
+  }
+  const f = files.find((x) => agentId === "main" ? x.agentId === null : x.agentId === agentId);
+  if (!f) return null;
+  const cwd = f.cwd ?? baseCwd;
+  const sink = missing(f.path) ? null : await sinkFor(f);
+  if (!sink) {
+    const out = buildChanges([], [], 0, { ...meta, cwd });
+    out.archived = true;
+    return out;
+  }
+  return buildChanges(sink.files.values(), sink.steps, sink.stepsTotal, { ...meta, cwd });
+}
+async function sessionAgentChanges(store2, sessionId, agentId) {
+  return agentChanges(store2.sessionFiles(sessionId), sessionId, agentId, { isMissing: (p) => store2.isMissing(p) });
+}
+var CHANGE_LIMITS, CHANGE_TOOLS, TOOL_USE_ID2, IS_ERROR, TIMESTAMP2, TUR2, ASSISTANT, SIDECHAIN2, clip, ChangesSink, cache3, CACHE_MAX;
+var init_changes = __esm({
+  "server/changes.ts"() {
+    "use strict";
+    init_lines();
+    init_util();
+    CHANGE_LIMITS = {
+      /** Steps kept per transcript (newest). */
+      steps: 200,
+      /** Diff previews kept per file (newest). */
+      hunksPerFile: 8,
+      /** Lines per diff preview. */
+      linesPerHunk: 40,
+      /** Characters per previewed line. */
+      lineChars: 200,
+      /** Files returned (newest first). */
+      files: 300,
+      /** Read-only files returned. */
+      reads: 30,
+      /** Calls waiting for their result (a transcript cut short never resolves some). */
+      pending: 2e3,
+      /** Largest old × new middle (in lines) that gets an exact LCS; bigger edits count every line. */
+      lcsCells: 25e4,
+      /** A result line shorter than this is JSON-parsed; longer ones are byte-scanned. */
+      parseResultBelow: 64 * 1024
+    };
+    CHANGE_TOOLS = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+    TOOL_USE_ID2 = Buffer.from('"tool_use_id":"');
+    IS_ERROR = Buffer.from('"is_error":true');
+    TIMESTAMP2 = Buffer.from('"timestamp":"');
+    TUR2 = Buffer.from(',"toolUseResult":');
+    ASSISTANT = Buffer.from('"type":"assistant"');
+    SIDECHAIN2 = Buffer.from('"isSidechain":true');
+    clip = (s) => s.length > CHANGE_LIMITS.lineChars ? s.slice(0, CHANGE_LIMITS.lineChars - 1) + "\u2026" : s;
+    ChangesSink = class {
+      constructor(isMain) {
+        this.isMain = isMain;
+      }
+      isMain;
+      files = /* @__PURE__ */ new Map();
+      steps = [];
+      stepsTotal = 0;
+      lastTs = 0;
+      pend = /* @__PURE__ */ new Map();
+      skipped() {
+      }
+      file(abs) {
+        let f = this.files.get(abs);
+        if (!f) this.files.set(abs, f = { abs, added: 0, removed: 0, edits: 0, failed: 0, reads: 0, lastTs: 0, write: null, hunks: [], hunksDropped: 0 });
+        return f;
+      }
+      step(s) {
+        this.stepsTotal++;
+        this.steps.push(s);
+        if (this.steps.length > CHANGE_LIMITS.steps * 2) this.steps = this.steps.slice(-CHANGE_LIMITS.steps);
+      }
+      line(buf) {
+        const head = buf.toString("latin1", 0, Math.min(buf.length, 120));
+        const lead = /^\{"type":"([\w-]+)"/.exec(head)?.[1];
+        if (lead && lead !== "user" && lead !== "assistant") return;
+        if (this.isMain && buf.subarray(0, 1024).indexOf(SIDECHAIN2) >= 0) return;
+        const cut = buf.indexOf(TUR2);
+        const isAssistant = (cut >= 0 ? buf.subarray(0, cut) : buf).indexOf(ASSISTANT) >= 0;
+        if (!isAssistant) {
+          if (buf.indexOf(TOOL_USE_ID2) >= 0) this.results(buf);
+          return;
+        }
+        const d = parseLine(buf);
+        if (!d || d.type !== "assistant" || !d.message) return;
+        if (this.isMain && d.isSidechain === true) return;
+        const msg = d.message;
+        if (msg.model === "<synthetic>") return;
+        const ts = parseTs(d.timestamp) ?? this.lastTs;
+        if (ts) this.lastTs = Math.max(this.lastTs, ts);
+        for (const b of Array.isArray(msg.content) ? msg.content : []) {
+          if (b?.type === "tool_use") {
+            const id = b.id ? String(b.id) : "";
+            if (id && this.pend.has(id)) continue;
+            const name = String(b.name ?? "");
+            const inp = b.input && typeof b.input === "object" ? b.input : {};
+            const spawn = name === "Agent" || name === "Task";
+            const label = spawn && inp.description ? `${toolLabel(name, inp)}: ${trimText(String(inp.description), 60)}` : toolLabel(name, inp);
+            const step = { ts, kind: spawn ? "spawn" : "tool", tool: name, label, status: "pending" };
+            this.step(step);
+            if (!id) continue;
+            const read = name === "Read" && typeof inp.file_path === "string" ? inp.file_path : null;
+            this.pend.set(id, { ts, name, step, change: changeOf(name, inp, ts), read });
+            if (this.pend.size > CHANGE_LIMITS.pending) this.pend.delete(this.pend.keys().next().value);
+          } else if (b?.type === "text" && typeof b.text === "string" && b.text.trim()) {
+            this.step({ ts, kind: "text", label: trimText(b.text, 160) });
+          }
+        }
+      }
+      /** A user record with tool results: which calls finished, and whether they failed. */
+      results(buf) {
+        const turAt = buf.indexOf(TUR2);
+        const end = turAt >= 0 ? turAt : buf.length;
+        let found = [];
+        let ts = null;
+        if (buf.length < CHANGE_LIMITS.parseResultBelow) {
+          const d = parseLine(buf);
+          if (!d || d.type !== "user" || !Array.isArray(d.message?.content)) return;
+          if (this.isMain && d.isSidechain === true) return;
+          ts = parseTs(d.timestamp);
+          found = d.message.content.filter((x) => x?.type === "tool_result" && x.tool_use_id).map((x) => ({ id: String(x.tool_use_id), error: x.is_error === true }));
+        } else {
+          const at = buf.indexOf(TIMESTAMP2);
+          ts = at >= 0 ? parseTs(stringAt2(buf, at + TIMESTAMP2.length)) : null;
+          const ids = [];
+          for (let i = buf.indexOf(TOOL_USE_ID2); i >= 0 && i < end; i = buf.indexOf(TOOL_USE_ID2, i + 1)) {
+            const id = stringAt2(buf, i + TOOL_USE_ID2.length);
+            if (id) ids.push({ id, at: i });
+          }
+          const errs = [];
+          for (let i = buf.indexOf(IS_ERROR); i >= 0 && i < end; i = buf.indexOf(IS_ERROR, i + 1)) errs.push(i);
+          found = ids.map((x, k) => ({
+            id: x.id,
+            error: ids.length === 1 ? errs.length > 0 : errs.some((e) => e > x.at && e < (ids[k + 1]?.at ?? end))
+          }));
+        }
+        if (!found.length) return;
+        ts ??= this.lastTs;
+        if (ts) this.lastTs = Math.max(this.lastTs, ts);
+        let kind = null;
+        if (turAt >= 0) {
+          const tail = buf.toString("latin1", turAt + TUR2.length, Math.min(buf.length, turAt + TUR2.length + 40));
+          kind = tail.startsWith('{"type":"create"') ? "created" : tail.startsWith('{"type":"update"') ? "overwritten" : null;
+        }
+        for (const r of found) {
+          const p = this.pend.get(r.id);
+          if (!p) continue;
+          this.pend.delete(r.id);
+          p.step.status = r.error ? "error" : "ok";
+          if (ts) p.step.endTs = ts;
+          if (p.change) {
+            const f = this.file(p.change.path);
+            if (r.error) {
+              f.failed++;
+              if (!f.edits) f.lastTs = Math.max(f.lastTs, ts || p.ts);
+              continue;
+            }
+            f.added += p.change.added;
+            f.removed += p.change.removed;
+            f.edits++;
+            f.lastTs = Math.max(f.lastTs, ts || p.ts);
+            if (p.change.write) f.write = found.length === 1 && kind ? kind : f.write ?? "written";
+            for (const h of p.change.hunks) f.hunks.push(h);
+            if (f.hunks.length > CHANGE_LIMITS.hunksPerFile) {
+              const drop = f.hunks.length - CHANGE_LIMITS.hunksPerFile;
+              f.hunks.splice(0, drop);
+              f.hunksDropped += drop;
+            }
+          } else if (p.read && !r.error) {
+            const f = this.file(p.read);
+            f.reads++;
+            f.lastTs = Math.max(f.lastTs, ts || p.ts);
+          }
+        }
+      }
+    };
+    cache3 = /* @__PURE__ */ new Map();
+    CACHE_MAX = 32;
+  }
+});
+
 // server/index.ts
 var index_exports = {};
-import fs9 from "node:fs";
+import fs10 from "node:fs";
 import http from "node:http";
-import path9 from "node:path";
+import path10 from "node:path";
 function about() {
   const st = db ? (hookLog.flush(), db.stats()) : null;
   const lim = readLimits();
@@ -5268,16 +5679,16 @@ function json(res, code, body) {
   res.end(s);
 }
 function serveStatic(res, urlPath) {
-  const safe = path9.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
-  let file = path9.join(DIST_DIR, safe);
-  if (!file.startsWith(DIST_DIR) || !fs9.existsSync(file) || fs9.statSync(file).isDirectory()) file = path9.join(DIST_DIR, "index.html");
-  if (!fs9.existsSync(file)) {
+  const safe = path10.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
+  let file = path10.join(DIST_DIR, safe);
+  if (!file.startsWith(DIST_DIR) || !fs10.existsSync(file) || fs10.statSync(file).isDirectory()) file = path10.join(DIST_DIR, "index.html");
+  if (!fs10.existsSync(file)) {
     res.writeHead(404);
     res.end("dist is not built: run pnpm build");
     return;
   }
-  res.writeHead(200, { "content-type": MIME[path9.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
-  fs9.createReadStream(file).pipe(res);
+  res.writeHead(200, { "content-type": MIME[path10.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
+  fs10.createReadStream(file).pipe(res);
 }
 function readBody(req, limit = 2e6) {
   return new Promise((resolve, reject) => {
@@ -5314,6 +5725,7 @@ var init_index = __esm({
     init_settings2();
     init_session_detail();
     init_replay2();
+    init_changes();
     init_store();
     t0 = Date.now();
     migratedFrom = migrateLegacyDb();
@@ -5424,6 +5836,14 @@ var init_index = __esm({
           const r = await sessionReplay(store, id, !!live.pids.get(id)?.alive, lang);
           return r ? json(res, 200, r) : json(res, 404, { error: err.notFound });
         }
+        const ac = /^\/api\/session\/([^/]+)\/agent\/([^/]+)\/changes$/.exec(p);
+        if (ac) {
+          const id = decodeURIComponent(ac[1]);
+          const agent = decodeURIComponent(ac[2]);
+          if (!/^[\w-]{8,64}$/.test(id) || !/^[\w-]{1,80}$/.test(agent)) return json(res, 400, { error: err.badSession });
+          const r = await sessionAgentChanges(store, id, agent);
+          return r ? json(res, 200, r) : json(res, 404, { error: err.notFound });
+        }
         if (p.startsWith("/api/session/")) {
           const id = decodeURIComponent(p.slice("/api/session/".length));
           if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: err.badSession });
@@ -5452,7 +5872,7 @@ var init_index = __esm({
     PID_FILE = env("PID_FILE");
     ownsPidFile = () => {
       try {
-        return PID_FILE && JSON.parse(fs9.readFileSync(PID_FILE, "utf8")).pid === process.pid;
+        return PID_FILE && JSON.parse(fs10.readFileSync(PID_FILE, "utf8")).pid === process.pid;
       } catch {
         return false;
       }
@@ -5465,14 +5885,14 @@ var init_index = __esm({
     server.listen(PORT, HOST, () => {
       if (PID_FILE) {
         try {
-          fs9.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
+          fs10.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
         } catch (e) {
           console.error(`[clorbit] could not write ${PID_FILE}:`, e.message);
         }
       }
       const lock = env("START_LOCK");
       if (lock) try {
-        fs9.rmSync(lock, { force: true });
+        fs10.rmSync(lock, { force: true });
       } catch {
       }
       console.log(`[clorbit] v${VERSION} http://${HOST}:${PORT} ready in ${Date.now() - t0} ms; ${store.files.size} files in the database, ${store.missing.size} archived (loaded in ${store.stats.loadMs} ms)`);
@@ -5495,7 +5915,7 @@ var init_index = __esm({
       }
       for (const c of clients.keys()) c.end();
       if (ownsPidFile()) try {
-        fs9.unlinkSync(PID_FILE);
+        fs10.unlinkSync(PID_FILE);
       } catch {
       }
       server.close();

@@ -3,6 +3,7 @@ import { demoValue } from '../lib/demo';
 import { mockAttribution, mockInsights, mockLive, mockOverview, mockSessionDetail, mockSessions } from './fixtures';
 import { mockAbout, mockLimits, mockLimitsHistory } from './limits';
 import { mockReplay } from './replay';
+import { mockAgentChanges } from './changes';
 
 /** 'YYYY-MM-DD' (local day; `end` = its last millisecond) or epoch ms. */
 function tsOf(v: string | null, end: boolean, fallback: number): number {
@@ -45,6 +46,8 @@ export function mockResolve(path: string): unknown {
     const to = tsOf(q.get('to'), true, now);
     return mockLimitsHistory(tsOf(q.get('from'), false, to - 7 * 86_400_000), to, now);
   }
+  const ac = p.match(/^\/api\/session\/([^/]+)\/agent\/([^/]+)\/changes$/);
+  if (ac) return mockAgentChanges(decodeURIComponent(ac[1]), decodeURIComponent(ac[2]));
   const rp = p.match(/^\/api\/session\/([^/]+)\/replay$/);
   if (rp) return mockReplay(decodeURIComponent(rp[1]));
   const m = p.match(/^\/api\/session\/(.+)$/);

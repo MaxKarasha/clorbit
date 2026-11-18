@@ -3,3 +3,6 @@
 export interface DemoSessionMeta { project: string; title: () => string | null; model: string | null; effort: string | null; alive: boolean }
 
 export const demoSessions = new Map<string, DemoSessionMeta>();
+
+/** Demo agent id → agent type, so demo "changes" can tell agents that only look around from ones that edit. */
+export const demoAgentTypes = new Map<string, string>();

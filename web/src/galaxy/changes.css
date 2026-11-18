@@ -1,0 +1,118 @@
+/* What an agent changed: tabs, file list with mini-diffs, step feed. Works inside the galaxy panel (--acc is the
+   agent's branch color) and on the Session page. Green / red only for added / removed lines and errors; orange is
+   reserved for "waiting for you" and never used here. */
+.chg-section, .chg {
+  --chg-add: #7fe0c4;
+  --chg-del: #ff6b8b;
+  --chg-mut: var(--muted, #a6b1c6);
+  --chg-line: rgba(120, 150, 220, 0.14);
+  --chg-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+.chg-section { margin-top: 16px; }
+
+.chg-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--chg-line); margin-bottom: 8px; }
+.chg-tabs button {
+  all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px 7px;
+  font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--chg-mut);
+  border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 0.15s, border-color 0.15s;
+}
+.chg-tabs button:hover { color: #dfe6f3; }
+.chg-tabs button:focus-visible { outline: 1px solid color-mix(in srgb, var(--acc, #5cc8ff) 60%, transparent); border-radius: 6px 6px 0 0; }
+.chg-tabs button.on { color: #e6ebf5; border-bottom-color: color-mix(in srgb, var(--acc, #5cc8ff) 85%, transparent); }
+.chg-tabs em { font-style: normal; font-family: var(--chg-mono); font-size: 11px; letter-spacing: 0; color: var(--chg-mut); }
+.chg-tabs .chg-delta { letter-spacing: 0; text-transform: none; }
+
+.chg-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--chg-mut); }
+.chg-dim { color: var(--chg-mut); opacity: 0.8; }
+
+.chg-delta { display: inline-flex; gap: 6px; font-family: var(--chg-mono); font-size: 11.5px; }
+.chg-delta b { font-weight: 600; }
+.chg-add { color: var(--chg-add); }
+.chg-del { color: var(--chg-del); }
+
+.chg-totals {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 7px 9px; border-radius: 10px;
+  background: rgba(120, 150, 220, 0.06); border: 1px solid rgba(120, 150, 220, 0.1);
+  font-size: 12px; color: #c6d0e2; cursor: help;
+}
+.chg-totals .chg-delta { font-size: 13px; }
+
+.chg-files { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.chg-file__row {
+  all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 6px; row-gap: 1px;
+  padding: 6px 8px; border-radius: 8px;
+}
+.chg-file__row:hover { background: rgba(120, 150, 220, 0.09); }
+.chg-file__row:focus-visible { outline: 1px solid color-mix(in srgb, var(--acc, #5cc8ff) 60%, transparent); }
+.chg-file__chev { grid-row: 1; color: var(--chg-mut); font-size: 10px; transition: transform 0.15s; display: inline-block; }
+.chg-file.open .chg-file__chev, .chg-reads__head[aria-expanded='true'] .chg-file__chev { transform: rotate(90deg); }
+.chg-file__path { min-width: 0; display: flex; white-space: nowrap; font-family: var(--chg-mono); font-size: 12px; }
+.chg-file__path b { font-weight: 600; color: #e6ebf5; flex-shrink: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* The folder gives way first (ellipsis), the file name stays readable. */
+.chg-file__dir { color: var(--chg-mut); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chg-file__sub { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 2px 9px; align-items: center; font-size: 11px; color: var(--chg-mut); }
+.chg-file__ago { margin-left: auto; font-family: var(--chg-mono); }
+.chg-file__fail { font-size: 11px; color: var(--chg-mut); font-style: italic; }
+.chg-file--failed .chg-file__row { opacity: 0.55; }
+.chg-file--failed .chg-file__path b { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--chg-del) 60%, transparent); }
+.chg-badge {
+  font-size: 10.5px; padding: 0 6px; border-radius: 999px; line-height: 16px;
+  color: color-mix(in srgb, var(--acc, #9fe3ff) 75%, white);
+  border: 1px solid color-mix(in srgb, var(--acc, #5cc8ff) 45%, transparent);
+}
+.chg-agents { display: inline-flex; gap: 3px; }
+.chg-agents i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+
+.chg-file__diff { padding: 2px 0 8px 18px; }
+.chg-hunk { margin-top: 6px; }
+.chg-hunk__meta { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; color: var(--chg-mut); font-family: var(--chg-mono); margin-bottom: 3px; }
+.chg-diff {
+  margin: 0; padding: 6px 0; border-radius: 8px; background: rgba(3, 5, 12, 0.6); border: 1px solid var(--chg-line);
+  font-family: var(--chg-mono); font-size: 11px; line-height: 1.5; overflow-x: auto; white-space: pre; max-height: 320px;
+  scrollbar-width: thin; scrollbar-color: rgba(120, 150, 220, 0.3) transparent;
+}
+.chg-diff > span { display: block; padding: 0 8px 0 4px; min-width: max-content; }
+.chg-diff > span i { display: inline-block; width: 14px; font-style: normal; text-align: center; opacity: 0.8; user-select: none; }
+.chg-diff .add { background: rgba(127, 224, 196, 0.1); color: #c9f5e8; }
+.chg-diff .add i { color: var(--chg-add); }
+.chg-diff .del { background: rgba(255, 107, 139, 0.1); color: #ffd0da; }
+.chg-diff .del i { color: var(--chg-del); }
+.chg-diff .ctx { color: #8f9bb3; }
+.chg-diff .more { color: var(--chg-mut); font-style: italic; padding-left: 22px; }
+
+.chg-reads { margin-top: 10px; }
+.chg-reads__head { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--chg-mut); padding: 3px 8px; border-radius: 6px; }
+.chg-reads__head:hover { color: #dfe6f3; }
+.chg-reads__head em { font-style: normal; font-family: var(--chg-mono); }
+.chg-reads ul { list-style: none; margin: 2px 0 0; padding: 0 0 0 26px; display: flex; flex-direction: column; gap: 2px; }
+.chg-reads li { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; color: #c6d0e2; }
+.chg-reads li .chg-file__path { flex: 1; font-size: 11.5px; }
+.chg-reads li em { font-style: normal; font-family: var(--chg-mono); color: var(--chg-mut); font-size: 11px; }
+
+.chg-steps { position: relative; }
+.chg-live { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.14em; color: color-mix(in srgb, var(--acc, #9fe3ff) 80%, white); margin: 0 0 4px 8px; }
+.chg-live i { width: 6px; height: 6px; border-radius: 50%; background: var(--acc, #5cc8ff); box-shadow: 0 0 8px var(--acc, #5cc8ff); animation: chg-pulse 1.6s ease-in-out infinite; }
+@keyframes chg-pulse { 50% { opacity: 0.35; } }
+.chg-steps ol {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; max-height: 360px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: rgba(120, 150, 220, 0.3) transparent;
+}
+.chg-step { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto auto; gap: 6px; align-items: baseline; padding: 3px 8px; border-radius: 6px; font-size: 11.5px; }
+.chg-step:hover { background: rgba(120, 150, 220, 0.07); }
+.chg-step__ico { color: var(--chg-mut); text-align: center; font-family: var(--chg-mono); }
+.chg-step--spawn .chg-step__ico { color: color-mix(in srgb, var(--acc, #9fe3ff) 85%, white); }
+.chg-step__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--chg-mono); color: #dbe3f1; }
+.chg-step--text .chg-step__label { font-family: inherit; font-style: italic; color: #b9c4d8; }
+.chg-step__st { font-family: var(--chg-mono); font-size: 10.5px; }
+.chg-step__st.ok { color: var(--chg-add); opacity: 0.85; }
+.chg-step__st.error { color: var(--chg-del); }
+.chg-step__st.pending { color: var(--acc, #5cc8ff); animation: chg-pulse 1.2s ease-in-out infinite; }
+.chg-step.error .chg-step__label { color: #ffc2cf; }
+.chg-step__ago { font-family: var(--chg-mono); font-size: 10.5px; color: var(--chg-mut); white-space: nowrap; }
+.chg-more { all: unset; cursor: pointer; display: block; margin: 6px auto 0; font-size: 11.5px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--chg-line); color: #c6d0e2; }
+.chg-more:hover { border-color: color-mix(in srgb, var(--acc, #5cc8ff) 50%, transparent); color: #e6ebf5; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chg-live i, .chg-step__st.pending { animation: none; }
+}

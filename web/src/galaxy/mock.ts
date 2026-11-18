@@ -6,7 +6,7 @@ import { t } from '../i18n';
 import type enMock from '../i18n/en/mock';
 import { MOCK_PLAN, mockLimits } from '../mock/limits';
 import { rng } from '../mock/rng';
-import { demoSessions } from '../mock/demo-sessions';
+import { demoAgentTypes, demoSessions } from '../mock/demo-sessions';
 
 type MK = keyof typeof enMock;
 
@@ -119,7 +119,7 @@ export class MockFeed {
   private node(type: string, depth: number, extra: Partial<AgentNode> = {}): AgentNode {
     const r = this.r;
     const now = Date.now();
-    return {
+    const node: AgentNode = {
       id: depth === 0 ? 'main' : `a${(++this.uid).toString(16)}${r.id(6)}`,
       type, description: depth ? (TASKS[type] ? r.pick(TASKS[type]) : null) : null, depth, status: 'working',
       model: depth === 0 ? 'claude-opus-5-5' : r.pick(['claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-opus-5-5']),
@@ -127,6 +127,8 @@ export class MockFeed {
       startedAt: now - r.next() * 600000, lastActivity: now, tokens: tok(20000 + r.next() * 400000),
       toolCalls: Math.floor(r.next() * 40), finishedChildren: Math.floor(r.next() * 4), children: [], ...extra,
     };
+    if (depth) demoAgentTypes.set(node.id, type);
+    return node;
   }
 
   private add(d: Def) {

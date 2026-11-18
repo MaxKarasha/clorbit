@@ -139,6 +139,10 @@ Drawn group centres follow their targets on a critically damped spring (≈ 15 s
 
 On the web, `#/replay/:id` (`web/src/galaxy/ReplayPage.tsx`) runs its own `GalaxyEngine` in replay mode (one system, framed by the camera, no dragging or pins, seeded randomness) and a `ReplayPlayer` (`replay-player.ts`): playing forward syncs the engine with the new state, so births, flashes and returns animate as they do live; seeks, steps and big jumps call `resetScene()` and rebuild the moment at once. The console gets the replayed events (with their original timestamps); the timeline (`Scrubber.tsx`) draws density and markers on a canvas and moves its playhead every frame without React. Because the scene at t depends only on the events and t, a recorder can step the player deterministically (video export). Demo mode generates a seeded replay per session id (`web/src/mock/replay.ts`).
 
+### Agent changes
+
+`server/changes.ts` answers "what did this agent change?". A `ChangesSink` reads one transcript with `readLines`: assistant records are parsed for `tool_use` blocks (Edit / MultiEdit / Write / NotebookEdit become pending changes, with line counts and previews computed at once, so the raw inputs are not kept) and texts; user records with tool results are matched by `tool_use_id` — lines under 64 KB are parsed, larger ones byte-scanned for `"tool_use_id":"`, `"is_error":true` and the timestamp before the `toolUseResult` copy (inside JSON strings quotes are escaped, so those patterns only match real keys). A change counts only when its result is not an error; Write's `toolUseResult.type` tells created from overwritten. Line counts: common prefix and suffix are trimmed, then an LCS (when old × new ≤ 250,000 lines) counts the rest; Write and NotebookEdit count added lines only. Caps applied while parsing: 200 steps, 8 previews per file, 40 lines per preview, 200 characters per line, 2,000 pending calls. Sinks are cached per transcript (32) and resumed from their byte offset when the file grows (re-read when it shrinks), so a live agent costs only its new lines. Paths are made relative to the session's (or subagent's) `cwd`, else `~/…` or the last three segments. On the web, `web/src/galaxy/AgentChanges.tsx` refetches when the focused agent's `lastActivity` / `toolCalls` / status change in the snapshot (at most every 1.5 s, one request in flight); demo data comes from `web/src/mock/changes.ts` (seeded by the ids; the step feed slides with time).
+
 ### Video export
 
 `web/src/galaxy/export/` turns a replay into a clip; the dialog (`ExportDialog.tsx`) and the encoders are a lazy chunk loaded when "Export video" is opened.
@@ -192,6 +196,7 @@ All types are in [`shared/api.ts`](../shared/api.ts). Every GET accepts `lang=en
 | `GET /api/analytics/sessions?from&to&project` | `SessionSummary[]`. |
 | `GET /api/session/:id` | `SessionDetail`: summary, full tree, timeline, startup context, tools, token series. |
 | `GET /api/session/:id/replay` | `SessionReplay`: session meta and time-ordered replay events (≤ 20,000; archived sessions: structure only). |
+| `GET /api/session/:id/agent/:agentId/changes` | `AgentChanges`: files an agent edited or wrote (+/− lines, edits, failed calls, capped diff previews), files it only read, and its last ≤ 200 steps. `agentId` is a subagent id, `main` or `all` (the whole session, files only). |
 | `GET /api/insights?from&to` | `Insight[]` with severity, evidence, fix and estimated savings. |
 | `GET /api/limits/history?from&to` | `LimitsPoint[]` (with the windows' reset times). |
 | `GET /api/limits/forecast` | `LimitsForecast`: per window used %, reset, burn rate, projected run-out time and % at reset, confidence, basis; `source: 'none'` without the capture. |

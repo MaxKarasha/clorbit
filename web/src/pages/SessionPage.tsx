@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { AgentNode, SessionDetail, TimelineItem } from '@shared/api';
+import type { AgentChanges, AgentNode, SessionDetail, TimelineItem } from '@shared/api';
 import { t, tp, type MsgKey } from '../i18n';
 import { useApi } from '../lib/api';
 import { alpha, branchColor, modelColor, shade, STATUS } from '../lib/colors';
@@ -10,6 +10,7 @@ import { Legend } from '../components/charts/small';
 import RankList from '../components/RankList';
 import { Chip, CometBar, cx, Empty, ErrorState, Loading, Panel, Segmented } from '../components/ui';
 import { HEAVY_MAX } from './Tools';
+import { changesPath, FileList } from '../galaxy/AgentChanges';
 
 export default function SessionPage({ id }: { id: string }) {
   const q = useApi<SessionDetail>(`/api/session/${encodeURIComponent(id)}`);
@@ -140,7 +141,20 @@ function Body({ d }: { d: SessionDetail }) {
           </Panel>
         </div>
       </div>
+      {!d.archived && <FilesChanged sessionId={s.sessionId} colorOf={colorOf} />}
     </div>
+  );
+}
+
+/** Every file the session's agents changed (all transcripts merged); hidden when nothing was changed. */
+function FilesChanged({ sessionId, colorOf }: { sessionId: string; colorOf: Map<string, string> }) {
+  const q = useApi<AgentChanges>(changesPath(sessionId, 'all'));
+  const c = q.data;
+  if (!c || c.archived || !c.files.length) return null;
+  return (
+    <Panel title={t('ch.session.title')} hint={t('ch.session.hint')}>
+      <FileList c={c} agentColors={(id) => colorOf.get(id)} />
+    </Panel>
   );
 }
 

@@ -19,6 +19,7 @@ import { ServerNotifications, SystemNotifier, notifyTestBody } from './notifier'
 import { SettingsStore } from './settings';
 import { sessionDetail } from './session-detail';
 import { sessionReplay } from './replay';
+import { sessionAgentChanges } from './changes';
 import { Store } from './store';
 
 const t0 = Date.now();
@@ -170,6 +171,14 @@ const server = http.createServer(async (req, res) => {
       const id = decodeURIComponent(rp[1]);
       if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: err.badSession });
       const r = await sessionReplay(store, id, !!live.pids.get(id)?.alive, lang);
+      return r ? json(res, 200, r) : json(res, 404, { error: err.notFound });
+    }
+    const ac = /^\/api\/session\/([^/]+)\/agent\/([^/]+)\/changes$/.exec(p);
+    if (ac) {
+      const id = decodeURIComponent(ac[1]);
+      const agent = decodeURIComponent(ac[2]);
+      if (!/^[\w-]{8,64}$/.test(id) || !/^[\w-]{1,80}$/.test(agent)) return json(res, 400, { error: err.badSession });
+      const r = await sessionAgentChanges(store, id, agent);
       return r ? json(res, 200, r) : json(res, 404, { error: err.notFound });
     }
     if (p.startsWith('/api/session/')) {

@@ -320,6 +320,76 @@ export interface SessionReplay {
   events: ReplayEvent[];
 }
 
+// ---------- Agent changes ("what did this agent change?") ----------
+
+/**
+ * A capped diff preview of one change. `lines` start with ' ' (context), '-' (removed) or '+' (added);
+ * at most 2 context lines around the change, at most 40 lines (`more` = lines left out), each ≤ 200 chars.
+ * Write and NotebookEdit previews hold only '+' lines (the old content is not in the call).
+ */
+export interface DiffHunk {
+  ts: number;
+  tool: 'Edit' | 'MultiEdit' | 'Write' | 'NotebookEdit';
+  lines: string[];
+  more: number;
+  replaceAll?: boolean;  // Edit with replace_all: counted once
+  mode?: string;         // NotebookEdit edit_mode ('replace' | 'insert' | 'delete')
+}
+
+/** A file an agent edited or wrote. Line counts come from the tool calls' inputs; failed calls are not counted. */
+export interface FileChange {
+  path: string;          // relative to the session's folder; outside it '~/…' or '…/<last segments>'
+  name: string;          // basename
+  added: number;
+  removed: number;       // Write and NotebookEdit add lines only (the replaced content is unknown)
+  edits: number;         // successful Edit / MultiEdit / Write / NotebookEdit calls
+  failed: number;        // calls whose result was an error (denied, old_string not found, …)
+  reads: number;         // successful Read calls of the same file
+  lastTs: number;        // last successful change (or last failed attempt when none succeeded)
+  /** Written whole by Write: 'created' / 'overwritten' as Claude Code reported it, 'written' when unknown. */
+  write: 'created' | 'overwritten' | 'written' | null;
+  hunks: DiffHunk[];     // the newest ≤ 8 previews, oldest first
+  hunksDropped?: number; // older previews left out
+  agents?: string[];     // session-wide view: agents that changed the file ('main' or subagent ids)
+}
+
+/** A file the agent only read. */
+export interface FileRead { path: string; name: string; count: number; lastTs: number }
+
+/**
+ * One step of an agent, oldest first: a tool call (its result folded in: pending / ok / error), a spawn (Agent call)
+ * or a short assistant text (≤ 160 chars). Labels are like AgentNode.currentTool ('Edit orders.ts', 'Bash: pnpm test').
+ */
+export interface AgentStep {
+  ts: number;
+  kind: 'tool' | 'spawn' | 'text';
+  label: string;
+  tool?: string;
+  status?: 'pending' | 'ok' | 'error';
+  endTs?: number;        // when the result arrived
+}
+
+/** GET /api/session/:id/agent/:agentId/changes — agentId is a subagent id, 'main', or 'all' (whole session, files only). */
+export interface AgentChanges {
+  sessionId: string;
+  agentId: string;
+  cwd: string | null;
+  /** Changed files: successful ones newest first, then files whose every attempt failed; at most 300. */
+  files: FileChange[];
+  filesTotal: number;
+  /** Files only read, newest first; at most 30. */
+  reads: FileRead[];
+  readsTotal: number;
+  /** Over files with at least one successful change. */
+  totals: { files: number; added: number; removed: number; edits: number; failed: number };
+  /** The last ≤ 200 steps, oldest first ('all': none). */
+  steps: AgentStep[];
+  stepsTotal: number;
+  generatedAt: number;
+  /** The transcript is gone from disk: nothing to show. */
+  archived?: boolean;
+}
+
 export interface Insight {
   id: string;
   severity: 'info' | 'warn' | 'high';
@@ -425,6 +495,7 @@ export interface AboutInfo {
 //   /api/analytics/sessions?from&to&project     → SessionSummary[]
 //   /api/session/:id                            → SessionDetail
 //   /api/session/:id/replay                     → SessionReplay (time-ordered replay events; archived sessions: structure only)
+//   /api/session/:id/agent/:agentId/changes     → AgentChanges (files changed + recent steps; agentId 'main', a subagent id or 'all')
 //   /api/insights?from&to                       → Insight[]
 //   /api/limits/history?from&to                 → LimitsPoint[] (from/to: 'YYYY-MM-DD' or epoch ms; default last 7 days)
 //   /api/limits/forecast                        → LimitsForecast (source 'none' without the status-line capture)
