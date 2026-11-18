@@ -4,7 +4,7 @@
 import type { LiveSnapshot, RecentEvent, ReplayEvent, SessionReplay } from '@shared/api';
 import {
   autoRate, buildTimeMap, extractMarkers, nearestEventTs, nearestMarker, ReplayCursor, replaySession,
-  type ReplayMarker, type TimeMap,
+  type ReplayMarker, type ReplayState, type TimeMap,
 } from '@shared/replay';
 import type { GalaxyEngine } from './engine';
 
@@ -12,7 +12,7 @@ export type Speed = 1 | 2 | 5 | 10 | 30 | 60 | 'auto';
 export const SPEEDS: Speed[] = ['auto', 1, 2, 5, 10, 30, 60];
 
 /** A seek or a frame that crosses more than this snaps instead of animating every birth. */
-const SNAP_EVENTS = 1500;
+export const SNAP_EVENTS = 1500;
 /** Console lines kept when the scene is rebuilt for a moment. */
 const CONSOLE_BACKLOG = 300;
 
@@ -42,6 +42,21 @@ export function consoleEvent(e: ReplayEvent, r: SessionReplay, names: Map<string
     case 'compact': return { ...base, kind: 'compact' };
     default: return null;
   }
+}
+
+/** A replay state as the snapshot the galaxy engine draws (one session, totals from it). Pure. */
+export function replaySnapshot(state: ReplayState, r: SessionReplay, t: number): LiveSnapshot {
+  const s = replaySession(state, r);
+  s.lastActivity = Math.min(s.lastActivity, t);
+  return {
+    now: t, sessions: [s],
+    totals: {
+      tokens24h: s.tokens, tokensToday: s.tokens, burnPerMin: 0, burnSeries: [], activeSessions: 1,
+      workingSessions: s.status === 'working' ? 1 : 0, waitingSessions: s.status === 'waiting' ? 1 : 0,
+      workingSubagents: s.subagentsActive, finishedSubagents24h: s.subagentsTotal - s.subagentsActive, cacheHitRate24h: 0, projects24h: 1,
+    },
+    limits: null, hooksInstalled: true, statuslineCapture: false, scan: { done: true, filesTotal: 0, filesDone: 0 },
+  };
 }
 
 export class ReplayPlayer {
@@ -184,17 +199,7 @@ export class ReplayPlayer {
 
   /** The snapshot the engine draws at the current state. */
   snapshot(): LiveSnapshot {
-    const s = replaySession(this.cursor.state, this.replay);
-    s.lastActivity = Math.min(s.lastActivity, this.t);
-    return {
-      now: this.t, sessions: [s],
-      totals: {
-        tokens24h: s.tokens, tokensToday: s.tokens, burnPerMin: 0, burnSeries: [], activeSessions: 1,
-        workingSessions: s.status === 'working' ? 1 : 0, waitingSessions: s.status === 'waiting' ? 1 : 0,
-        workingSubagents: s.subagentsActive, finishedSubagents24h: s.subagentsTotal - s.subagentsActive, cacheHitRate24h: 0, projects24h: 1,
-      },
-      limits: null, hooksInstalled: true, statuslineCapture: false, scan: { done: true, filesTotal: 0, filesDone: 0 },
-    };
+    return replaySnapshot(this.cursor.state, this.replay, this.t);
   }
   get state() { return this.cursor.state; }
 

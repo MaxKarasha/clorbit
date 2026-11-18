@@ -4,6 +4,7 @@ import { t, tp } from '../i18n';
 import { clusterKey, labelWanted, planGalaxy, primaryOf, relaxGroups, ringRadius, type ClusterInfo, type GroupDisc } from './plan';
 import { clusterPinKey, gravityLayout, maxPull, pinnedSessions, pullOf, starPinKey, withPin, withoutPin, type Pins, type Pull } from './gravity';
 import { edgeView, inRect, placeEdgeChips, type Side } from './edge';
+import { fitSystem, type Box } from './export/layout';
 
 export type Col = { h: number; s: number; l: number };
 export type Focus =
@@ -131,6 +132,13 @@ export interface EngineCallbacks {
   onPins?(pins: Pins): void;
 }
 
+/**
+ * Offline rendering (video export): a fixed logical size drawn at `scale` device pixels per unit, no input, no
+ * resize observer and no animation loop. The clock only moves when renderAt(t) is called, so the same calls
+ * draw the same frames.
+ */
+export interface ManualClock { width: number; height: number; scale: number }
+
 /** Distant stars: projects of the last 30 days without live sessions. */
 export interface Distant { name: string; total: number; sessions: number }
 
@@ -138,7 +146,8 @@ export class GalaxyEngine {
   private ctx: CanvasRenderingContext2D;
   private W = 0;
   private H = 0;
-  private T = performance.now() / 1000;
+  /** Scene clock, seconds: performance.now() live, the caller's time in manual mode (renderAt). */
+  private T = 0;
   /** Ambient clock for twinkles, pulses and drifting belts; crawls with reduce motion. */
   private A = 0;
   private frameN = 0;
@@ -176,7 +185,10 @@ export class GalaxyEngine {
   private distant: (Distant & { ang: number; rr: number; tw: number })[] = [];
   private distantHits: { x: number; y: number; name: string }[] = [];
   private stars: { x: number; y: number; z: number; s: number }[];
-  private ro: ResizeObserver;
+  private ro: ResizeObserver | null = null;
+  private manual: ManualClock | null;
+  /** Replay framing box (canvas px): where the system should fit, see setFraming. */
+  private framing: Box | null = null;
   lastUser = -99;
   /** Auto tour is opt-in (toggle in the HUD). */
   tourOn = false;
@@ -198,9 +210,17 @@ export class GalaxyEngine {
   private lastTour = 0;
   private tourI = 0;
 
-  constructor(private canvas: HTMLCanvasElement, private cb: EngineCallbacks) {
+  constructor(private canvas: HTMLCanvasElement, private cb: EngineCallbacks, opts: { manual?: ManualClock } = {}) {
     this.ctx = canvas.getContext('2d')!;
     this.stars = Array.from({ length: 420 }, (_, i) => ({ x: rand(i), y: rand(i + 500), z: rand(i + 900), s: rand(i + 1300) }));
+    this.manual = opts.manual ?? null;
+    if (this.manual) {
+      // No listeners, no loop: frames are drawn by renderAt().
+      this.lastUser = this.T;
+      this.resize();
+      return;
+    }
+    this.T = performance.now() / 1000;
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas);
     this.resize();
@@ -218,8 +238,9 @@ export class GalaxyEngine {
   }
 
   destroy() {
+    if (this.manual) return;
     cancelAnimationFrame(this.raf);
-    this.ro.disconnect();
+    this.ro?.disconnect();
     this.canvas.removeEventListener('click', this.onClick);
     this.canvas.removeEventListener('wheel', this.onWheel);
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
@@ -232,8 +253,9 @@ export class GalaxyEngine {
   }
 
   private resize() {
-    const r = this.canvas.getBoundingClientRect();
-    const d = Math.min(2, devicePixelRatio || 1);
+    const m = this.manual;
+    const r = m ? { width: m.width, height: m.height } : this.canvas.getBoundingClientRect();
+    const d = m ? m.scale : Math.min(2, devicePixelRatio || 1);
     this.W = r.width;
     this.H = r.height;
     this.canvas.width = Math.round(r.width * d);
@@ -252,6 +274,22 @@ export class GalaxyEngine {
     this.replaySeed = seed;
   }
   private replaySeed = 'replay';
+
+  /**
+   * Replay framing: with no focus, the system is fitted into this box (canvas px, e.g. a video's safe area minus
+   * its overlays) instead of the space the replay HUD leaves. null: the default framing.
+   */
+  setFraming(box: Box | null) { this.framing = box; }
+
+  /**
+   * Manual clock (video export): moves the scene clock to `t` seconds, runs `prepare` (sync the data for that
+   * moment: births, flashes and returns are timed by this clock), then steps and draws one frame. Deterministic:
+   * nothing here reads the wall clock or Math.random (replay mode is seeded).
+   */
+  renderAt(t: number, prepare?: () => void) {
+    if (!this.manual) throw new Error('renderAt needs a manual-clock engine');
+    this.advance(t, 0.1, prepare);
+  }
 
   /**
    * Replay: forget the scene, so the next sync shows its state at once (a seek): no births, returns or flashes,
@@ -853,8 +891,15 @@ export class GalaxyEngine {
         const u = this.U;
         let R = this.beltR(sys) + 12 * u;
         for (const b of sys.root.children) if (b.ret === null) R = Math.max(R, this.orbR(b, sys) + 10 * u);
-        const s = clamp(Math.min((this.W * 0.36) / R, (this.H * 0.34) / (R * 0.42 + 26 * u)), 0.6, 4.2);
         const c = this.pos(sys.root);
+        if (this.framing) {
+          // Export framing fits what is there: the orbits, and the belt once it has a few rocks (the camera eases out as it fills).
+          let Rf = this.starR(sys) + 34 * u;
+          for (const b of sys.root.children) if (b.ret === null) Rf = Math.max(Rf, this.orbR(b, sys) + 12 * u);
+          if (sys.belt.length >= 3) Rf = Math.max(Rf, this.beltR(sys) + 8 * u);
+          return fitSystem(c, Rf, this.framing, this.W, this.H);
+        }
+        const s = clamp(Math.min((this.W * 0.36) / R, (this.H * 0.34) / (R * 0.42 + 26 * u)), 0.6, 4.2);
         return { x: c[0], y: c[1] + 34 / s, s };
       }
     }
@@ -926,19 +971,28 @@ export class GalaxyEngine {
 
   /* ---------- frame ---------- */
 
+  /** Frozen: the live loop keeps its last frame and does no work (e.g. while a video export renders off-screen). */
+  frozen = false;
+
   private frame = () => {
     this.raf = requestAnimationFrame(this.frame);
-    const now = performance.now() / 1000;
-    const dt = Math.min(0.05, now - this.T);
+    if (this.frozen) { this.T = performance.now() / 1000; return; }
+    this.advance(performance.now() / 1000, 0.05);
+  };
+
+  /** One frame at scene time `now` (seconds): the clock, the data (`prepare`), the step and the drawing. */
+  private advance(now: number, maxDt: number, prepare?: () => void) {
+    const dt = Math.min(maxDt, Math.max(0, now - this.T));
     this.T = now;
     this.A += dt * (this.reduceMotion ? 0.08 : 1);
     this.frameN++;
     this.dt = dt;
+    prepare?.();
     if (this.needSync && this.lastSnap) { this.needSync = false; this.sync(this.lastSnap); }
     if (this.tourOn && this.T - this.lastUser > 25 && this.T - this.lastTour > 5) { this.lastTour = this.T; this.tour(); }
     this.step(dt);
     this.draw();
-  };
+  }
 
   private step(dt: number) {
     const ts = this.focus.t === 'agent' ? 0.25 : this.focus.t === 'sys' ? 0.45 : 1;

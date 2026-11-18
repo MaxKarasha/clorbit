@@ -429,6 +429,57 @@ export function buildTimeMap(timestamps: readonly number[], start: number, end: 
   };
 }
 
+/** Bins of the export warp (see buildTargetMap). */
+const WARP_BINS = 240;
+/** Box-filter radius (bins) that smooths the activity profile, so the playback speed changes gradually. */
+const WARP_SMOOTH = 4;
+
+/**
+ * A time map whose play axis lasts `targetMs` (video export: "make this run a 30-second clip"). Idle gaps are
+ * compressed first (as in "auto"); the compressed axis is then warped so that busy stretches get more of the
+ * clip than quiet ones: each of WARP_BINS bins gets a share 0.4 + 0.6·min(3, √(activity / mean)) of the time,
+ * smoothed over neighbouring bins. The result is continuous, strictly increasing and invertible, starts at 0,
+ * ends exactly at `targetMs`, and its local speed never varies by more than 5.5× across the clip.
+ * A run that is already shorter than the target (after gap compression) is not slowed down: the map is
+ * returned as is, and the clip is shorter. `targetMs` null: gap compression only (real speed).
+ */
+export function buildTargetMap(timestamps: readonly number[], start: number, end: number, targetMs: number | null): TimeMap {
+  end = Math.max(end, start);
+  const inRange = timestamps.filter((t) => t >= start && t <= end);
+  const base = buildTimeMap(inRange, start, end, true);
+  if (targetMs == null || !(targetMs > 0) || base.duration <= targetMs) return base;
+  const n = WARP_BINS;
+  const bw = base.duration / n;
+  const cnt = new Array<number>(n).fill(0);
+  for (const t of inRange) cnt[Math.min(n - 1, Math.floor(base.toPlay(t) / bw))]++;
+  const sm = cnt.map((_, i) => {
+    let s = 0, k = 0;
+    for (let j = Math.max(0, i - WARP_SMOOTH); j <= Math.min(n - 1, i + WARP_SMOOTH); j++) { s += cnt[j]; k++; }
+    return s / k;
+  });
+  const mean = sm.reduce((a, v) => a + v, 0) / n;
+  const w = sm.map((v) => (mean > 0 ? 0.4 + 0.6 * Math.min(3, Math.sqrt(v / mean)) : 1));
+  const cum: number[] = [0];
+  for (let i = 0; i < n; i++) cum.push(cum[i] + w[i]);
+  const k = targetMs / cum[n];
+  const toVideo = (p: number) => {
+    const x = Math.min(n, Math.max(0, p / bw));
+    const i = Math.min(n - 1, Math.floor(x));
+    return Math.min(targetMs, (cum[i] + w[i] * (x - i)) * k);
+  };
+  const toBase = (v: number) => {
+    const c = Math.min(cum[n], Math.max(0, v / k));
+    let lo = 0, hi = n;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cum[m] <= c) lo = m; else hi = m; }
+    return Math.min(base.duration, (lo + (c - cum[lo]) / w[lo]) * bw);
+  };
+  return {
+    start, end, duration: targetMs, gaps: base.gaps,
+    toPlay: (t) => (t <= start ? 0 : t >= end ? targetMs : toVideo(base.toPlay(t))),
+    toReal: (v) => (v <= 0 ? start : v >= targetMs ? end : base.toReal(toBase(v))),
+  };
+}
+
 /** Playback rate of "auto": the compressed replay takes about this long (clamped to 1×..60×). */
 export const AUTO_TARGET_MS = 150_000;
 export function autoRate(duration: number): number {

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentNode, ReplayEvent, SessionReplay } from '../api';
 import {
-  autoRate, buildTimeMap, capReplayEvents, densityBins, extractMarkers, GAP_EXTRA_MS, IDLE_GAP_MS, nearestEventTs, nearestMarker,
+  autoRate, buildTargetMap, buildTimeMap, capReplayEvents, densityBins, extractMarkers, GAP_EXTRA_MS, IDLE_GAP_MS, nearestEventTs, nearestMarker,
   normalizeReplayEvents, ReplayCursor, replaySession, replayStateAt, replayTree, sortReplayEvents,
 } from '../replay';
 
@@ -286,5 +286,69 @@ describe('markers, stepping, density', () => {
     expect(Math.max(...d)).toBe(1);
     expect(d[5]).toBe(1); // the spawn counts double
     expect(d[20]).toBe(0.5);
+  });
+});
+
+describe('time map compressed to a target duration (video export)', () => {
+  // A 40-minute run: a busy first 10 minutes, a 20-minute idle gap, a sparse last 10 minutes.
+  const ts: number[] = [];
+  for (let t = 0; t < 10 * MIN; t += 2 * S) ts.push(T0 + t);
+  for (let t = 30 * MIN; t <= 40 * MIN; t += 40 * S) ts.push(T0 + t);
+  const end = T0 + 40 * MIN;
+
+  it('lasts exactly the target, starts at 0 and ends at the end', () => {
+    for (const target of [15_000, 30_000, 60_000]) {
+      const m = buildTargetMap(ts, T0, end, target);
+      expect(m.duration).toBe(target);
+      expect(m.toPlay(T0)).toBe(0);
+      expect(m.toPlay(end)).toBe(target);
+      expect(m.toReal(0)).toBe(T0);
+      expect(m.toReal(target)).toBe(end);
+      expect(m.toPlay(T0 - MIN)).toBe(0);
+      expect(m.toPlay(end + MIN)).toBe(target);
+    }
+  });
+
+  it('is strictly increasing, continuous and invertible', () => {
+    const m = buildTargetMap(ts, T0, end, 30_000);
+    let prev = -1;
+    for (let t = T0; t <= end; t += 1000) {
+      const p = m.toPlay(t);
+      expect(p).toBeGreaterThan(prev);
+      prev = p;
+      expect(Math.abs(m.toReal(p) - t)).toBeLessThan(2);
+    }
+    // No jumps: one real second never moves the clip by more than a few ms.
+    for (let t = T0; t < end; t += 997) expect(m.toPlay(t + 1000) - m.toPlay(t)).toBeLessThan(60);
+  });
+
+  it('gives busy stretches more of the clip than idle ones, within a bounded speed range', () => {
+    const m = buildTargetMap(ts, T0, end, 30_000);
+    const base = buildTimeMap(ts, T0, end, true);
+    // Speed (base-axis ms per clip ms) in the busy part vs the sparse part.
+    const speed = (a: number, b: number) => (base.toPlay(b) - base.toPlay(a)) / (m.toPlay(b) - m.toPlay(a));
+    const busy = speed(T0 + 2 * MIN, T0 + 8 * MIN);
+    const sparse = speed(T0 + 32 * MIN, T0 + 38 * MIN);
+    expect(busy).toBeLessThan(sparse);
+    expect(sparse / busy).toBeLessThanOrEqual(5.5 + 1e-9);
+    // The 20-minute idle gap is squeezed (auto) before the warp: it takes well under a tenth of the clip.
+    expect(m.toPlay(T0 + 30 * MIN) - m.toPlay(T0 + 10 * MIN)).toBeLessThan(3000);
+  });
+
+  it('never slows a short run down; null target = gap compression only', () => {
+    const short = [T0, T0 + 5 * S, T0 + 9 * S];
+    const m = buildTargetMap(short, T0, T0 + 10 * S, 30_000);
+    expect(m.duration).toBe(10 * S);
+    expect(m.toPlay(T0 + 5 * S)).toBe(5 * S);
+    const real = buildTargetMap(ts, T0, end, null);
+    expect(real.duration).toBe(buildTimeMap(ts, T0, end, true).duration);
+  });
+
+  it('only looks at the selected range', () => {
+    const m = buildTargetMap(ts, T0 + 30 * MIN, end, 15_000);
+    expect(m.start).toBe(T0 + 30 * MIN);
+    expect(m.duration).toBe(15_000);
+    expect(m.toPlay(T0 + 35 * MIN)).toBeGreaterThan(0);
+    expect(m.toPlay(T0 + 35 * MIN)).toBeLessThan(15_000);
   });
 });

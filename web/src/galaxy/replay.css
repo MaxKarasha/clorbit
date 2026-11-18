@@ -93,3 +93,8 @@
 .rp-spinner { width: 34px; height: 34px; border-radius: 50%; border: 2px solid rgba(140, 190, 255, 0.18); border-top-color: #9fe3ff; animation: rp-spin 0.9s linear infinite; }
 @keyframes rp-spin { to { transform: rotate(360deg); } }
 :root[data-reduce-motion] .rp-spinner { animation-duration: 3s; }
+
+/* Video export: the header button and the export range on the timeline (I / O). */
+.rp-export { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.rp-export svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.rp-sel { position: absolute; top: 0; bottom: 0; pointer-events: none; background: rgba(92, 200, 255, 0.12); border-left: 2px solid #5cc8ff; border-right: 2px solid #5cc8ff; box-shadow: inset 0 0 12px rgba(92, 200, 255, 0.18); }

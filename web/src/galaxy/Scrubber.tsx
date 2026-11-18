@@ -25,7 +25,14 @@ function fmtWhen(ts: number, showDate: boolean): string {
 
 const speedLabel = (s: Speed, rate: number) => (s === 'auto' ? t('gx.replay.auto', { rate }) : `${s}×`);
 
-export default function Scrubber({ player, view, follow, onFollow }: { player: ReplayPlayer; view: PlayerView; follow: boolean | null; onFollow: (v: boolean) => void }) {
+export default function Scrubber({ player, view, follow, onFollow, sel = null }: {
+  player: ReplayPlayer;
+  view: PlayerView;
+  follow: boolean | null;
+  onFollow: (v: boolean) => void;
+  /** The video-export range, shown as a band on the track. */
+  sel?: { from: number; to: number } | null;
+}) {
   const r = player.replay;
   const trackRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
@@ -157,6 +164,7 @@ export default function Scrubber({ player, view, follow, onFollow }: { player: R
         {map.gaps.map((g) => (
           <span key={g.from} className="rp-gap" style={{ left: `${pos(g.from)}%`, width: `${Math.max(0.15, pos(g.to) - pos(g.from))}%` }} title={t('gx.replay.gap', { d: fmtSpan(g.to - g.from) })} />
         ))}
+        {sel && <span className="rp-sel" style={{ left: `${pos(sel.from)}%`, width: `${Math.max(0.2, pos(sel.to) - pos(sel.from))}%` }} />}
         <div className="rp-head" ref={headRef} style={{ left: `${player.frac(view.t) * 100}%` }} />
         {hover && hoverT !== null && (
           <div className="rp-tip" style={{ left: Math.min(Math.max(hover.x, 80), (trackRef.current?.clientWidth ?? 0) - 80) }}>

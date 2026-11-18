@@ -1,6 +1,6 @@
 // The time machine: one session replayed in the galaxy (#/replay/:sessionId), driven by a replay clock
 // instead of live data. The scene, the console and the panels show the session as it was at the playhead.
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { SessionReplay } from '@shared/api';
 import LangSwitch from '../components/LangSwitch';
 import { ProfileButton } from '../components/SettingsPanel';
@@ -16,9 +16,14 @@ import { GalaxyEngine, prettyModel, short, type Focus } from './engine';
 import { AgentPanel, findAgent, SessionPanel } from './GalaxyPage';
 import { ReplayPlayer, type PlayerView } from './replay-player';
 import Scrubber from './Scrubber';
+import type { Selection } from './export/ExportDialog';
+import type { ExportSettings } from './export/plan';
 import { fmtTok } from './format';
 import './galaxy.css';
 import './replay.css';
+
+// The export dialog and its encoders load only when the dialog is opened.
+const ExportDialog = lazy(() => import('./export/ExportDialog'));
 
 /** How often a followed live session is rebuilt. */
 const FOLLOW_MS = 5000;
@@ -37,6 +42,9 @@ export default function ReplayPage({ id }: { id: string }) {
   const [follow, setFollow] = useState(false);
   const [nonce, setNonce] = useState(0);
   const [demo] = useState(isDemo);
+  const [exportOpen, setExportOpen] = useState(false);
+  /** The export range (I / O keys, or the dialog's buttons). */
+  const [sel, setSel] = useState<Selection | null>(null);
   const lang = useLang();
   const reduceMotion = useSetting((s) => s.interface.reduceMotion);
   const view = useSyncExternalStore(player?.subscribe ?? noop, player?.getView ?? (() => NO_VIEW));
@@ -88,7 +96,22 @@ export default function ReplayPage({ id }: { id: string }) {
         });
         playerRef.current = p;
         setPlayer(p);
-        if (import.meta.env.DEV) (window as unknown as { __replay?: ReplayPlayer }).__replay = p;
+        if (import.meta.env.DEV) {
+          (window as unknown as { __replay?: ReplayPlayer }).__replay = p;
+          // Dev-only test hook: render an export without the dialog (headless checks, determinism).
+          (window as unknown as { __export?: unknown }).__export = {
+            run: async (s: Partial<ExportSettings>) => {
+              const m = await import('./export/run');
+              const pl = await import('./export/plan');
+              return m.runExport(p.replay, { format: 'mp4', size: '16:9-1080', range: null, target: 30, overlays: pl.ALL_OVERLAYS, anonymize: false, ...s });
+            },
+            hashes: async (s: Partial<ExportSettings>, frames: number[]) => {
+              const m = await import('./export/run');
+              const pl = await import('./export/plan');
+              return m.frameHashes(p.replay, { format: 'mp4', size: '16:9-1080', range: null, target: 30, overlays: pl.ALL_OVERLAYS, anonymize: false, ...s }, frames);
+            },
+          };
+        }
         // Start at once: a replay is meant to be watched.
         p.play();
       })
@@ -116,7 +139,11 @@ export default function ReplayPage({ id }: { id: string }) {
       const el = e.target as HTMLElement | null;
       if (!p || (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable))) return;
       if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector('.setp')) return;
-      if (e.key === ' ' || e.code === 'Space') p.toggle();
+      // Inside the export dialog, space and arrows belong to its buttons.
+      if (el?.closest?.('.xp') && e.key !== 'i' && e.key !== 'o') return;
+      if (e.key === 'i' || e.key === 'I') setSel((s) => ({ from: p.t, to: s && s.to > p.t ? s.to : p.replay.endedAt }));
+      else if (e.key === 'o' || e.key === 'O') setSel((s) => ({ from: s && s.from < p.t ? s.from : p.replay.startedAt, to: p.t }));
+      else if (e.key === ' ' || e.code === 'Space') p.toggle();
       else if (e.key === 'ArrowLeft') { if (e.shiftKey) p.jump(-1); else p.step(-1); }
       else if (e.key === 'ArrowRight') { if (e.shiftKey) p.jump(1); else p.step(1); }
       else return;
@@ -166,6 +193,12 @@ export default function ReplayPage({ id }: { id: string }) {
           </div>
         )}
         <nav className="gx-nav">
+          {r && (
+            <button type="button" className="gx-btn rp-export" onClick={() => setExportOpen(true)} disabled={!player} title={t('gx.export.openTitle')}>
+              <svg viewBox="0 0 24 24" aria-hidden><rect x="3" y="5" width="13" height="14" rx="2.5" /><path d="M16 10l5-3v10l-5-3" /></svg>
+              {t('gx.export.open')}
+            </button>
+          )}
           {r && <a className="gx-btn" href={href(`/session/${encodeURIComponent(r.sessionId)}`)}>{t('gx.replay.details')}</a>}
           <a className="gx-btn primary rp-exit" href={exitHref} title={t('gx.replay.exitTitle')}>{t('gx.replay.exit')}</a>
           <LangSwitch className="gx-lang" btnClass="gx-btn" />
@@ -224,7 +257,17 @@ export default function ReplayPage({ id }: { id: string }) {
         <Ticker onFocus={onConsoleFocus} onExpand={() => setConsoleOpen(true)} />
       ))}
 
-      {player && <Scrubber player={player} view={view} follow={r?.live && !demo ? follow : null} onFollow={setFollow} />}
+      {player && <Scrubber player={player} view={view} follow={r?.live && !demo ? follow : null} onFollow={setFollow} sel={sel} />}
+
+      {player && exportOpen && (
+        <Suspense fallback={null}>
+          <ExportDialog
+            player={player} view={view} demo={demo} sel={sel} onSel={setSel}
+            onBusy={(b) => { if (engineRef.current) engineRef.current.frozen = b; }}
+            onClose={() => { if (engineRef.current) engineRef.current.frozen = false; setExportOpen(false); }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
