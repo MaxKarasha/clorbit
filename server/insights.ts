@@ -1,18 +1,19 @@
 // Insights: rules with evidence and a concrete fix. Wording lives in insights-text.ts (en/uk).
-import path from 'node:path';
 import { DEFAULT_SETTINGS, type Insight, type InsightPage, type Range } from '../shared/api';
 import { attribution, Ctx, memoize, overview } from './analytics';
 import { readSettings } from './config';
 import type { Store } from './store';
 import { deriveWaits, WAIT_CAP_MS, type HookLog } from './hook-log';
 import type { FileSummary } from './types';
-import { localDate, mcpSplit } from './util';
+import { localDate } from './util';
 import type { Lang } from './i18n';
 import { insightText, type InsightText } from './insights-text';
 import { defaultEnv, hash8, type RecommendEnv } from './recommend';
+import { agentRecommendations } from './recommend-agents';
 import { mcpRecommendations } from './recommend-mcp';
 import { skillRecommendations } from './recommend-skills';
 import { startupRecommendations } from './recommend-startup';
+import { permissionRecommendation, toolRecommendations } from './recommend-tools';
 
 const sevRank = { high: 0, warn: 1, info: 2 } as const;
 
@@ -22,14 +23,6 @@ function filesActiveIn(store: Store, range: Range): FileSummary[] {
     if (Object.keys(s.days).some((d) => d >= range.from && d <= range.to)) out.push(s);
   }
   return out;
-}
-
-function toolFix(tool: string, T: InsightText): string {
-  if (T.toolFix[tool]) return T.toolFix[tool];
-  const m = mcpSplit(tool);
-  if (m && /chrome|browser/i.test(m.server)) return T.toolFixBrowser;
-  if (m) return T.toolFixMcp(m.server);
-  return T.toolFixGeneric;
 }
 
 export interface InsightOptions {
@@ -48,7 +41,7 @@ export function insights(store: Store, range: Range, hookLog?: HookLog | null, l
   // Recommendations also depend on the enabled plugins, the threshold and the day ("unused for N days").
   const key = `ins:${lang}:${range.from}:${range.to}:${env.unusedDays}:${localDate(env.now)}:${hash8(JSON.stringify([env.enabledPlugins, env.mcp.user, env.mcp.local]))}`;
   const base = opts.env ? compute(store, range, lang, env) : memoize(store, key, () => compute(store, range, lang, env));
-  const extra = hookLog ? waitInsights(store, hookLog, range, lang) : [];
+  const extra = hookLog ? waitInsights(store, hookLog, range, lang, env) : [];
   const all = extra.length ? [...base, ...extra].sort(bySaving) : base;
   return opts.page ? all.filter((i) => i.pages?.includes(opts.page!)) : all;
 }
@@ -61,11 +54,15 @@ function rangeMs(range: Range): { from: number; to: number } {
 
 const waitMemo = new Map<string, { key: string; v: Insight[] }>();
 
-/** "Agents waited for you" — derived from stored hook events; empty when there is no hook data. */
-export function waitInsights(store: Store, hookLog: HookLog, range: Range, lang: Lang = 'en'): Insight[] {
+/**
+ * From stored hook events (empty without hook data): "agents waited for you" (sessions / overview) and the permission
+ * prompts you keep approving (Tools: precise allow rules). The wait card then points to the Tools tab for the rules.
+ */
+export function waitInsights(store: Store, hookLog: HookLog, range: Range, lang: Lang = 'en', env?: RecommendEnv): Insight[] {
   const { from, to } = rangeMs(range);
   if (!hookLog.hasEvents(from, to)) return [];
-  const memoKey = `${hookLog.version}:${store.version}`;
+  const e = env ?? defaultEnv({ unusedDays: DEFAULT_SETTINGS.recommendations.unusedDays });
+  const memoKey = `${hookLog.version}:${store.version}:${e.settingsFile}:${localDate(e.now)}`;
   const cacheKey = `${lang}:${range.from}:${range.to}`;
   const hit = waitMemo.get(cacheKey);
   if (hit && hit.key === memoKey) return hit.v;
@@ -73,6 +70,8 @@ export function waitInsights(store: Store, hookLog: HookLog, range: Range, lang:
   // Read one cap past both edges so waits starting near the edges are closed correctly; keep those starting in range.
   const waits = deriveWaits(hookLog.waitEvents(from - WAIT_CAP_MS, to + WAIT_CAP_MS)).filter((w) => w.start >= from && w.start < to && w.end > w.start);
   const v: Insight[] = [];
+  const allow = permissionRecommendation(hookLog.permissionEvents(from - WAIT_CAP_MS, to + WAIT_CAP_MS), range, lang, e, { from, to });
+  if (allow) v.push(allow);
   if (waits.length) {
     const ctx = new Ctx(store);
     const total = waits.reduce((n, w) => n + (w.end - w.start), 0);
@@ -95,7 +94,7 @@ export function waitInsights(store: Store, hookLog: HookLog, range: Range, lang:
       byTool.set(k, a);
     }
     const tools = [...byTool.entries()].sort((a, b) => b[1].n - a[1].n || b[1].ms - a[1].ms);
-    const allow = tools.map(([t]) => t).filter((t) => t !== UNKNOWN).slice(0, 4);
+    const allowed = tools.map(([t]) => t).filter((t) => t !== UNKNOWN).slice(0, 4);
     const capH = WAIT_CAP_MS / 3_600_000;
     v.push({
       id: 'hook-waits',
@@ -112,9 +111,11 @@ export function waitInsights(store: Store, hookLog: HookLog, range: Range, lang:
         ...tools.slice(0, 6).map(([t, a]) => T.waits.toolLine(t === UNKNOWN ? T.unknownTool : t, a.n, a.ms)),
         ...(input.length ? [T.waits.inputLine(input.length, inputMs)] : []),
       ],
-      fix: perm.length
-        ? T.waits.fixPerm(allow.map((t) => `"${t === 'Bash' ? 'Bash(pnpm test:*)' : t}"`).join(', '))
+      // The allow rules are the Tools card's (one card per issue); without one, the generic advice stays here.
+      fix: perm.length && !allow
+        ? T.waits.fixPerm(allowed.map((t) => `"${t === 'Bash' ? 'Bash(pnpm test *)' : t}"`).join(', '))
         : T.waits.fixInput,
+      ...(allow ? { seeAlso: 'tools' as const } : {}),
     });
   }
   waitMemo.set(cacheKey, { key: memoKey, v });
@@ -134,6 +135,10 @@ function compute(store: Store, range: Range, lang: Lang, env: RecommendEnv): Ins
     ...skills,
     ...mcpRecommendations(store, range, lang, env, { plugins: coveredPlugins }),
     ...startupRecommendations(store, range, lang, env, { attr, skillCards: skills }),
+    // Tools: repeated reads, huge built-in tool results, failing tools (permission prompts come from hooks: waitInsights).
+    ...toolRecommendations(store, range, lang, env),
+    // Subagents: cheaper models for read-only agents, startup overhead, bursts / deep nesting, failing agents.
+    ...agentRecommendations(store, range, lang, env),
   ];
   const ov = overview(store, range);
   const grand = ov.totals.total || 1;
@@ -142,61 +147,6 @@ function compute(store: Store, range: Range, lang: Lang, env: RecommendEnv): Ins
   const pluginKey = (name: string) => Object.keys(settings.enabledPlugins).find((k) => k.split('@')[0] === name) ?? `${name}@…`;
 
   const filesInRange = filesActiveIn(store, range);
-
-  // (c) Oversized tool results (> 20K tokens).
-  const big = new Map<string, { n: number; sum: number; max: number; ex: string[] }>();
-  for (const s of filesInRange) {
-    for (const r of s.bigResults) {
-      if (mcpSplit(r.tool)) continue; // per MCP server: recommend-mcp.ts
-      const d = localDate(r.ts);
-      if (d < range.from || d > range.to) continue;
-      const a = big.get(r.tool) ?? { n: 0, sum: 0, max: 0, ex: [] };
-      a.n++; a.sum += r.tokens; a.max = Math.max(a.max, r.tokens);
-      if (a.ex.length < 4) a.ex.push(T.bigResults.example(r.label, r.tokens, ctx.project(s)));
-      big.set(r.tool, a);
-    }
-  }
-  for (const [tool, a] of [...big.entries()].sort((x, y) => y[1].sum - x[1].sum).slice(0, 5)) {
-    out.push({
-      id: `big-results-${tool}`,
-      pages: ['tools'],
-      severity: a.sum > 2e6 ? 'high' : a.sum > 3e5 ? 'warn' : 'info',
-      title: T.bigResults.title(tool, a.n, a.max),
-      detail: T.bigResults.detail(a.sum),
-      evidence: a.ex,
-      fix: toolFix(tool, T),
-      estSavingTokens: Math.max(0, Math.round(a.sum - a.n * 5000)),
-    });
-  }
-
-  // (d) The same file read ≥ 3 times within one session.
-  const readAvg = Number(attr.tools.find((r) => r.key === 'Read')?.extra?.avgResult ?? 1500);
-  const repeated: { sid: string; file: string; n: number }[] = [];
-  const bySession = new Map<string, Map<string, number>>();
-  for (const s of filesInRange) {
-    const m = bySession.get(s.sessionId) ?? new Map<string, number>();
-    for (const [f, n] of Object.entries(s.reads)) m.set(f, (m.get(f) ?? 0) + n);
-    bySession.set(s.sessionId, m);
-  }
-  for (const [sid, m] of bySession) for (const [file, n] of m) if (n >= 3) repeated.push({ sid, file, n });
-  if (repeated.length) {
-    repeated.sort((a, b) => b.n - a.n);
-    const extra = repeated.reduce((n, r) => n + (r.n - 1), 0);
-    const sessionsN = new Set(repeated.map((r) => r.sid)).size;
-    out.push({
-      id: 'repeated-reads',
-      pages: ['tools'],
-      severity: extra * readAvg > 1e6 ? 'warn' : 'info',
-      title: T.repeatedReads.title(repeated.length),
-      detail: T.repeatedReads.detail(sessionsN, extra, readAvg),
-      evidence: repeated.slice(0, 8).map((r) => {
-        const main = store.mainOf(r.sid);
-        return `${path.basename(r.file)} ×${r.n} — ${main?.title ?? ctx.projectOfSession.get(r.sid) ?? r.sid.slice(0, 8)}`;
-      }),
-      fix: T.repeatedReads.fix,
-      estSavingTokens: Math.round(extra * readAvg),
-    });
-  }
 
   // (e) Sessions with auto-compactions.
   const compacted: { s: FileSummary; n: number }[] = [];

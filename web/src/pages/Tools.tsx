@@ -4,6 +4,7 @@ import { t } from '../i18n';
 import { branchColor, STATUS } from '../lib/colors';
 import { fmtCompact, fmtInt, fmtTokens } from '../lib/format';
 import RankList from '../components/RankList';
+import Recommendations from '../components/Recommendations';
 import { Chip, PageHeader, Panel, Segmented, Tooltip, TipRow, useTip, useWidth } from '../components/ui';
 import { logTicks } from '../components/charts/scale';
 import { Fact } from './Mcp';
@@ -30,6 +31,7 @@ export default function Tools() {
         title={t('tools.title')}
         lede={t('tools.lede')}
       />
+      <Recommendations page="tools" />
       <Guard state={q}>{(d) => <Body tools={d.tools} />}</Guard>
     </>
   );

@@ -437,6 +437,11 @@ export interface InsightSaving {
   days?: number;
   basis?: 'projection' | 'range';
   pctStartup?: number;
+  /** Waiting time (ms) the change would have saved over `days` (permission prompts you always approve). Additive (0.4+). */
+  waitMs?: number;
+  /** Share (0..1) of the targets' cost the change would save, from relative model prices (a cheaper subagent model);
+   *  `period` is then that share of their tokens ("tokens' worth"), not tokens removed. Additive (0.4+). */
+  costShare?: number;
 }
 
 /** One concrete item of a recommendation. */
@@ -445,7 +450,7 @@ export interface InsightTarget {
   key: string;
   /** Display name. */
   label: string;
-  kind?: 'plugin' | 'skill' | 'ownSkill' | 'mcp' | 'file' | 'hook' | 'other';
+  kind?: 'plugin' | 'skill' | 'ownSkill' | 'mcp' | 'file' | 'hook' | 'tool' | 'rule' | 'agent' | 'session' | 'other';
   /** Last use (epoch ms) across the whole history; null = never used; absent = not applicable. */
   lastUsed?: number | null;
   /** Context tokens this item adds to every session (estimate). */

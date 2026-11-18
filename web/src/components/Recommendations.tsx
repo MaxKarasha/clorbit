@@ -5,7 +5,7 @@ import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import type { Insight, InsightPage, InsightPrompts, InsightSaving } from '@shared/api';
 import { t, tp, type MsgKey } from '../i18n';
 import { BRANCH, STATUS } from '../lib/colors';
-import { fmtAgo, fmtInt, fmtPct, fmtTokens } from '../lib/format';
+import { fmtAgo, fmtDuration, fmtInt, fmtPct, fmtTokens } from '../lib/format';
 import { href, navigate } from '../lib/router';
 import { updateSettings, useSettings } from '../lib/settings';
 import { useRangeApi } from '../pages/common';
@@ -229,6 +229,39 @@ function Evidence({ lines }: { lines: string[] }) {
 
 /** "−3.2K context tokens per session and per subagent · ≈ −41M over 30 days · 6% of the startup context". */
 export function Savings({ s }: { s: InsightSaving }) {
+  // Waiting time (permission prompts you always approve): minutes, not tokens.
+  if (s.waitMs) {
+    return (
+      <div className="rec__save">
+        <div className="rec__save-main">
+          <span className="rec__save-big mono">≈ {fmtDuration(s.waitMs)}</span>
+          <span className="rec__save-cap">{t('rec.save.wait', { days: s.days ?? 30 })}</span>
+        </div>
+        <div className="rec__save-line">
+          <span className="rec__est" title={t('rec.save.waitTip')}>
+            {t('rec.save.estimate')}
+          </span>
+        </div>
+      </div>
+    );
+  }
+  // A cheaper model: a share of the cost; the period is that share of the tokens ("tokens' worth").
+  if (s.costShare) {
+    return (
+      <div className="rec__save">
+        <div className="rec__save-main">
+          <span className="rec__save-big mono">−{fmtPct(s.costShare, 0)}</span>
+          <span className="rec__save-cap">{t('rec.save.cost')}</span>
+        </div>
+        <div className="rec__save-line">
+          {s.period ? <span className="mono">{t('rec.save.costPeriod', { n: fmtTokens(s.period), days: s.days ?? 30 })}</span> : null}
+          <span className="rec__est" title={t('rec.save.costTip')}>
+            {t('rec.save.estimate')}
+          </span>
+        </div>
+      </div>
+    );
+  }
   const per = s.perSession ?? 0;
   const sub = s.perSubagent ?? 0;
   const same = per > 0 && sub > 0 && Math.abs(per - sub) <= 0.1 * Math.max(per, sub);
@@ -240,7 +273,7 @@ export function Savings({ s }: { s: InsightSaving }) {
         <div className="rec__save-main">
           <span className="rec__save-big mono">−{fmtTokens(lead)}</span>
           <span className="rec__save-cap">
-            {same ? t('rec.save.perBoth') : t('rec.save.perSession')}
+            {!per && sub ? t('rec.save.perSubOnly') : same ? t('rec.save.perBoth') : t('rec.save.perSession')}
             {!same && per > 0 && sub > 0 && <span className="rec__save-sub"> · {t('rec.save.perSub', { n: fmtTokens(sub) })}</span>}
           </span>
         </div>

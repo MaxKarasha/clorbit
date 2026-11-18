@@ -1,7 +1,7 @@
 // Internal server types: the summary of one .jsonl file, persisted in SQLite.
 import type { T4 } from './util';
 
-export const SUMMARY_VERSION = 7;
+export const SUMMARY_VERSION = 8;
 /**
  * The oldest summary version that is still loaded. Older-but-compatible rows of transcripts that still exist are
  * re-parsed on the next scan; archived ones (transcript gone) are kept as they are, so every field added since
@@ -14,6 +14,8 @@ export interface ToolAgg {
   calls: number; res: number; resN: number; max: number; last: number;
   /** Results flagged is_error (not counting the user declining a call). Optional: absent before v7. */
   err?: number;
+  /** Those errors by kind (ERROR_KINDS in scanner.ts: 'exit', 'notFound', 'notRead', …), no error text. Optional: v8+. */
+  errKinds?: Record<string, number>;
 }
 export interface HookAgg { n: number; ms: number; err: number }
 
@@ -38,7 +40,12 @@ export interface DayBucket {
 
 export interface PendingTool { name: string; label: string; ts: number }
 
-export interface SpawnInfo { ts: number; type: string; desc: string | null }
+export interface SpawnInfo {
+  ts: number; type: string; desc: string | null;
+  /** How the subagent ended, from the Agent call's result or a later task notification (background agents):
+   *  'ok' completed, 'error' failed, 'stopped' interrupted / killed by the user. Absent: unknown or still running. v8+. */
+  res?: 'ok' | 'error' | 'stopped';
+}
 
 export interface BigResult { tool: string; label: string; tokens: number; ts: number }
 
@@ -50,6 +57,10 @@ export interface SubagentMeta {
   finished: boolean | null;
   workflow: string | null;
   worktreePath: string | null;
+  /** meta.isBuiltIn: a built-in agent type (Explore, general-purpose, …) rather than a user, project or plugin agent. */
+  builtIn?: boolean | null;
+  /** meta.model: the model the agent was launched with ('opus', 'sonnet', 'haiku', 'inherit', a model id), when recorded. */
+  launchModel?: string | null;
 }
 
 /** Minimal state needed to resume parsing where it stopped. */
@@ -117,6 +128,9 @@ export interface FileSummary {
   /** Startup only: instruction files (CLAUDE.md, CLAUDE.local.md, rules, auto-memory) by path. v7+. */
   memoryFiles?: Record<string, MemoryFile>;
   spawns: Record<string, SpawnInfo>;      // toolUseId of an Agent call → info
+  /** How background tasks ended, from their task notifications, by task id (a background subagent's id is its
+   *  agentId): 'ok' | 'error' | 'stopped'. At most MAX_TASK_ENDS entries. v8+. */
+  taskEnds?: Record<string, 'ok' | 'error' | 'stopped'>;
   reads: Record<string, number>;          // path → how many times it was Read
   bigResults: BigResult[];
   carry: Carry;

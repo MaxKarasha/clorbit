@@ -76,6 +76,8 @@ export function readMeta(file: string): SubagentMeta | null {
       finished: typeof m.finished === 'boolean' ? m.finished : null,
       workflow: wf.startsWith('wf_') ? wf : null,
       worktreePath: m.worktreePath ?? null,
+      builtIn: typeof m.isBuiltIn === 'boolean' ? m.isBuiltIn : null,
+      launchModel: typeof m.model === 'string' && m.model ? m.model.slice(0, 64) : null,
     };
   } catch {
     return null;
@@ -111,10 +113,56 @@ export function detectPlugin(texts: (string | undefined)[], known: string[]): st
   return best;
 }
 
+const textOf = (content: unknown): string =>
+  typeof content === 'string' ? content : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join(' ') : '';
+
 /** A tool result that is an error only because the user declined or interrupted the call. */
 function declined(content: unknown): boolean {
-  const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join(' ') : '';
-  return /doesn't want to proceed|user rejected|was rejected|permission to use .* (has been|was) denied|interrupted by user|\[Request interrupted/i.test(text.slice(0, 400));
+  return /doesn't want to proceed|user rejected|was rejected|permission to use .* (has been|was) denied|interrupted by user|\[Request interrupted/i.test(textOf(content).slice(0, 400));
+}
+
+/**
+ * Kinds of tool errors, first match wins (only the first 400 characters are looked at; no error text is kept).
+ * Bash: unless Claude Code refused the call (<tool_use_error>), the result is the command's own output — 'timeout' or
+ * 'exit' (a non-zero exit: a failing test or a grep without matches is normal work).
+ */
+export const ERROR_KINDS: [string, RegExp][] = [
+  ['hook', /hook (?:error|blocked|denied)|blocked by (?:a |the )?hook|PreToolUse:|PostToolUse:/i],
+  ['notRead', /has not been read yet|read it first|must (?:first )?read/i],
+  ['modified', /modified since (?:it was )?(?:last )?read|has been (?:modified|changed) since/i],
+  ['notFound', /string to replace not found|old_string\b.*\bnot found|not found in (?:the )?file/i],
+  ['multiple', /found \d+ matches|more than one (?:match|occurrence)|not unique/i],
+  ['noFile', /does not exist|no such file|ENOENT|file not found|path not found/i],
+  ['tooLarge', /exceeds (?:the )?max|too large|too long|token limit/i],
+  ['timeout', /timed? ?out|timeout/i],
+  ['denied', /permission denied|EACCES|operation not permitted|not allowed|blocked/i],
+  ['input', /InputValidationError|invalid (?:tool )?(?:input|param)|validation (?:error|failed)|required parameter|unexpected parameter/i],
+  ['network', /ECONNREFUSED|ENOTFOUND|ECONNRESET|network error|fetch failed|status code [45]\d\d|HTTP [45]\d\d|\b(?:403|404|429|500|502|503) (?:Forbidden|Not Found|Too Many|Internal|Bad Gateway|Service)/i],
+  ['exit', /exit(?:ed with)? code [1-9]\d*/i],
+];
+
+export function errorKind(tool: string, content: unknown): string {
+  const text = textOf(content).slice(0, 400);
+  // A Bash error is the command's own output (a non-zero exit) unless Claude Code itself refused the call.
+  if (tool === 'Bash') return /<tool_use_error>/.test(text) ? errKindOf(text) : /timed? ?out/i.test(text.slice(0, 120)) ? 'timeout' : 'exit';
+  return errKindOf(text);
+}
+function errKindOf(text: string): string {
+  for (const [k, re] of ERROR_KINDS) if (re.test(text)) return k;
+  return 'other';
+}
+
+const MAX_TASK_ENDS = 500;
+
+/** `<task-notification>` of a background task: its task id, tool-use id and outcome. Unknown statuses → null. */
+export function taskNotification(text: string): { taskId: string | null; toolUseId: string | null; res: 'ok' | 'error' | 'stopped' } | null {
+  if (!text.includes('<task-notification>')) return null;
+  const st = /<status>\s*([\w-]+)\s*<\/status>/.exec(text)?.[1].toLowerCase();
+  const res = st === 'completed' ? 'ok' : st === 'failed' ? 'error' : st === 'stopped' || st === 'killed' ? 'stopped' : null;
+  if (!res) return null;
+  const taskId = /<task-id>\s*([\w.-]{1,80})\s*<\/task-id>/.exec(text)?.[1] ?? null;
+  const toolUseId = /<tool-use-id>\s*([\w.-]{1,80})\s*<\/tool-use-id>/.exec(text)?.[1] ?? null;
+  return taskId || toolUseId ? { taskId, toolUseId, res } : null;
 }
 
 /** Line parser for one file that updates its summary in place. */
@@ -289,7 +337,18 @@ export class FileScanner {
         const { b } = this.day(ts || p?.ts || Date.now());
         const ta = b.tools[name] ?? (b.tools[name] = { calls: 0, res: 0, resN: 0, max: 0, last: 0 });
         ta.res += tokens; ta.resN++; if (tokens > ta.max) ta.max = tokens;
-        if (blk.is_error === true && !declined(blk.content)) ta.err = (ta.err ?? 0) + 1;
+        const isDeclined = blk.is_error === true && declined(blk.content);
+        if (blk.is_error === true && !isDeclined) {
+          ta.err = (ta.err ?? 0) + 1;
+          const k = errorKind(name, blk.content);
+          const kinds = (ta.errKinds ??= {});
+          kinds[k] = (kinds[k] ?? 0) + 1;
+        }
+        const sp = id ? s.spawns[id] : undefined;
+        // Background agents answer "launched" at once; their outcome comes later as a task notification.
+        if (sp && !/async agent launched|running in the background/i.test(textOf(blk.content).slice(0, 200))) {
+          sp.res = isDeclined ? 'stopped' : blk.is_error === true ? 'error' : 'ok';
+        }
         if (tokens > BIG_RESULT) {
           s.bigResults.push({ tool: name, label: p?.label ?? name, tokens, ts });
           if (s.bigResults.length > MAX_BIG) {
@@ -298,6 +357,20 @@ export class FileScanner {
           }
         }
         if (id) { delete c.pending[id]; delete c.toolNames[id]; }
+      }
+    }
+    if (!hasResult) {
+      const n = taskNotification(typeof content === 'string' ? content : Array.isArray(content) ? textOf(content) : '');
+      if (n) {
+        const sp = n.toolUseId ? s.spawns[n.toolUseId] : undefined;
+        if (sp) sp.res = n.res;
+        if (n.taskId) {
+          const ends = (s.taskEnds ??= {});
+          delete ends[n.taskId];
+          ends[n.taskId] = n.res;
+          const keys = Object.keys(ends);
+          if (keys.length > MAX_TASK_ENDS) for (const k of keys.slice(0, keys.length - MAX_TASK_ENDS)) delete ends[k];
+        }
       }
     }
     if (!hasResult && !d.isMeta && !sidechain && d.type === 'user' && !d.sourceToolUseID) {

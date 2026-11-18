@@ -12,10 +12,10 @@ import type {
   Tokens,
   UsageRow,
 } from '@shared/api';
-import { locale, t, tp } from '../i18n';
+import { t, tp } from '../i18n';
 import type enMock from '../i18n/en/mock';
 import { MOCK_PLAN, mockLimits } from './limits';
-import { mockMcpRecommendations, mockSkillRecommendations, mockStartupRecommendations } from './recommendations';
+import { mockAgentRecommendations, mockMcpRecommendations, mockSkillRecommendations, mockStartupRecommendations, mockToolRecommendations } from './recommendations';
 import { rng, type Rng } from './rng';
 
 // Demo data for `?mock=1`. Every project, path and task below is invented.
@@ -696,27 +696,13 @@ export function mockSessionDetail(id: string, range: Range): SessionDetail {
 /** Demo insights; `unusedDays` is Settings.recommendations.unusedDays (the skills rules use it). */
 export function mockInsights(range: Range, unusedDays = 30): Insight[] {
   const at = mockAttribution(range);
-  const num = (n: number) => Math.round(n).toLocaleString(locale());
-  const bash = at.tools.find((x) => x.key === 'Bash');
   const skills = mockSkillRecommendations(range, unusedDays);
   return [
     ...skills,
     ...mockMcpRecommendations(range, unusedDays),
     ...mockStartupRecommendations(range, at, skills),
-    {
-      id: 'bash-results',
-      pages: ['tools'],
-      severity: 'warn',
-      title: t('mock.ins.bash.title'),
-      detail: t('mock.ins.bash.detail'),
-      evidence: [
-        t('mock.ins.bash.max', { n: num(Number(bash?.extra?.maxResult ?? 48000)) }),
-        t('mock.ins.bash.avg', { n: num(Number(bash?.extra?.avgResult ?? 1700)) }),
-        t('mock.ins.bash.often'),
-      ],
-      fix: 'pnpm build 2>&1 | tail -40\ngit diff --stat && git diff -- path/to/file',
-      estSavingTokens: 2_400_000,
-    },
+    ...mockToolRecommendations(range),
+    ...mockAgentRecommendations(range, at),
     {
       id: 'compactions',
       pages: ['sessions'],
@@ -725,18 +711,6 @@ export function mockInsights(range: Range, unusedDays = 30): Insight[] {
       detail: t('mock.ins.compact.detail'),
       evidence: [tp('mock.ins.compact.count', 9), t('mock.ins.compact.avg')],
       fix: t('mock.ins.compact.fix'),
-    },
-    {
-      id: 'reread',
-      pages: ['tools'],
-      severity: 'info',
-      title: t('mock.ins.reread.title'),
-      detail: t('mock.ins.reread.detail'),
-      evidence: [
-        tp('mock.ins.reread.reads', 46, { file: 'src/lib/api-client.ts' }),
-        tp('mock.ins.reread.reads', 31, { file: 'src/app/layout.tsx' }),
-        tp('mock.ins.reread.reads', 28, { file: 'package.json' }),
-      ],
     },
     {
       id: 'cache',

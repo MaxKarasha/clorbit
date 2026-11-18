@@ -45,6 +45,36 @@ function mcpSession(n: number, daysAgo: number) {
   fs.writeFileSync(path.join(claude, 'projects', '-work-app', `${sid(n)}.jsonl`), lines.join('\n') + '\n');
 }
 
+/** A session that re-reads one file, gets a huge Bash result and starts three read-only Explore subagents on Opus. */
+function toolSession(n: number, daysAgo: number) {
+  const ts = new Date(Date.now() - daysAgo * DAY).toISOString();
+  const dir = path.join(claude, 'projects', '-work-app');
+  const calls = [
+    ...Array.from({ length: 4 }, (_, i) => ({ type: 'tool_use', id: `rd${n}-${i}`, name: 'Read', input: { file_path: '/work/app/src/api.ts' } })),
+    { type: 'tool_use', id: `bs${n}`, name: 'Bash', input: { command: 'pnpm build' } },
+  ];
+  const results = calls.map((c) => ({ type: 'tool_result', tool_use_id: c.id, content: c.name === 'Bash' ? 'x'.repeat(90_000) : 'export const api = 1;' }));
+  const lines = [
+    JSON.stringify({
+      type: 'assistant', requestId: `tr${n}`, timestamp: ts, sessionId: sid(n), cwd: '/work/app',
+      message: { model: 'claude-opus-5-5', id: `tm${n}`, stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 }, content: calls },
+    }),
+    JSON.stringify({ type: 'user', timestamp: ts, sessionId: sid(n), cwd: '/work/app', message: { role: 'user', content: results } }),
+  ];
+  fs.writeFileSync(path.join(dir, `${sid(n)}.jsonl`), lines.join('\n') + '\n');
+  const subs = path.join(dir, sid(n), 'subagents');
+  fs.mkdirSync(subs, { recursive: true });
+  for (let k = 0; k < 3; k++) {
+    const id = `ex${n}${k}`;
+    fs.writeFileSync(path.join(subs, `agent-${id}.meta.json`), JSON.stringify({ agentType: 'Explore', isBuiltIn: true, spawnDepth: 1, model: 'opus' }));
+    fs.writeFileSync(path.join(subs, `agent-${id}.jsonl`), JSON.stringify({
+      type: 'assistant', requestId: `er${id}`, timestamp: ts, sessionId: sid(n), cwd: '/work/app', isSidechain: true,
+      message: { model: 'claude-opus-5-5', id: `em${id}`, stop_reason: 'end_turn', usage: { input_tokens: 400_000, output_tokens: 1 },
+        content: [{ type: 'tool_use', id: `g${id}`, name: 'Grep', input: { pattern: 'x' } }, { type: 'tool_use', id: `r${id}`, name: 'Read', input: { file_path: '/work/app/a.ts' } }] },
+    }) + '\n');
+  }
+}
+
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
@@ -76,6 +106,7 @@ beforeAll(async () => {
   session(3, 1, 'delta:d1');
   mcpSession(10, 45);
   mcpSession(11, 2);
+  toolSession(20, 1);
   // Claude Code's account file: only the MCP server names are read from it.
   fs.writeFileSync(path.join(tmp, 'claude.json'), JSON.stringify({ mcpServers: { pencil: { command: 'pencil-mcp', env: { TOKEN: 'secret' } } } }));
   const port = await freePort();
@@ -149,6 +180,37 @@ describe('GET /api/insights', () => {
     expect(list.some((i) => i.id === 'startup-total')).toBe(true);
     expect(list.some((i) => i.id.startsWith('unused-mcp:'))).toBe(true);
     expect(list.some((i) => i.id.startsWith('mcp-failing:'))).toBe(false);
+  });
+
+  it('?page=tools: re-reads and huge Bash results; permission prompts from hook events become allow rules', async () => {
+    const hook = (body: Record<string, unknown>) => fetch(`${base}/api/hook`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    for (let i = 0; i < 3; i++) {
+      const common = { session_id: 'hook-s', cwd: '/work/app', tool_name: 'Bash', tool_use_id: `hk${i}`, tool_input: { command: 'git status' } };
+      await hook({ hook_event_name: 'PermissionRequest', ...common });
+      await hook({ hook_event_name: 'PostToolUse', ...common, tool_response: { stdout: 'clean' } });
+    }
+    const list = await waitFor(async () => {
+      const l = await get(`${RANGE}&page=tools`);
+      return l.some((i) => i.id.startsWith('permission-allow:')) ? l : null;
+    }, 5000);
+    expect(list.every((i) => i.pages?.includes('tools'))).toBe(true);
+    const ids = list.map((i) => i.id.split(':')[0]);
+    for (const id of ['repeated-reads', 'big-outputs', 'permission-allow']) expect(ids).toContain(id);
+    const allow = list.find((i) => i.id.startsWith('permission-allow:'))!;
+    expect(allow.targets!.map((t) => t.key)).toEqual(['Bash(git status *)']);
+    expect(allow.prompts!.all).toContain('Add "Bash(git status *)" to "permissions.allow" in /work/app/.claude/settings.local.json');
+    expect(list.find((i) => i.id.startsWith('big-outputs:'))!.prompts!.all).toMatch(/"Output hygiene" section of .*CLAUDE\.md/);
+  });
+
+  it('?page=subagents: read-only Explore agents on Opus → Sonnet; ?lang=uk', async () => {
+    const list = await get(`${RANGE}&page=subagents`);
+    expect(list.every((i) => i.pages?.includes('subagents'))).toBe(true);
+    const model = list.find((i) => i.id.startsWith('agent-model:'))!;
+    expect(model.targets!.map((t) => t.key)).toEqual(['Explore']);
+    expect(model.saving!.costShare).toBeCloseTo(0.5);
+    expect(model.prompts!.all).toContain('Start Explore subagents for searches and lookups with model "sonnet"');
+    const uk = (await get(`${RANGE}&page=subagents&lang=uk`)).find((i) => i.id.startsWith('agent-model:'))!;
+    expect(uk.title).toMatch(/Субагент Explore лише читає/);
   });
 
   it('?unusedDays overrides the threshold; ?lang=uk words the prompts in Ukrainian', async () => {

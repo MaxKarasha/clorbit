@@ -1,7 +1,7 @@
 // The prompt builder: both variants, both languages, exact commands, the safety rules.
 import { describe, expect, it } from 'vitest';
 import {
-  buildPrompts, compressInstructionsItem, consolidateMemoryItem, disableClaudeAiConnectorsItem, disableMcpJsonServerItem, disablePluginItem,
+  agentModelItem, allowRuleItem, buildPrompts, instructionNoteItem, compressInstructionsItem, consolidateMemoryItem, disableClaudeAiConnectorsItem, disableMcpJsonServerItem, disablePluginItem,
   enablePluginInProjectItem, moveMcpToProjectsItem, moveSkillItem, PROMPT_NOTES, removeMcpServerItem, reviewItem, shq, type PromptLang,
 } from '../prompts';
 
@@ -115,4 +115,32 @@ describe('shq', () => {
     expect(shq('~/my dir/$x')).toBe('"$HOME/my dir/\\$x"');
     expect(shq("/tmp/it's")).toBe(`'/tmp/it'\\''s'`);
   });
+});
+
+describe('allow rules, instruction notes, subagent models', () => {
+  for (const lang of ['en', 'uk'] as const) {
+    it(`${lang}: exact rule, file and line; every file backed up; the allow rules' safety notes`, () => {
+      const p = buildPrompts({
+        lang,
+        summary: 'x',
+        items: [
+          allowRuleItem(lang, { rule: 'Bash(git status *)', file: '~/code/app/.claude/settings.local.json', why: 'approved 9 times' }),
+          instructionNoteItem(lang, { name: 'tail', file: '~/.claude/CLAUDE.md', section: 'Output hygiene', text: 'Pipe long output through | tail -n 40.', why: 'Bash: 6 results over 20K' }),
+          agentModelItem(lang, { name: 'code-reviewer', file: '~/.claude/agents/code-reviewer.md', model: 'sonnet', why: 'read-only' }),
+        ],
+        notes: [...PROMPT_NOTES[lang].allow, ...PROMPT_NOTES[lang].note('~/.claude/CLAUDE.md'), ...PROMPT_NOTES[lang].agentModel],
+      });
+      for (const text of [p.all, p.ask]) {
+        expect(text).toContain('"Bash(git status *)"');
+        expect(text).toContain('"permissions.allow"');
+        expect(text).toContain('"Output hygiene"');
+        expect(text).toContain('"Pipe long output through | tail -n 40."');
+        expect(text).toContain('"model: sonnet"');
+        for (const f of ['~/code/app/.claude/settings.local.json', '~/.claude/CLAUDE.md', '~/.claude/agents/code-reviewer.md']) expect(text).toContain(`cp ${f} ${f}.bak-$(date +%Y%m%d-%H%M%S)`);
+        expect(text).toContain('Bash(*)');
+        expect(text).not.toMatch(/\brm\b/);
+        if (lang === 'uk') expect(text).not.toMatch(/[ыэъё]/i);
+      }
+    });
+  }
 });

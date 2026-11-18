@@ -35,6 +35,36 @@ export interface RecommendEnv {
   mcp: McpConfig;
   /** Display path of Claude Code's ~/.claude.json (user- and local-scope MCP servers live there). */
   claudeJsonFile: string;
+  /** Display path of your global CLAUDE.md ('~/.claude/CLAUDE.md'). */
+  userClaudeMd: string;
+  /** The definition file of a user or project subagent (display path), or null: a project's .claude/agents/<name>.md
+   *  (projects in `dirs`, which take precedence) or ~/.claude/agents/<name>.md, also matched by the frontmatter name. */
+  agentFile: (name: string, dirs: string[]) => string | null;
+}
+
+/** `name:` of a subagent file's frontmatter (only the first lines are read). */
+function frontmatterName(file: string): string | null {
+  try {
+    const head = fs.readFileSync(file, 'utf8').slice(0, 2000);
+    const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(head);
+    const n = m && /^name:\s*["']?([^"'\r\n]+?)["']?\s*$/m.exec(m[1]);
+    return n ? n[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Finds a subagent definition by file name or frontmatter name in the given agents folders (read-only). */
+export function findAgentFile(name: string, folders: string[]): string | null {
+  if (!/^[\w.-]+$/.test(name)) return null;
+  for (const dir of folders) {
+    const direct = path.join(dir, `${name}.md`);
+    if (fs.existsSync(direct)) return direct;
+    let list: string[] = [];
+    try { list = fs.readdirSync(dir).filter((f) => f.endsWith('.md')).sort(); } catch { continue; }
+    for (const f of list) if (frontmatterName(path.join(dir, f)) === name) return path.join(dir, f);
+  }
+  return null;
 }
 
 /** '/Users/me/.claude' → '~/.claude' (prompts are easier to read and do not leak the user name). */
@@ -54,6 +84,11 @@ export function defaultEnv(o: { now?: number; unusedDays: number }): RecommendEn
     ownSkillExists: (name) => /^[\w.-]+$/.test(name) && fs.existsSync(path.join(skills, name)),
     mcp: readMcpConfig(),
     claudeJsonFile: homeDisplay(CLAUDE_JSON_FILES[0]),
+    userClaudeMd: homeDisplay(path.join(CLAUDE_DIR, 'CLAUDE.md')),
+    agentFile: (name, dirs) => {
+      const f = findAgentFile(name, [...dirs.map((d) => path.join(d, '.claude', 'agents')), path.join(CLAUDE_DIR, 'agents')]);
+      return f ? homeDisplay(f) : null;
+    },
   };
 }
 

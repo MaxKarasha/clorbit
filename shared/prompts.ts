@@ -141,6 +141,12 @@ const ACTIONS = {
     compress: (file: string) => `Compress ${file} without losing meaning`,
     consolidateMemory: (file: string) => `Consolidate the auto-memory index ${file}`,
     backupOf: (file: string) => `<the backup of ${file}>`,
+    allow: (rule: string, file: string) => `Add "${rule}" to "permissions.allow" in ${file} (create the file or the list if missing; keep every other entry)`,
+    undoAllow: (rule: string) => `remove "${rule}" from "permissions.allow" again`,
+    note: (file: string, section: string, text: string) => `Add one line to the "${section}" section of ${file} (create the section at the end if it is missing): "${text}"`,
+    undoNote: 'remove that line again (or restore the backup)',
+    agentModel: (name: string, file: string, model: string) => `Run the subagent ${name} on ${model}: set "model: ${model}" in the frontmatter of ${file} (replace an existing model line)`,
+    undoAgentModel: 'put the previous model line back (or restore the backup)',
   },
   uk: {
     disablePlugin: (key: string) => `Вимкнути плагін ${key}`,
@@ -156,6 +162,12 @@ const ACTIONS = {
     compress: (file: string) => `Стиснути ${file} без втрати змісту`,
     consolidateMemory: (file: string) => `Упорядкувати індекс автопам'яті ${file}`,
     backupOf: (file: string) => `<копія ${file}>`,
+    allow: (rule: string, file: string) => `Додати "${rule}" до "permissions.allow" у ${file} (створити файл або список, якщо їх немає; решту записів не чіпати)`,
+    undoAllow: (rule: string) => `знову прибрати "${rule}" з "permissions.allow"`,
+    note: (file: string, section: string, text: string) => `Додати один рядок у розділ "${section}" файлу ${file} (якщо розділу немає — створити його в кінці): "${text}"`,
+    undoNote: 'прибрати цей рядок (або відновити копію)',
+    agentModel: (name: string, file: string, model: string) => `Запускати субагента ${name} на ${model}: поставити "model: ${model}" у frontmatter файлу ${file} (замінити наявний рядок model)`,
+    undoAgentModel: 'повернути попередній рядок model (або відновити копію)',
   },
 };
 
@@ -174,6 +186,18 @@ export const PROMPT_NOTES = {
       'Move memory files that are clearly outdated into an "archive" folder next to them (do not delete them) and drop their lines from the index; ask me when unsure.',
       'Show me the before/after size of the index (wc -c).',
     ],
+    allow: [
+      'Edit only the "permissions.allow" lists: keep the rest of each file as it is and keep it valid JSON (check it with jq . or node -e "JSON.parse(require(\'fs\').readFileSync(0, \'utf8\'))" < file).',
+      'Add exactly the rules listed, nothing broader: no Bash(*), no rules for commands that delete, move, push, install, publish or download and run code (removing files, git push, sudo, curl … | sh and the like). "deny" rules always win over "allow", so do not touch existing deny rules.',
+      'Rules in a project\'s .claude/settings.local.json apply only in that project (and only once the folder is trusted); they are not committed.',
+    ],
+    note: (file: string) => [
+      `Keep the additions to ${file} short: one line per item, no new sections besides the ones named, nothing else in the file changes.`,
+    ],
+    agentModel: [
+      'A subagent\'s "model" field takes sonnet, opus, haiku, fable, inherit or a full model id; a model passed by the Agent call itself still wins over it.',
+      'Do not change the agent\'s tools, prompt or description.',
+    ],
   },
   uk: {
     mcpRemove: (file: string) => `Прибрати запис MCP-сервера командою "claude mcp remove" — єдине дозволене тут видалення, і лише після копії ${file}; у звіті наведи JSON-конфігурацію кожного прибраного сервера, щоб його можна було повернути.`,
@@ -187,6 +211,18 @@ export const PROMPT_NOTES = {
       'Збережи кожен спогад, що досі правдивий. Об\'єднай дублікати й майже дублікати, лиши в індексі по одному короткому рядку на запис, виправ записи, що вказують на відсутні файли.',
       'Явно застарілі файли пам\'яті перенеси в теку "archive" поруч (не видаляй) і прибери їхні рядки з індексу; якщо сумніваєшся — спитай мене.',
       'Покажи розмір індексу до й після (wc -c).',
+    ],
+    allow: [
+      'Змінюй лише списки "permissions.allow": решту кожного файлу лиши як є, JSON має лишитися коректним (перевір через jq . або node -e "JSON.parse(require(\'fs\').readFileSync(0, \'utf8\'))" < файл).',
+      'Додай рівно перелічені правила, нічого ширшого: жодного Bash(*), жодних правил для команд, що видаляють, переносять, пушать, встановлюють, публікують або завантажують і запускають код (видалення файлів, git push, sudo, curl … | sh тощо). Правила "deny" завжди сильніші за "allow", тож наявних deny не чіпай.',
+      'Правила в .claude/settings.local.json проєкту діють лише в цьому проєкті (і лише коли теці довіряють); їх не комітять.',
+    ],
+    note: (file: string) => [
+      `Додавання в ${file} — коротко: один рядок на пункт, жодних нових розділів, крім названих, решта файлу не змінюється.`,
+    ],
+    agentModel: [
+      'Поле "model" субагента приймає sonnet, opus, haiku, fable, inherit або повний id моделі; модель, передана самим викликом Agent, усе одно має перевагу.',
+      'Не змінюй інструменти, промпт чи опис агента.',
     ],
   },
 };
@@ -319,4 +355,22 @@ export function consolidateMemoryItem(lang: PromptLang, o: { path: string; why: 
     undo: [`cp ${ACTIONS[lang].backupOf(o.path)} ${shq(o.path)}`],
     files: [o.path],
   };
+}
+
+// ---------- permissions, instruction notes, subagent models ----------
+
+/** Adds one allow rule to a settings file's `permissions.allow` (the file is backed up first). The rule is not checked
+ *  here: callers pass only rules that passed `isSafeAllowRule` (server/recommend-tools.ts). */
+export function allowRuleItem(lang: PromptLang, o: { rule: string; file: string; why: string }): PromptItem {
+  return { name: `${o.rule} → ${o.file}`, action: ACTIONS[lang].allow(o.rule, o.file), why: o.why, undo: [ACTIONS[lang].undoAllow(o.rule)], files: [o.file] };
+}
+
+/** One line in a named section of an instruction file (CLAUDE.md), backed up first. */
+export function instructionNoteItem(lang: PromptLang, o: { name: string; file: string; section: string; text: string; why: string }): PromptItem {
+  return { name: o.name, action: ACTIONS[lang].note(o.file, o.section, o.text), why: o.why, undo: [ACTIONS[lang].undoNote], files: [o.file] };
+}
+
+/** `model: <model>` in the frontmatter of a user or project subagent file, backed up first. */
+export function agentModelItem(lang: PromptLang, o: { name: string; file: string; model: string; why: string }): PromptItem {
+  return { name: o.name, action: ACTIONS[lang].agentModel(o.name, o.file, o.model), why: o.why, undo: [ACTIONS[lang].undoAgentModel], files: [o.file] };
 }

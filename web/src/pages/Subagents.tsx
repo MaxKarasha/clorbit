@@ -5,6 +5,7 @@ import { branchColor } from '../lib/colors';
 import { fmtAgo, fmtCompact, fmtDuration, fmtInt, fmtTokens } from '../lib/format';
 import Bubble from '../components/charts/Bubble';
 import RankList from '../components/RankList';
+import Recommendations from '../components/Recommendations';
 import { Empty, PageHeader, Panel, TipRow } from '../components/ui';
 import { Eyebrow, Guard, useRangeApi } from './common';
 
@@ -17,6 +18,7 @@ export default function Subagents() {
         title={t('sub.title')}
         lede={t('sub.lede')}
       />
+      <Recommendations page="subagents" />
       <Guard state={q}>{(d) => <Body d={d} />}</Guard>
     </>
   );

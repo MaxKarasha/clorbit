@@ -1,13 +1,14 @@
-// Demo recommendations for the "Skills & plugins", "MCP" and "Startup context" tabs. Same shape and prompt builder
-// as the server's rules (server/recommend-skills.ts, recommend-mcp.ts, recommend-startup.ts); every plugin, skill,
+// Demo recommendations for the "Skills & plugins", "MCP", "Startup context", "Tools" and "Subagents" tabs. Same shape and prompt builder
+// as the server's rules (server/recommend-skills.ts, recommend-mcp.ts, recommend-startup.ts, recommend-tools.ts,
+// recommend-agents.ts); every plugin, skill,
 // server, file and project here is invented. Deterministic for a given range, threshold and day.
 import type { AttributionReport, Insight, InsightTarget, Range } from '@shared/api';
 import {
-  buildPrompts, compressInstructionsItem, consolidateMemoryItem, disableMcpJsonServerItem, disablePluginItem, enablePluginInProjectItem,
-  moveMcpToProjectsItem, moveSkillItem, PROMPT_NOTES, removeMcpServerItem, reviewItem,
+  agentModelItem, allowRuleItem, buildPrompts, compressInstructionsItem, consolidateMemoryItem, disableMcpJsonServerItem, disablePluginItem,
+  enablePluginInProjectItem, instructionNoteItem, moveMcpToProjectsItem, moveSkillItem, PROMPT_NOTES, removeMcpServerItem, reviewItem,
 } from '@shared/prompts';
 import { getLang, t } from '../i18n';
-import { fmtTokens } from '../lib/format';
+import { fmtDuration, fmtPct, fmtTokens } from '../lib/format';
 
 const DAY = 86_400_000;
 const SETTINGS = '~/.claude/settings.json';
@@ -471,5 +472,270 @@ export function mockStartupRecommendations(range: Range, at: AttributionReport, 
   }
 
   for (const r of out) if (r.id !== 'startup-skill-listing') r.estSavingTokens = r.saving?.period;
+  return out;
+}
+
+const CLAUDE_MD = '~/.claude/CLAUDE.md';
+const AURORA = '~/code/aurora-web';
+
+/** Demo recommendations for the Tools tab: allow rules for prompts you keep approving, re-reads, huge outputs, a failing tool. */
+export function mockToolRecommendations(range: Range): Insight[] {
+  const lang = getLang();
+  const d = days(range);
+  const out: Insight[] = [];
+
+  // A. Permission prompts you always approve (from hooks).
+  {
+    const rules = [
+      { rule: 'Bash(git status *)', n: Math.max(4, Math.round(d * 6.2)), per: 9_000, s: Math.max(2, Math.round(d * 2.1)), file: SETTINGS, where: t('mock.rec.tools.allow.user') },
+      { rule: 'Bash(pnpm test *)', n: Math.max(3, Math.round(d * 3.4)), per: 14_000, s: Math.max(2, Math.round(d * 1.2)), file: `${AURORA}/.claude/settings.local.json`, where: t('mock.rec.tools.allow.local', { project: 'aurora-web' }) },
+      { rule: 'Bash(pnpm run typecheck *)', n: Math.max(3, Math.round(d * 2.1)), per: 11_000, s: Math.max(2, Math.round(d * 0.9)), file: `${AURORA}/.claude/settings.local.json`, where: t('mock.rec.tools.allow.local', { project: 'aurora-web' }) },
+      { rule: 'WebFetch(domain:developer.mozilla.org)', n: Math.max(2, Math.round(d * 0.8)), per: 16_000, s: Math.max(2, Math.round(d * 0.5)), file: SETTINGS, where: t('mock.rec.tools.allow.user') },
+      { rule: 'mcp__github__get_pull_request', n: Math.max(2, Math.round(d * 0.6)), per: 21_000, s: Math.max(2, Math.round(d * 0.4)), file: SETTINGS, where: t('mock.rec.tools.allow.user') },
+    ];
+    const n = rules.reduce((x, r) => x + r.n, 0);
+    const waitMs = rules.reduce((x, r) => x + r.n * r.per, 0);
+    out.push({
+      id: 'permission-allow:demo',
+      severity: waitMs >= 3_600_000 ? 'warn' : 'info',
+      title: t('mock.rec.tools.allow.title', { n, rules: rules.length }),
+      detail: t('mock.rec.tools.allow.detail'),
+      evidence: [
+        ...rules.map((r) => t('mock.rec.tools.allow.evidence', { rule: r.rule, n: r.n, s: r.s, t: fmtDuration(r.n * r.per) })),
+        t('mock.rec.tools.allow.skipped', { n: Math.max(2, Math.round(d * 0.7)), list: 'Bash: git push, Edit' }),
+      ],
+      pages: ['tools'],
+      scope: 'range',
+      saving: { waitMs, days: d, basis: 'range' },
+      targets: rules.map((r): InsightTarget => ({ key: r.rule, label: r.rule, kind: 'rule', note: `${r.n}× · ≈ ${fmtDuration(r.n * r.per)} · ${r.where}` })),
+      prompts: buildPrompts({
+        lang,
+        summary: t('mock.rec.tools.allow.summary', { n, rules: rules.length }),
+        items: rules.map((r) => allowRuleItem(lang, { rule: r.rule, file: r.file, why: t('mock.rec.tools.allow.why', { n: r.n, s: r.s, t: fmtDuration(r.n * r.per) }) })),
+        notes: PROMPT_NOTES[lang].allow,
+      }),
+    });
+  }
+
+  // B. Repeated reads: a reference file read in many sessions gets a note, the rest is a review.
+  {
+    const s = Math.max(3, Math.round(d * 0.9));
+    const files = [
+      { file: `${AURORA}/src/lib/api-client.ts`, rel: 'src/lib/api-client.ts', n: 7, extra: Math.max(6, Math.round(d * 3.2)), sessions: s, title: 'Fix the token refresh race' },
+      { file: `${AURORA}/src/app/layout.tsx`, rel: 'src/app/layout.tsx', n: 5, extra: 4, sessions: 1, title: 'Dark mode for the settings page' },
+    ];
+    const extra = files.reduce((x, f) => x + f.extra, 0);
+    const avg = 2100;
+    const tokens = extra * avg;
+    out.push({
+      id: 'repeated-reads:demo',
+      severity: tokens >= 2e6 ? 'warn' : 'info',
+      title: t('mock.rec.tools.reread.title', { n: files.length, s: s + 1 }),
+      detail: t('mock.rec.tools.reread.detail', { extra: num(extra), avg: num(avg) }),
+      evidence: files.map((f) => t('mock.rec.tools.reread.evidence', { file: f.rel.split('/').pop()!, n: f.n, title: f.title, more: f.sessions - 1 })),
+      estSavingTokens: tokens,
+      pages: ['tools'],
+      scope: 'range',
+      saving: { period: tokens, days: d, basis: 'range' },
+      targets: files.map((f): InsightTarget => ({ key: f.file, label: f.file, kind: 'file', note: `${f.extra} × · ${f.sessions}` })),
+      prompts: buildPrompts({
+        lang,
+        summary: t('mock.rec.tools.reread.summary', { n: files.length, s: s + 1 }),
+        items: [
+          instructionNoteItem(lang, { name: files[0].file, file: `${AURORA}/CLAUDE.md`, section: t('mock.rec.tools.reread.section'), text: t('mock.rec.tools.reread.noteText', { file: files[0].rel }), why: t('mock.rec.tools.reread.whyNote', { s: files[0].sessions, extra: files[0].extra }) }),
+          reviewItem({ name: files[1].file, action: t('mock.rec.tools.reread.action', { file: files[1].file }), why: t('mock.rec.tools.reread.whyReview', { n: files[1].n, title: files[1].title }) }),
+        ],
+        notes: PROMPT_NOTES[lang].note('CLAUDE.md'),
+      }),
+    });
+  }
+
+  // C. Huge Bash and Grep outputs: an "Output hygiene" section in the user CLAUDE.md, one tip per item.
+  {
+    const bash = { n: Math.max(4, Math.round(d * 1.6)), max: 48_000 };
+    const grep = { n: Math.max(2, Math.round(d * 0.5)), max: 31_000 };
+    const n = bash.n + grep.n;
+    const sum = bash.n * 29_000 + grep.n * 24_000;
+    const period = sum - n * 5000;
+    const section = t('mock.rec.tools.big.section');
+    const why = (tool: string, x: { n: number; max: number }) => t('mock.rec.tools.big.why', { tool, n: x.n, max: num(x.max) });
+    out.push({
+      id: 'big-outputs:demo',
+      severity: period > 2e6 ? 'high' : period > 3e5 ? 'warn' : 'info',
+      title: t('mock.rec.tools.big.title', { n, max: num(bash.max) }),
+      detail: t('mock.rec.tools.big.detail', { sum: num(sum) }),
+      evidence: [
+        t('mock.rec.tools.big.example', { label: 'Bash: pnpm build', n: num(bash.max), project: 'aurora-web' }),
+        t('mock.rec.tools.big.example', { label: 'Bash: git diff', n: num(36_000), project: 'billing-service' }),
+        t('mock.rec.tools.big.example', { label: 'Grep "useAuth"', n: num(grep.max), project: 'aurora-web' }),
+      ],
+      estSavingTokens: period,
+      pages: ['tools'],
+      scope: 'range',
+      saving: { period, days: d, basis: 'range' },
+      targets: [
+        { key: 'Bash', label: 'Bash', kind: 'tool', note: `${bash.n}× > 20K · ${num(bash.max)}` },
+        { key: 'Grep', label: 'Grep', kind: 'tool', note: `${grep.n}× > 20K · ${num(grep.max)}` },
+      ],
+      prompts: buildPrompts({
+        lang,
+        summary: t('mock.rec.tools.big.summary', { n }),
+        items: [
+          ...(['tipTail', 'tipQuiet', 'tipTests'] as const).map((k) =>
+            instructionNoteItem(lang, { name: t(`mock.rec.tools.big.${k}`), file: CLAUDE_MD, section, text: t(`mock.rec.tools.big.${k}`), why: why('Bash', bash) })),
+          instructionNoteItem(lang, { name: t('mock.rec.tools.big.tipGrep'), file: CLAUDE_MD, section, text: t('mock.rec.tools.big.tipGrep'), why: why('Grep', grep) }),
+        ],
+        notes: PROMPT_NOTES[lang].note(CLAUDE_MD),
+      }),
+    });
+  }
+
+  // D. A built-in tool that often fails.
+  {
+    const calls = Math.max(40, Math.round(d * 38));
+    const err = Math.round(calls * 0.21);
+    const a = Math.round(err * 0.6);
+    const pct = fmtPct(err / calls, 0);
+    const facts = t('mock.rec.tools.fail.facts', { err, calls, pct, a, b: err - a });
+    out.push({
+      id: 'failing-tools:demo',
+      severity: 'info',
+      title: t('mock.rec.tools.fail.title', { pct }),
+      detail: t('mock.rec.tools.fail.detail'),
+      evidence: [`Edit: ${facts}`],
+      pages: ['tools'],
+      scope: 'range',
+      targets: [{ key: 'Edit', label: 'Edit', kind: 'tool', note: facts }],
+      prompts: buildPrompts({
+        lang,
+        summary: t('mock.rec.tools.fail.summary'),
+        items: [reviewItem({ name: 'Edit', action: t('mock.rec.tools.fail.action'), why: t('mock.rec.tools.fail.why', { facts }) })],
+      }),
+    });
+  }
+  return out;
+}
+
+/** Demo recommendations for the Subagents tab. `at` gives the demo period's subagent types. */
+export function mockAgentRecommendations(range: Range, at: AttributionReport, now = Date.now()): Insight[] {
+  const lang = getLang();
+  const d = days(range);
+  const out: Insight[] = [];
+  const type = (k: string) => at.subagentTypes.find((r) => r.key === k);
+
+  // A. Read-only agent types on Opus: built-ins through a CLAUDE.md line, an own agent in its file.
+  {
+    const mixes: Record<string, string> = { Explore: 'Grep 41%, Read 38%, Glob 17%', 'web-fetch': 'WebFetch 72%, WebSearch 21%, Read 7%', 'code-reviewer': 'Read 55%, Grep 30%, Bash 15%' };
+    const rows = (['Explore', 'web-fetch', 'code-reviewer'] as const).map((k) => {
+      const r = type(k);
+      const runs = r?.calls ?? 1;
+      const total = r?.total ?? 0;
+      return { k, runs, total, per: Number(r?.extra?.avgTokens ?? 0), saving: Math.round(total * 0.5), mix: mixes[k] };
+    });
+    const period = rows.reduce((n, r) => n + r.saving, 0);
+    const facts = (r: (typeof rows)[number]) => t('mock.rec.agents.model.facts', { runs: r.runs, per: num(r.per), mix: r.mix });
+    const why = (r: (typeof rows)[number]) => t('mock.rec.agents.model.why', { facts: facts(r), n: num(r.saving) });
+    const section = t('mock.rec.agents.model.section');
+    out.push({
+      id: 'agent-model:demo',
+      severity: period >= 20e6 ? 'high' : period >= 2e6 ? 'warn' : 'info',
+      title: t('mock.rec.agents.model.title'),
+      detail: t('mock.rec.agents.model.detail'),
+      evidence: rows.map((r) => `${r.k}: ${facts(r)}`),
+      estSavingTokens: period,
+      pages: ['subagents'],
+      scope: 'range',
+      saving: { period, days: d, basis: 'range', costShare: 0.5 },
+      targets: rows.map((r): InsightTarget => ({
+        key: r.k, label: r.k, kind: 'agent',
+        note: `${facts(r)} · ${r.k === 'code-reviewer' ? '~/.claude/agents/code-reviewer.md' : t('mock.rec.agents.model.builtInLabel')}`,
+      })),
+      prompts: buildPrompts({
+        lang,
+        summary: t('mock.rec.agents.model.summary'),
+        items: rows.map((r) => r.k === 'code-reviewer'
+          ? agentModelItem(lang, { name: r.k, file: '~/.claude/agents/code-reviewer.md', model: 'sonnet', why: why(r) })
+          : instructionNoteItem(lang, { name: r.k, file: CLAUDE_MD, section, text: t('mock.rec.agents.model.noteText', { type: r.k }), why: `${why(r)}. ${t('mock.rec.agents.model.builtIn', { type: r.k })}` })),
+        notes: [...PROMPT_NOTES[lang].agentModel, ...PROMPT_NOTES[lang].note(CLAUDE_MD)],
+      }),
+    });
+  }
+
+  // B. Short subagents dominated by their startup context.
+  {
+    const total = Math.round(d * SUBAGENTS_PER_DAY);
+    const n = Math.round(total * 0.38);
+    const per = 21_000;
+    const period = Math.round(n * per * 0.5);
+    out.push({
+      id: 'agent-startup:demo',
+      severity: period >= 2e6 ? 'warn' : 'info',
+      title: t('mock.rec.agents.startup.title', { n: num(n), total: num(total) }),
+      detail: t('mock.rec.agents.startup.detail'),
+      evidence: [
+        t('mock.rec.agents.startup.evidence', { type: 'Explore', n: num(Math.round(n * 0.62)), per: num(per), pct: '74%' }),
+        t('mock.rec.agents.startup.evidence', { type: 'web-fetch', n: num(Math.round(n * 0.38)), per: num(19_000), pct: '66%' }),
+      ],
+      estSavingTokens: period,
+      pages: ['subagents'],
+      scope: 'range',
+      saving: { perSubagent: per, period, days: d, basis: 'range' },
+      targets: [
+        { key: 'Explore', label: 'Explore', kind: 'agent', note: `${num(Math.round(n * 0.62))} · ≈ ${num(per)}` },
+        { key: 'web-fetch', label: 'web-fetch', kind: 'agent', note: `${num(Math.round(n * 0.38))} · ≈ ${num(19_000)}` },
+      ],
+      prompts: buildPrompts({
+        lang,
+        summary: t('mock.rec.agents.startup.summary', { n: num(n) }),
+        items: [instructionNoteItem(lang, { name: t('mock.rec.agents.startup.name'), file: CLAUDE_MD, section: t('mock.rec.agents.model.section'), text: t('mock.rec.agents.startup.noteText'), why: t('mock.rec.agents.startup.why', { n: num(n), per: num(per) }) })],
+        notes: PROMPT_NOTES[lang].note(CLAUDE_MD),
+      }),
+      seeAlso: 'startup',
+    });
+  }
+
+  // C. A burst of subagents in one session.
+  {
+    const title = 'Audit every API route for auth checks';
+    const facts = t('mock.rec.agents.nest.facts', { total: 64, burst: 41, date: iso(now - 2 * DAY) });
+    out.push({
+      id: 'agent-nesting:demo',
+      severity: 'warn',
+      title: t('mock.rec.agents.nest.title'),
+      detail: t('mock.rec.agents.nest.detail'),
+      evidence: [`“${title}”: ${facts}`],
+      pages: ['subagents'],
+      scope: 'range',
+      targets: [{ key: 'demo-burst-session', label: title, kind: 'session', note: facts }],
+      prompts: buildPrompts({
+        lang,
+        summary: t('mock.rec.agents.nest.summary'),
+        items: [reviewItem({ name: title, action: t('mock.rec.agents.nest.action', { title }), why: t('mock.rec.agents.nest.why', { facts }) })],
+      }),
+    });
+  }
+
+  // D. An agent type that often fails or gets stopped.
+  {
+    const known = Math.max(8, Math.round((type('general-purpose')?.calls ?? 20) * 0.7));
+    const err = Math.round(known * 0.24);
+    const stopped = Math.round(known * 0.12);
+    const facts = t('mock.rec.agents.fail.facts', { err, stopped, known });
+    out.push({
+      id: 'agent-failing:demo',
+      severity: 'info',
+      title: t('mock.rec.agents.fail.title', { pct: fmtPct((err + stopped) / known, 0) }),
+      detail: t('mock.rec.agents.fail.detail'),
+      evidence: [`general-purpose: ${facts}`],
+      pages: ['subagents'],
+      scope: 'range',
+      targets: [{ key: 'general-purpose', label: 'general-purpose', kind: 'agent', note: facts }],
+      prompts: buildPrompts({
+        lang,
+        summary: t('mock.rec.agents.fail.summary'),
+        items: [reviewItem({ name: 'general-purpose', action: t('mock.rec.agents.fail.action'), why: t('mock.rec.agents.fail.why', { facts }) })],
+      }),
+    });
+  }
   return out;
 }

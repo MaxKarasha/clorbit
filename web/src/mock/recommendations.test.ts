@@ -100,3 +100,48 @@ describe('demo recommendations: MCP and Startup context', () => {
     setLang('en');
   });
 });
+
+describe('demo recommendations: Tools and Subagents', () => {
+  const at = (page: string) => mockResolve(`/api/insights?from=${range.from}&to=${range.to}&page=${page}&unusedDays=30`) as Insight[];
+
+  it('the Tools tab: allow rules with the waiting time, re-reads, output hygiene, a failing tool, the MCP heavy results', () => {
+    setLang('en');
+    const list = at('tools');
+    expect(list.every((i) => i.pages?.includes('tools'))).toBe(true);
+    expect(list.map((i) => i.id.split(':')[0]).sort()).toEqual(['big-outputs', 'big-results-mcp', 'failing-tools', 'permission-allow', 'repeated-reads']);
+    const allow = list.find((i) => i.id.startsWith('permission-allow:'))!;
+    expect(allow.saving!.waitMs).toBeGreaterThan(60_000);
+    expect(allow.prompts!.all).toContain('Add "Bash(git status *)" to "permissions.allow" in ~/.claude/settings.json');
+    expect(allow.prompts!.all).toContain('Add "Bash(pnpm test *)" to "permissions.allow" in ~/code/aurora-web/.claude/settings.local.json');
+    expect(allow.prompts!.all).toContain('cp ~/code/aurora-web/.claude/settings.local.json ~/code/aurora-web/.claude/settings.local.json.bak-');
+    const big = list.find((i) => i.id.startsWith('big-outputs:'))!;
+    expect(big.prompts!.ask).toContain('"Output hygiene" section of ~/.claude/CLAUDE.md');
+    for (const i of list) {
+      expect(i.prompts?.ask).toContain('AskUserQuestion');
+      expect(i.prompts!.all).not.toMatch(/\brm\b/);
+    }
+  });
+
+  it('the Subagents tab: a cheaper model (share of cost), startup overhead pointing to Startup, a burst, failing agents', () => {
+    setLang('en');
+    const list = at('subagents');
+    expect(list.map((i) => i.id).sort()).toEqual(['agent-failing:demo', 'agent-model:demo', 'agent-nesting:demo', 'agent-startup:demo']);
+    const model = list.find((i) => i.id === 'agent-model:demo')!;
+    expect(model.saving).toMatchObject({ costShare: 0.5, basis: 'range' });
+    expect(model.prompts!.all).toContain('set "model: sonnet" in the frontmatter of ~/.claude/agents/code-reviewer.md');
+    expect(model.prompts!.all).toContain('Start Explore subagents for searches and lookups with model "sonnet"');
+    expect(list.find((i) => i.id === 'agent-startup:demo')!.seeAlso).toBe('startup');
+    expect(at('subagents')).toEqual(list);
+  });
+
+  it('Ukrainian demo (never Russian letters)', () => {
+    setLang('uk');
+    for (const page of ['tools', 'subagents']) {
+      for (const i of at(page)) {
+        for (const text of [i.title, i.detail, ...i.evidence, i.prompts?.all ?? '', i.prompts?.ask ?? '']) expect(text).not.toMatch(/[ыэъё]/i);
+      }
+    }
+    expect(at('subagents').find((i) => i.id === 'agent-model:demo')!.prompts!.ask).toContain('Поки нічого не змінюй');
+    setLang('en');
+  });
+});

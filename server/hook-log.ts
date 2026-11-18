@@ -142,6 +142,66 @@ export function deriveWaits(events: WaitEvent[], cap = WAIT_CAP_MS): WaitInterva
   return out;
 }
 
+// ---------- permission prompts ----------
+
+/** A hook event relevant to permission prompts, with the few tool_input fields that make an allow rule. */
+export interface PermEvent {
+  ts: number;
+  sessionId: string;
+  event: string;
+  tool: string | null;
+  toolUseId: string | null;
+  command: string | null;   // Bash
+  url: string | null;       // WebFetch
+  path: string | null;      // Read file_path, Grep/Glob path
+  cwd: string | null;
+}
+
+/** A permission prompt the user approved: the tool ran afterwards. `rawMs` runs from the prompt to the tool's result. */
+export interface Approval { sessionId: string; ts: number; tool: string; rawMs: number; command: string | null; url: string | null; path: string | null; cwd: string | null }
+
+const PERM_END = new Set(['UserPromptSubmit', 'Stop', 'SessionEnd']);
+const sameCall = (a: PermEvent, b: PermEvent) =>
+  a.tool === b.tool && (!a.toolUseId || !b.toolUseId || a.toolUseId === b.toolUseId) && (!a.command || !b.command || a.command === b.command);
+
+/**
+ * Approved prompts: a PermissionRequest followed, in the same session, by a PostToolUse(Failure) of the same call
+ * (tool, and tool_use_id / command when both events carry them). A prompt closed by the next user prompt, Stop or
+ * SessionEnd without the tool running was declined and is left out. Also returns how long unprompted calls took
+ * (PreToolUse → PostToolUse of the same tool_use_id), so callers can subtract the run itself from the wait.
+ */
+export function approvals(events: PermEvent[], cap = WAIT_CAP_MS): { approved: Approval[]; runs: { e: PermEvent; ms: number }[] } {
+  const sorted = [...events].sort((a, b) => a.ts - b.ts);
+  const pending = new Map<string, PermEvent[]>();
+  const pre = new Map<string, PermEvent>();
+  const prompted = new Set<string>();
+  const approved: Approval[] = [];
+  const runs: { e: PermEvent; ms: number }[] = [];
+  for (const e of sorted) {
+    const list = pending.get(e.sessionId) ?? [];
+    if (e.event === 'PermissionRequest' && e.tool) {
+      list.push(e);
+      pending.set(e.sessionId, list);
+      if (e.toolUseId) prompted.add(e.toolUseId);
+    } else if (e.event === 'PreToolUse' && e.toolUseId) {
+      pre.set(e.toolUseId, e);
+    } else if (e.event === 'PostToolUse' || e.event === 'PostToolUseFailure') {
+      const i = list.findIndex((r) => sameCall(r, e));
+      if (i >= 0) {
+        const r = list.splice(i, 1)[0];
+        if (e.ts - r.ts <= cap) approved.push({ sessionId: e.sessionId, ts: r.ts, tool: r.tool!, rawMs: Math.max(0, e.ts - r.ts), command: r.command, url: r.url, path: r.path, cwd: r.cwd ?? e.cwd });
+      } else if (e.toolUseId && !prompted.has(e.toolUseId)) {
+        const p = pre.get(e.toolUseId);
+        if (p && e.ts >= p.ts) runs.push({ e: { ...p, command: p.command ?? e.command }, ms: e.ts - p.ts });
+      }
+      if (e.toolUseId) pre.delete(e.toolUseId);
+    } else if (PERM_END.has(e.event)) {
+      pending.delete(e.sessionId);
+    }
+  }
+  return { approved, runs };
+}
+
 // ---------- storage ----------
 
 export class HookLog {
@@ -207,6 +267,27 @@ export class HookLog {
     if (!this.db) return false;
     this.flush();
     return !!this.db.stmt('SELECT 1 AS x FROM hook_events WHERE ts >= ? AND ts < ? LIMIT 1').get(from, to);
+  }
+
+  /** Events for approved permission prompts in [from, to) (see `approvals`). */
+  permissionEvents(from: number, to: number): PermEvent[] {
+    if (!this.db) return [];
+    this.flush();
+    const rows = this.db.stmt(`SELECT ts, session_id, event, tool,
+        json_extract(payload_json, '$.tool_use_id') AS tuid,
+        json_extract(payload_json, '$.tool_input.command') AS command,
+        json_extract(payload_json, '$.tool_input.url') AS url,
+        COALESCE(json_extract(payload_json, '$.tool_input.file_path'), json_extract(payload_json, '$.tool_input.path')) AS path,
+        json_extract(payload_json, '$.cwd') AS cwd
+      FROM hook_events
+      WHERE ts >= ? AND ts < ? AND session_id IS NOT NULL
+        AND event IN ('PermissionRequest', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'Stop', 'SessionEnd')
+      ORDER BY ts, id`).all(from, to) as Record<string, unknown>[];
+    const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
+    return rows.map((r) => ({
+      ts: Number(r.ts), sessionId: String(r.session_id), event: String(r.event), tool: str(r.tool), toolUseId: str(r.tuid),
+      command: str(r.command), url: str(r.url), path: str(r.path), cwd: str(r.cwd),
+    }));
   }
 
   /** Wait-relevant events in [from, to), with the Notification message pulled from the payload. */
