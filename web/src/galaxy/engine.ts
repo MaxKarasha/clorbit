@@ -108,10 +108,18 @@ interface LabelCand {
 /** An edge chip as drawn last frame (for clicks and hover). */
 interface EdgeHit { key: string; x: number; y: number; w: number; h: number; focus: Focus }
 
+/** Orange (hue 15..50) is reserved for "waiting for you"; map any hue onto the rest of the wheel. */
+export function safeHue(h: number): number {
+  const x = ((h % 360) + 360) % 360;
+  return (50 + (x * 325) / 360) % 360;
+}
+/** A project's base hue: stable per name, never orange. */
+export const projectHue = (name: string) => Math.round(safeHue(hashStr(name) * 360));
+
 /** Branch colors: a star has its project's base hue, each level-1 planet its own color, descendants shades of it. */
 export function branchCol(sysHue: number, depth: number, branchSlot: number, slot: number): Col {
   if (depth === 0) return { h: sysHue, s: 90, l: 76 };
-  const h = (sysHue + 60 + branchSlot * 83 + (depth - 1) * 12 + slot * 5) % 360;
+  const h = safeHue(sysHue + 60 + branchSlot * 83 + (depth - 1) * 12 + slot * 5);
   return { h, s: 88, l: Math.min(84, 62 + (depth - 1) * 9) };
 }
 
@@ -387,7 +395,7 @@ export class GalaxyEngine {
       for (const s of info.sessions) this.folded.set(s.sessionId, info.project);
       let c = this.clusters.get(info.project);
       if (!c) {
-        c = { key: info.key, info, hue: Math.round(hashStr(info.project) * 360), fx: 0.5, fy: 0.5, tx: 0.5, ty: 0.5, ox: 0, oy: 0, placed: false, pinned: false, appear: this.firstSync ? -99 : now, absorb: -9, flare: -9, labelA: 1 };
+        c = { key: info.key, info, hue: projectHue(info.project), fx: 0.5, fy: 0.5, tx: 0.5, ty: 0.5, ox: 0, oy: 0, placed: false, pinned: false, appear: this.firstSync ? -99 : now, absorb: -9, flare: -9, labelA: 1 };
         this.clusters.set(info.project, c);
       } else if (info.sessions.length > c.info.sessions.length) c.absorb = now;
       c.info = info;
@@ -401,7 +409,7 @@ export class GalaxyEngine {
       seen.add(s.sessionId);
       let sys = this.systems.get(s.sessionId);
       if (!sys) {
-        const hue = Math.round(hashStr(s.project) * 360);
+        const hue = projectHue(s.project);
         const root = this.makeBody(s.sessionId, s.root, null, this.firstSync ? -99 : now, hue, 0);
         sys = { s, root, hue, fx: 0.5, fy: 0.5, tx: 0.5, ty: 0.5, ox: 0, oy: 0, placed: false, pinned: false, belt: [], appear: this.firstSync ? -99 : now, labelA: 1 };
         // A session leaving its cluster starts where the cluster is.
@@ -1075,7 +1083,7 @@ export class GalaxyEngine {
       const x = W / 2 + Math.cos(d.ang) * d.rr * W * 1.05 - (cam.x - W / 2) * 0.35;
       const y = H * 0.53 + Math.sin(d.ang) * d.rr * H * 1.05 - (cam.y - H / 2) * 0.35;
       if (x < 10 || x > W - 10 || y < 90 || y > H - 20) continue;
-      const hue = Math.round(hashStr(d.name) * 360);
+      const hue = projectHue(d.name);
       const r = 1.2 + d.tw * 2.6;
       ctx.save();
       ctx.globalAlpha = a;

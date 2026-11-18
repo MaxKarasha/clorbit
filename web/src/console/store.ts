@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react';
 import type { LiveSnapshot, RecentEvent } from '@shared/api';
 import { withLang } from '../i18n';
-import { branchCol, cssCol, hashStr } from '../galaxy/engine';
+import { branchCol, cssCol, hashStr, projectHue } from '../galaxy/engine';
 import { focusSession } from '../notify/feed';
 import { mergeLines, toLine, type ConsoleLine } from './model';
 
@@ -96,7 +96,7 @@ export function useColorVersion(): number {
 }
 
 /** A star's color is its project's hue, exactly as the engine computes it. */
-export const projectColor = (project: string) => cssCol(branchCol(Math.round(hashStr(project) * 360), 0, 0, 0));
+export const projectColor = (project: string) => cssCol(branchCol(projectHue(project), 0, 0, 0));
 
 export function lineColor(sessionId: string, agentId: string, project: string): string {
   const key = `${sessionId}:${agentId}`;
@@ -107,7 +107,7 @@ export function lineColor(sessionId: string, agentId: string, project: string): 
   }
   const known = colorCache.get(key);
   if (known) return known;
-  const hue = Math.round(hashStr(project) * 360);
+  const hue = projectHue(project);
   // Unknown planet (seen only in history): a stable color from the same branch palette.
   return agentId === 'main' ? projectColor(project) : cssCol(branchCol(hue, 1, Math.floor(hashStr(agentId) * 6), 0));
 }
