@@ -15,7 +15,7 @@ import type {
 import { locale, t, tp } from '../i18n';
 import type enMock from '../i18n/en/mock';
 import { MOCK_PLAN, mockLimits } from './limits';
-import { mockSkillRecommendations } from './recommendations';
+import { mockMcpRecommendations, mockSkillRecommendations, mockStartupRecommendations } from './recommendations';
 import { rng, type Rng } from './rng';
 
 // Demo data for `?mock=1`. Every project, path and task below is invented.
@@ -696,37 +696,13 @@ export function mockSessionDetail(id: string, range: Range): SessionDetail {
 /** Demo insights; `unusedDays` is Settings.recommendations.unusedDays (the skills rules use it). */
 export function mockInsights(range: Range, unusedDays = 30): Insight[] {
   const at = mockAttribution(range);
-  const S = mockOverview(range).totals.sessions;
   const num = (n: number) => Math.round(n).toLocaleString(locale());
-  const mcp = at.startupContext.find((x) => x.key === 'mcp');
-  const PLAYWRIGHT_PER_SESSION = 2100; // playwright's share of the MCP instructions
-  const mcpShare = mcp ? PLAYWRIGHT_PER_SESSION / Math.max(1, Number(mcp.extra?.perSession ?? 5800)) : 0;
   const bash = at.tools.find((x) => x.key === 'Bash');
+  const skills = mockSkillRecommendations(range, unusedDays);
   return [
-    ...mockSkillRecommendations(range, unusedDays),
-    {
-      id: 'mcp-playwright-rare',
-      pages: ['mcp', 'startup'],
-      severity: 'high',
-      title: t('mock.ins.mcpRare.title'),
-      detail: t('mock.ins.mcpRare.detail'),
-      evidence: [
-        t('mock.ins.mcpRare.perSession', { n: num(PLAYWRIGHT_PER_SESSION) }),
-        t('mock.ins.mcpRare.calls', { n: num(at.mcpServers.find((m) => m.key === 'playwright')?.calls ?? 0) }),
-      ],
-      fix: `claude mcp remove playwright --scope user\n# ${t('mock.ins.mcpRare.fixComment')}\nclaude mcp add playwright --scope project …`,
-      estSavingTokens: mcp ? Math.round(mcp.total * mcpShare * 0.9) : undefined,
-    },
-    {
-      id: 'mcp-unused',
-      pages: ['mcp'],
-      severity: 'warn',
-      title: t('mock.ins.mcpUnused.title'),
-      detail: t('mock.ins.mcpUnused.detail'),
-      evidence: [t('mock.ins.mcpUnused.calls', { name: 'claude.ai Miro' }), t('mock.ins.mcpUnused.calls', { name: 'claude.ai Canva' })],
-      fix: t('mock.ins.mcpUnused.fix'),
-      estSavingTokens: Math.round(400 * S * 80),
-    },
+    ...skills,
+    ...mockMcpRecommendations(range, unusedDays),
+    ...mockStartupRecommendations(range, at, skills),
     {
       id: 'bash-results',
       pages: ['tools'],

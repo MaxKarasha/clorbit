@@ -131,11 +131,63 @@ const ACTIONS = {
     disablePlugin: (key: string) => `Disable the plugin ${key}`,
     enableLocal: (key: string, dir: string) => `Enable the plugin ${key} only in the project ${dir} (local scope, not committed)`,
     moveSkill: (name: string, from: string, to: string) => `Move my own skill "${name}" out of the skills folder (${from} → ${to})`,
+    removeMcpUser: (name: string, file: string) => `Remove the MCP server "${name}" from the user scope (only its entry in ${file}; nothing else is touched)`,
+    removeMcpLocal: (name: string, dir: string, file: string) => `Remove the MCP server "${name}" configured for the project ${dir} (local scope: its entry in ${file})`,
+    moveMcp: (name: string, dirs: string[]) => `Move the MCP server "${name}" from the user scope to the projects that use it (${dirs.join(', ')}; local scope, not committed)`,
+    disableMcpJson: (name: string, file: string) => `Turn off the project MCP server "${name}" for me: add "${name}" to "disabledMcpjsonServers" in ${file} (create the file if it is missing; the project's .mcp.json stays as it is)`,
+    undoMcpJson: (name: string) => `remove "${name}" from "disabledMcpjsonServers" again`,
+    disableConnectors: (file: string) => `Stop loading claude.ai connectors in Claude Code: set "disableClaudeAiConnectors": true in ${file} (they stay connected on claude.ai and keep working there)`,
+    undoConnectors: 'set "disableClaudeAiConnectors" back to false (or remove the key)',
+    compress: (file: string) => `Compress ${file} without losing meaning`,
+    consolidateMemory: (file: string) => `Consolidate the auto-memory index ${file}`,
+    backupOf: (file: string) => `<the backup of ${file}>`,
   },
   uk: {
     disablePlugin: (key: string) => `Вимкнути плагін ${key}`,
     enableLocal: (key: string, dir: string) => `Увімкнути плагін ${key} лише в проєкті ${dir} (локально, без коміту)`,
     moveSkill: (name: string, from: string, to: string) => `Перенести мій власний скіл «${name}» з теки скілів (${from} → ${to})`,
+    removeMcpUser: (name: string, file: string) => `Прибрати MCP-сервер «${name}» з рівня користувача (лише його запис у ${file}; більше нічого не чіпати)`,
+    removeMcpLocal: (name: string, dir: string, file: string) => `Прибрати MCP-сервер «${name}», налаштований для проєкту ${dir} (локальний рівень: його запис у ${file})`,
+    moveMcp: (name: string, dirs: string[]) => `Перенести MCP-сервер «${name}» з рівня користувача в проєкти, де він потрібен (${dirs.join(', ')}; локально, без коміту)`,
+    disableMcpJson: (name: string, file: string) => `Вимкнути для мене проєктний MCP-сервер «${name}»: додати "${name}" до "disabledMcpjsonServers" у ${file} (створити файл, якщо його немає; .mcp.json проєкту не змінювати)`,
+    undoMcpJson: (name: string) => `знову прибрати "${name}" з "disabledMcpjsonServers"`,
+    disableConnectors: (file: string) => `Не завантажувати конектори claude.ai у Claude Code: поставити "disableClaudeAiConnectors": true у ${file} (на claude.ai вони лишаються підключеними й працюють)`,
+    undoConnectors: 'повернути "disableClaudeAiConnectors" у false (або прибрати ключ)',
+    compress: (file: string) => `Стиснути ${file} без втрати змісту`,
+    consolidateMemory: (file: string) => `Упорядкувати індекс автопам'яті ${file}`,
+    backupOf: (file: string) => `<копія ${file}>`,
+  },
+};
+
+/** Extra rules some prompts add through PromptSpec.notes. */
+export const PROMPT_NOTES = {
+  en: {
+    mcpRemove: (file: string) => `Removing an MCP server's entry with "claude mcp remove" is the one removal allowed here, and only after ${file} is backed up; put each removed server's JSON config into the report so it can be added back.`,
+    jq: 'The commands use jq to copy a server\'s JSON config; if jq is missing, copy the JSON by hand from the file.',
+    compress: [
+      'Keep every rule, fact and instruction: remove repetition, filler and outdated parts, merge overlapping sections, prefer short bullet points.',
+      'Move parts needed only now and then (long examples, reference tables, procedures for rare tasks) into separate files next to it and leave one line saying when to read each file (a plain path, not an @import: @imports are loaded at startup too). A procedure Claude follows step by step can become a skill instead.',
+      'Show me the before/after size (wc -c) and a short summary of what moved where.',
+    ],
+    memory: [
+      'Keep every memory that is still true. Merge duplicates and near-duplicates, keep one short line per entry in the index, and fix entries that point to missing files.',
+      'Move memory files that are clearly outdated into an "archive" folder next to them (do not delete them) and drop their lines from the index; ask me when unsure.',
+      'Show me the before/after size of the index (wc -c).',
+    ],
+  },
+  uk: {
+    mcpRemove: (file: string) => `Прибрати запис MCP-сервера командою "claude mcp remove" — єдине дозволене тут видалення, і лише після копії ${file}; у звіті наведи JSON-конфігурацію кожного прибраного сервера, щоб його можна було повернути.`,
+    jq: 'Команди копіюють JSON-конфігурацію сервера через jq; якщо jq немає — скопіюй JSON з файлу вручну.',
+    compress: [
+      'Збережи кожне правило, факт і вказівку: прибери повтори, «воду» й застаріле, об\'єднай розділи, що перетинаються, віддавай перевагу коротким пунктам.',
+      'Те, що потрібно лише зрідка (довгі приклади, довідкові таблиці, процедури для рідкісних задач), винеси в окремі файли поруч і залиш по одному рядку, коли читати кожен файл (простий шлях, не @import: @import теж завантажується на старті). Процедуру, яку Claude виконує крок за кроком, можна зробити скілом.',
+      'Покажи розмір до й після (wc -c) і коротко — що куди перенесено.',
+    ],
+    memory: [
+      'Збережи кожен спогад, що досі правдивий. Об\'єднай дублікати й майже дублікати, лиши в індексі по одному короткому рядку на запис, виправ записи, що вказують на відсутні файли.',
+      'Явно застарілі файли пам\'яті перенеси в теку "archive" поруч (не видаляй) і прибери їхні рядки з індексу; якщо сумніваєшся — спитай мене.',
+      'Покажи розмір індексу до й після (wc -c).',
+    ],
   },
 };
 
@@ -180,4 +232,91 @@ export function moveSkillItem(lang: PromptLang, o: { name: string; skillsDir: st
 /** Something to look at, with no change made automatically. */
 export function reviewItem(o: { name: string; action: string; why: string }): PromptItem {
   return { ...o, reviewOnly: true };
+}
+
+// ---------- MCP servers ----------
+
+const jqGet = (name: string, file: string, dirVar = false) =>
+  `"$(jq -c${dirVar ? ' --arg d "$PWD"' : ''} --arg n ${shq(name)} '${dirVar ? '.projects[$d].mcpServers[$n]' : '.mcpServers[$n]'}' ${file})"`;
+
+/** `claude mcp remove <name> --scope user|local` (it edits ~/.claude.json, which is backed up first). */
+export function removeMcpServerItem(
+  lang: PromptLang,
+  o: { name: string; scope: 'user' | 'local'; dir?: string; claudeJson: string; why: string },
+): PromptItem {
+  const A = ACTIONS[lang];
+  const backup = A.backupOf(o.claudeJson);
+  if (o.scope === 'local' && o.dir) {
+    return {
+      name: `${o.name} → ${o.dir}`,
+      action: A.removeMcpLocal(o.name, o.dir, o.claudeJson),
+      why: o.why,
+      commands: [`cd ${shq(o.dir)}`, `claude mcp remove ${shq(o.name)} --scope local`],
+      undo: [`cd ${shq(o.dir)}`, `claude mcp add-json ${shq(o.name)} ${jqGet(o.name, backup, true)} --scope local`],
+      files: [o.claudeJson],
+    };
+  }
+  return {
+    name: o.name,
+    action: A.removeMcpUser(o.name, o.claudeJson),
+    why: o.why,
+    commands: [`claude mcp remove ${shq(o.name)} --scope user`],
+    undo: [`claude mcp add-json ${shq(o.name)} ${jqGet(o.name, backup)} --scope user`],
+    files: [o.claudeJson],
+  };
+}
+
+/** Copies a user-scope server into each project (local scope) and then removes it from the user scope. */
+export function moveMcpToProjectsItem(lang: PromptLang, o: { name: string; dirs: string[]; claudeJson: string; why: string }): PromptItem {
+  const A = ACTIONS[lang];
+  const n = shq(o.name);
+  return {
+    name: o.name,
+    action: A.moveMcp(o.name, o.dirs),
+    why: o.why,
+    commands: [
+      ...o.dirs.map((d) => `(cd ${shq(d)} && claude mcp add-json ${n} ${jqGet(o.name, shq(o.claudeJson))} --scope local)`),
+      `claude mcp remove ${n} --scope user`,
+    ],
+    undo: [
+      ...o.dirs.map((d) => `(cd ${shq(d)} && claude mcp remove ${n} --scope local)`),
+      `claude mcp add-json ${n} ${jqGet(o.name, A.backupOf(o.claudeJson))} --scope user`,
+    ],
+    files: [o.claudeJson],
+  };
+}
+
+/** A server from a project's .mcp.json, turned off for me via `disabledMcpjsonServers` in the project's local settings. */
+export function disableMcpJsonServerItem(lang: PromptLang, o: { name: string; dir: string; why: string }): PromptItem {
+  const file = `${o.dir}/.claude/settings.local.json`;
+  return { name: `${o.name} → ${o.dir}`, action: ACTIONS[lang].disableMcpJson(o.name, file), why: o.why, undo: [ACTIONS[lang].undoMcpJson(o.name)], files: [file] };
+}
+
+/** `"disableClaudeAiConnectors": true` in the user settings: Claude Code stops loading every claude.ai connector. */
+export function disableClaudeAiConnectorsItem(lang: PromptLang, o: { settingsFile: string; why: string }): PromptItem {
+  return { name: 'disableClaudeAiConnectors', action: ACTIONS[lang].disableConnectors(o.settingsFile), why: o.why, undo: [ACTIONS[lang].undoConnectors], files: [o.settingsFile] };
+}
+
+// ---------- instruction files ----------
+
+/** Compress a CLAUDE.md / rules file (backed up first; the rules go into PromptSpec.notes: PROMPT_NOTES.compress). */
+export function compressInstructionsItem(lang: PromptLang, o: { path: string; why: string }): PromptItem {
+  return {
+    name: o.path,
+    action: ACTIONS[lang].compress(o.path),
+    why: o.why,
+    undo: [`cp ${ACTIONS[lang].backupOf(o.path)} ${shq(o.path)}`],
+    files: [o.path],
+  };
+}
+
+/** Consolidate an auto-memory index (MEMORY.md); outdated memory files are moved to an archive folder, never deleted. */
+export function consolidateMemoryItem(lang: PromptLang, o: { path: string; why: string }): PromptItem {
+  return {
+    name: o.path,
+    action: ACTIONS[lang].consolidateMemory(o.path),
+    why: o.why,
+    undo: [`cp ${ACTIONS[lang].backupOf(o.path)} ${shq(o.path)}`],
+    files: [o.path],
+  };
 }

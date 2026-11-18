@@ -6,7 +6,7 @@ import type { Insight, InsightPage, InsightPrompts, InsightSaving } from '@share
 import { t, tp, type MsgKey } from '../i18n';
 import { BRANCH, STATUS } from '../lib/colors';
 import { fmtAgo, fmtInt, fmtPct, fmtTokens } from '../lib/format';
-import { navigate } from '../lib/router';
+import { href, navigate } from '../lib/router';
 import { updateSettings, useSettings } from '../lib/settings';
 import { useRangeApi } from '../pages/common';
 import { CopyBlock, cx } from './ui';
@@ -16,6 +16,19 @@ export const REC_SEV: Record<Insight['severity'], { labelKey: MsgKey; color: str
   high: { labelKey: 'rec.sev.high', color: STATUS.danger, rank: 0 },
   warn: { labelKey: 'rec.sev.warn', color: BRANCH[1], rank: 1 },
   info: { labelKey: 'rec.sev.info', color: STATUS.working, rank: 2 },
+};
+
+/** Where a "see …" link of a card goes, and the tab's name. */
+const PAGE_LINK: Record<InsightPage, { path: string; labelKey: MsgKey }> = {
+  skills: { path: '/analytics/attribution', labelKey: 'nav.attribution' },
+  mcp: { path: '/analytics/mcp', labelKey: 'nav.mcp' },
+  startup: { path: '/analytics/context', labelKey: 'nav.context' },
+  tools: { path: '/analytics/tools', labelKey: 'nav.tools' },
+  subagents: { path: '/analytics/subagents', labelKey: 'nav.subagents' },
+  sessions: { path: '/analytics/sessions', labelKey: 'nav.sessions' },
+  session: { path: '/analytics/sessions', labelKey: 'nav.sessions' },
+  overview: { path: '/analytics/overview', labelKey: 'nav.overview' },
+  limits: { path: '/analytics/overview', labelKey: 'nav.overview' },
 };
 
 /** How many cards a tab's strip shows; the rest are on the Insights page. */
@@ -182,6 +195,11 @@ export function RecommendationCard({
       {!ins.prompts && ins.fix && <CopyBlock text={ins.fix} />}
       <div className="rec__actions">
         {ins.prompts && !hidden && <PromptButton prompts={ins.prompts} />}
+        {ins.seeAlso && PAGE_LINK[ins.seeAlso] && (
+          <a className="recs__link rec__see" href={href(PAGE_LINK[ins.seeAlso].path)}>
+            {t('rec.seeAlso', { page: t(PAGE_LINK[ins.seeAlso].labelKey) })}
+          </a>
+        )}
         {hidden ? (
           <button type="button" className="btn btn--ghost btn--sm" onClick={onShow}>
             {t('rec.unhide')}

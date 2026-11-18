@@ -111,6 +111,12 @@ export function detectPlugin(texts: (string | undefined)[], known: string[]): st
   return best;
 }
 
+/** A tool result that is an error only because the user declined or interrupted the call. */
+function declined(content: unknown): boolean {
+  const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join(' ') : '';
+  return /doesn't want to proceed|user rejected|was rejected|permission to use .* (has been|was) denied|interrupted by user|\[Request interrupted/i.test(text.slice(0, 400));
+}
+
 /** Line parser for one file that updates its summary in place. */
 export class FileScanner {
   private s: FileSummary;
@@ -283,6 +289,7 @@ export class FileScanner {
         const { b } = this.day(ts || p?.ts || Date.now());
         const ta = b.tools[name] ?? (b.tools[name] = { calls: 0, res: 0, resN: 0, max: 0, last: 0 });
         ta.res += tokens; ta.resN++; if (tokens > ta.max) ta.max = tokens;
+        if (blk.is_error === true && !declined(blk.content)) ta.err = (ta.err ?? 0) + 1;
         if (tokens > BIG_RESULT) {
           s.bigResults.push({ tool: name, label: p?.label ?? name, tokens, ts });
           if (s.bigResults.length > MAX_BIG) {
@@ -391,15 +398,36 @@ export class FileScanner {
         this.addStartup(LABELS.deferred, size);
         const names: string[] = Array.isArray(a.addedNames) ? a.addedNames
           : Array.isArray(a.entries) ? a.entries.map((e: any) => e?.name).filter(Boolean) : [];
+        // With tool search on, deferred MCP tools are listed by name (a line each); their schemas load when used.
+        const lines: string[] = Array.isArray(a.addedLines) ? a.addedLines.filter((x: unknown) => typeof x === 'string') : [];
         for (const n of names) {
           const m = mcpSplit(String(n));
-          if (m && !s.mcpSeen.includes(m.server)) s.mcpSeen.push(m.server);
+          if (!m) continue;
+          if (!s.mcpSeen.includes(m.server)) s.mcpSeen.push(m.server);
+          if (!c.startupDone) {
+            const ln = lines.find((l) => l === n || l.startsWith(`${n}:`) || l.startsWith(`${n} `));
+            const per = (s.mcpToolNames ??= {});
+            per[m.server] = (per[m.server] ?? 0) + (ln ?? String(n)).length + 1;
+          }
         }
+        this.mcpIssues(a, ts);
         return;
       }
       case 'agent_listing_delta': this.addStartup(LABELS.agents, size); return;
       case 'instructions':
-      case 'nested_memory': this.addStartup(LABELS.claudeMd, size); return;
+      case 'nested_memory': {
+        this.addStartup(LABELS.claudeMd, size);
+        if (c.startupDone) return;
+        // 'instructions': { files: [{ path, type, content }] }; 'nested_memory': { path, content: { path, type, content } }.
+        const files: any[] = a.type === 'instructions' ? (Array.isArray(a.files) ? a.files : []) : [a.content && typeof a.content === 'object' ? { path: a.path, ...a.content } : a];
+        for (const f of files) {
+          if (!f || typeof f !== 'object' || typeof f.path !== 'string' || typeof f.content !== 'string' || !f.content) continue;
+          const mf = (s.memoryFiles ??= {});
+          // A refresh before the first reply repeats the file: keep its largest size, not the sum.
+          mf[f.path] = { type: String(f.type ?? f.kind ?? ''), chars: Math.max(mf[f.path]?.chars ?? 0, f.content.length) };
+        }
+        return;
+      }
       case 'prompt_snapshot': {
         // There can be several snapshots (the first is partial); keep the largest system prompt size.
         const sp = Array.isArray(a.systemPrompt) ? a.systemPrompt : [];
@@ -409,12 +437,44 @@ export class FileScanner {
         if (Array.isArray(a.tools) && a.tools.length) {
           const tc = JSON.stringify(a.tools).length;
           if (tc > (s.startup[LABELS.toolDefs] ?? 0)) s.startup[LABELS.toolDefs] = tc;
+          // MCP tools that are not deferred come with their full definitions: chars per server (largest snapshot).
+          if (!c.startupDone) {
+            const per: Record<string, number> = {};
+            for (const t of a.tools) {
+              const m = t && typeof t.name === 'string' ? mcpSplit(t.name) : null;
+              if (m) per[m.server] = (per[m.server] ?? 0) + JSON.stringify(t).length;
+            }
+            const defs = (s.mcpToolDefs ??= {});
+            for (const [k, n] of Object.entries(per)) if (n > (defs[k] ?? 0)) defs[k] = n;
+          }
         }
         return;
       }
       default:
         if (ENV_TYPES.has(a.type)) this.addStartup(LABELS.env, rendered);
         else if (rendered) this.addStartup(LABELS.other, rendered);
+    }
+  }
+
+  /** `failedMcpServers` ({ name, error?, errorCode? }) and `needsAuthMcpServers` (names) of a deferred tools attachment. */
+  private mcpIssues(a: any, ts: number) {
+    const failed: any[] = Array.isArray(a.failedMcpServers) ? a.failedMcpServers : [];
+    const auth: unknown[] = Array.isArray(a.needsAuthMcpServers) ? a.needsAuthMcpServers : [];
+    if (!failed.length && !auth.length) return;
+    const issues = (this.s.mcpIssues ??= {});
+    const at = (name: string) => (issues[name] ??= { failed: 0, auth: 0, last: 0 });
+    for (const f of failed) {
+      const name = typeof f === 'string' ? f : typeof f?.name === 'string' ? f.name : null;
+      if (!name) continue;
+      const it = at(name);
+      it.failed++; it.last = Math.max(it.last, ts);
+      const err = typeof f?.error === 'string' ? f.error : typeof f?.errorCode === 'string' ? f.errorCode : null;
+      if (err) it.error = trimText(err, 80);
+    }
+    for (const n of auth) {
+      if (typeof n !== 'string' || !n) continue;
+      const it = at(n);
+      it.auth++; it.last = Math.max(it.last, ts);
     }
   }
 

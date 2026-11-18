@@ -1,28 +1,20 @@
 // Insights: rules with evidence and a concrete fix. Wording lives in insights-text.ts (en/uk).
 import path from 'node:path';
 import { DEFAULT_SETTINGS, type Insight, type InsightPage, type Range } from '../shared/api';
-import { attribution, Ctx, mcpDisplayNames, memoize, overview } from './analytics';
+import { attribution, Ctx, memoize, overview } from './analytics';
 import { readSettings } from './config';
 import type { Store } from './store';
 import { deriveWaits, WAIT_CAP_MS, type HookLog } from './hook-log';
 import type { FileSummary } from './types';
-import { estTokens, localDate, mcpKey, mcpSplit } from './util';
-import { skillGroupLabel, STARTUP, type Lang } from './i18n';
+import { localDate, mcpSplit } from './util';
+import type { Lang } from './i18n';
 import { insightText, type InsightText } from './insights-text';
 import { defaultEnv, hash8, type RecommendEnv } from './recommend';
+import { mcpRecommendations } from './recommend-mcp';
 import { skillRecommendations } from './recommend-skills';
+import { startupRecommendations } from './recommend-startup';
 
 const sevRank = { high: 0, warn: 1, info: 2 } as const;
-
-function filesStartedIn(store: Store, range: Range): FileSummary[] {
-  const out: FileSummary[] = [];
-  for (const s of store.files.values()) {
-    if (!s.firstTs) continue;
-    const d = localDate(s.firstTs);
-    if (d >= range.from && d <= range.to) out.push(s);
-  }
-  return out;
-}
 
 function filesActiveIn(store: Store, range: Range): FileSummary[] {
   const out: FileSummary[] = [];
@@ -54,7 +46,7 @@ const bySaving = (a: Insight, b: Insight) => (b.estSavingTokens ?? 0) - (a.estSa
 export function insights(store: Store, range: Range, hookLog?: HookLog | null, lang: Lang = 'en', opts: InsightOptions = {}): Insight[] {
   const env: RecommendEnv = { ...defaultEnv({ unusedDays: opts.unusedDays ?? DEFAULT_SETTINGS.recommendations.unusedDays }), ...opts.env };
   // Recommendations also depend on the enabled plugins, the threshold and the day ("unused for N days").
-  const key = `ins:${lang}:${range.from}:${range.to}:${env.unusedDays}:${localDate(env.now)}:${hash8(JSON.stringify(env.enabledPlugins))}`;
+  const key = `ins:${lang}:${range.from}:${range.to}:${env.unusedDays}:${localDate(env.now)}:${hash8(JSON.stringify([env.enabledPlugins, env.mcp.user, env.mcp.local]))}`;
   const base = opts.env ? compute(store, range, lang, env) : memoize(store, key, () => compute(store, range, lang, env));
   const extra = hookLog ? waitInsights(store, hookLog, range, lang) : [];
   const all = extra.length ? [...base, ...extra].sort(bySaving) : base;
@@ -133,85 +125,29 @@ export function waitInsights(store: Store, hookLog: HookLog, range: Range, lang:
 function compute(store: Store, range: Range, lang: Lang, env: RecommendEnv): Insight[] {
   const T = insightText(lang);
   // Skills & plugins: unused plugins and skills, hook context, duplicates (they replace the older per-plugin rules).
-  const out: Insight[] = skillRecommendations(store, range, lang, env);
+  const skills = skillRecommendations(store, range, lang, env);
   const attr = attribution(store, range, lang);
+  // MCP: unused servers, failing ones, heavy results, user-scope servers used in few projects (replaces 'unused-mcp').
+  const coveredPlugins = new Set(skills.filter((i) => i.id.startsWith('unused-plugins:')).flatMap((i) => (i.targets ?? []).map((t) => t.label)));
+  // Startup context: instruction files, memory, settings hooks, the skill listing and the total (replace the older cards).
+  const out: Insight[] = [
+    ...skills,
+    ...mcpRecommendations(store, range, lang, env, { plugins: coveredPlugins }),
+    ...startupRecommendations(store, range, lang, env, { attr, skillCards: skills }),
+  ];
   const ov = overview(store, range);
   const grand = ov.totals.total || 1;
   const settings = readSettings();
   const ctx = new Ctx(store);
-  const started = filesStartedIn(store, range);
-  const days = Math.max(1, ov.daily.length);
   const pluginKey = (name: string) => Object.keys(settings.enabledPlugins).find((k) => k.split('@')[0] === name) ?? `${name}@…`;
 
-  // (a2) A heavy skill listing — it goes into every session and every subagent.
-  const skillRow = attr.startupContext.find((r) => r.key === STARTUP.skills);
-  if (skillRow && skillRow.total > 0) {
-    const byPlugin = new Map<string, number>();
-    for (const s of started) for (const [p, c] of Object.entries(s.skillsByPlugin)) byPlugin.set(p, (byPlugin.get(p) ?? 0) + c);
-    const top = [...byPlugin.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
-    const per = Number(skillRow.extra?.perSession ?? 0);
-    const perSub = Number(skillRow.extra?.perSubagent ?? 0);
-    out.push({
-      id: 'startup-skill-listing',
-      pages: ['startup'],
-      severity: skillRow.total > 5e6 ? 'high' : 'warn',
-      title: T.skillListing.title(per, perSub),
-      detail: T.skillListing.detail(perSub > 0, skillRow.total),
-      evidence: top.map(([p, c]) => T.skillListing.evidence(skillGroupLabel(p, lang), estTokens(c))),
-      fix: T.skillListing.fix,
-      estSavingTokens: Math.round(skillRow.total * 0.3),
-    });
-  }
-
-  // (a3) Overall startup context size per session and per subagent.
-  const perMain = attr.startupContext.reduce((n, r) => n + Number(r.extra?.perSession ?? 0), 0);
-  const perSub = attr.startupContext.reduce((n, r) => n + Number(r.extra?.perSubagent ?? 0), 0);
-  const startupTotal = attr.startupContext.reduce((n, r) => n + r.total, 0);
-  if (perMain > 0) {
-    const top = [...attr.startupContext].sort((a, b) => Number(b.extra?.perSession ?? 0) - Number(a.extra?.perSession ?? 0)).slice(0, 5);
-    out.push({
-      id: 'startup-total',
-      pages: ['startup', 'overview'],
-      severity: 'info',
-      title: T.startupTotal.title(perMain, perSub),
-      detail: T.startupTotal.detail(startupTotal),
-      evidence: top.map((r) => T.startupTotal.evidence(r.label, Number(r.extra?.perSession ?? 0), Number(r.extra?.perSubagent ?? 0))),
-      fix: T.startupTotal.fix,
-    });
-  }
-
   const filesInRange = filesActiveIn(store, range);
-
-  // (b2) MCP servers that are connected but never called.
-  const disp = mcpDisplayNames(store);
-  const seen = new Map<string, number>(); // key → number of sessions/subagents
-  const blockChars = new Map<string, number>();
-  for (const s of filesInRange) {
-    for (const k of s.mcpSeen) seen.set(k, (seen.get(k) ?? 0) + 1);
-    for (const [n, c] of Object.entries(s.mcpBlocks)) blockChars.set(mcpKey(n), (blockChars.get(mcpKey(n)) ?? 0) + c);
-  }
-  const usedMcp = new Set<string>();
-  for (const r of attr.tools) { const m = mcpSplit(r.key); if (m && r.calls > 0) usedMcp.add(m.server); }
-  for (const r of attr.mcpServers) if (r.total > 0 || r.calls > 0) usedMcp.add(mcpKey(r.key));
-  const unusedMcp = [...seen.entries()].filter(([k]) => !usedMcp.has(k)).sort((a, b) => (blockChars.get(b[0]) ?? 0) - (blockChars.get(a[0]) ?? 0) || b[1] - a[1]);
-  if (unusedMcp.length) {
-    const saving = unusedMcp.reduce((n, [k]) => n + estTokens(blockChars.get(k) ?? 0), 0);
-    out.push({
-      id: 'unused-mcp',
-      pages: ['mcp'],
-      severity: saving > 1e6 ? 'warn' : 'info',
-      title: T.unusedMcp.title(unusedMcp.length, days),
-      detail: T.unusedMcp.detail,
-      evidence: unusedMcp.slice(0, 12).map(([k, n]) => T.unusedMcp.evidence(disp.get(k) ?? k, n, blockChars.get(k) ? estTokens(blockChars.get(k)!) : 0)),
-      fix: T.unusedMcp.fix,
-      estSavingTokens: saving,
-    });
-  }
 
   // (c) Oversized tool results (> 20K tokens).
   const big = new Map<string, { n: number; sum: number; max: number; ex: string[] }>();
   for (const s of filesInRange) {
     for (const r of s.bigResults) {
+      if (mcpSplit(r.tool)) continue; // per MCP server: recommend-mcp.ts
       const d = localDate(r.ts);
       if (d < range.from || d > range.to) continue;
       const a = big.get(r.tool) ?? { n: 0, sum: 0, max: 0, ex: [] };

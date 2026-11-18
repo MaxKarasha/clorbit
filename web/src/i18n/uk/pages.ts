@@ -361,5 +361,6 @@ export default {
   'rec.showHidden': 'показати',
   'rec.collapseHidden': 'згорнути',
   'rec.more': 'ще {n} — на сторінці інсайтів|ще {n} — на сторінці інсайтів|ще {n} — на сторінці інсайтів',
+  'rec.seeAlso': 'Дивись «{page}» →',
   'rec.evidence': 'Докази',
 } satisfies Record<keyof typeof en, string>;

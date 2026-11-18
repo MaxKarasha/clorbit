@@ -360,5 +360,6 @@ export default {
   'rec.showHidden': 'show',
   'rec.collapseHidden': 'collapse',
   'rec.more': '+{n} more on the Insights page|+{n} more on the Insights page',
+  'rec.seeAlso': 'See {page} →',
   'rec.evidence': 'Evidence',
 } satisfies Record<string, string>;

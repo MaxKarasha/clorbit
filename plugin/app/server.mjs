@@ -973,19 +973,19 @@ function hookPluginEnabled(settings2 = readSettings()) {
   return Object.entries(settings2.enabledPlugins).some(([k, on]) => on && (k.startsWith("clorbit@") || k.startsWith("fleet-hooks@")));
 }
 function knownPlugins() {
-  const names = /* @__PURE__ */ new Set();
-  for (const k of Object.keys(readSettings().enabledPlugins)) names.add(k.split("@")[0]);
+  const names2 = /* @__PURE__ */ new Set();
+  for (const k of Object.keys(readSettings().enabledPlugins)) names2.add(k.split("@")[0]);
   try {
-    const cache4 = path2.join(CLAUDE_DIR, "plugins", "cache");
-    for (const mkt of fs.readdirSync(cache4)) {
+    const cache5 = path2.join(CLAUDE_DIR, "plugins", "cache");
+    for (const mkt of fs.readdirSync(cache5)) {
       try {
-        for (const p of fs.readdirSync(path2.join(cache4, mkt))) names.add(p);
+        for (const p of fs.readdirSync(path2.join(cache5, mkt))) names2.add(p);
       } catch {
       }
     }
   } catch {
   }
-  return [...names].filter((n) => n.length >= 4).sort((a, b) => b.length - a.length);
+  return [...names2].filter((n) => n.length >= 4).sort((a, b) => b.length - a.length);
 }
 var BUNDLED, HERE, PROJECT_ROOT, CLAUDE_DIR, PROJECTS_DIR, SESSIONS_DIR, SETTINGS_FILE, CLAUDE_JSON_FILES, HOME_DATA_DIR, STATUSLINE_FILE, LEGACY_STATUSLINE_FILE, DATA_DIR, DATA_DIR_EXPLICIT, DB_FILE, CACHE_DIR, DIST_DIR, SERVE_WEB, PORT, HOST, VERSION, LEGACY_DB_FILE, settingsCache;
 var init_config = __esm({
@@ -1021,7 +1021,7 @@ var SUMMARY_VERSION, MIN_SUMMARY_VERSION;
 var init_types = __esm({
   "server/types.ts"() {
     "use strict";
-    SUMMARY_VERSION = 6;
+    SUMMARY_VERSION = 7;
     MIN_SUMMARY_VERSION = 5;
   }
 });
@@ -1216,14 +1216,14 @@ var init_db = __esm({
       importJsonCache(cacheDir) {
         if (this.getMeta("json_import")) return null;
         const n = this.stmt("SELECT COUNT(*) AS n FROM file_summaries").get().n;
-        let names = [];
+        let names2 = [];
         try {
-          names = fs2.readdirSync(cacheDir).filter((f) => /^summaries-v\d+\.json$/.test(f));
+          names2 = fs2.readdirSync(cacheDir).filter((f) => /^summaries-v\d+\.json$/.test(f));
         } catch {
         }
         const want = `summaries-v${SUMMARY_VERSION}.json`;
-        const skipped = names.filter((f) => f !== want);
-        if (n > 0 || !names.includes(want)) {
+        const skipped = names2.filter((f) => f !== want);
+        if (n > 0 || !names2.includes(want)) {
           this.setMeta("json_import", JSON.stringify({ at: Date.now(), file: null, count: 0, skipped, reason: n > 0 ? "db-not-empty" : "no-current-cache" }));
           return null;
         }
@@ -1579,12 +1579,6 @@ function en() {
       evidence: (label, per, perSub) => `${label}: \u2248 ${N(per)} per session${perSub ? `, \u2248 ${N(perSub)} per subagent` : ""}`,
       fix: "The easiest wins: shorten the skill listing (disable unused plugins, remove unneeded skills) and CLAUDE.md; do small tasks without a separate subagent \u2014 each subagent pays this startup cost again."
     },
-    unusedMcp: {
-      title: (n, days) => `${n} MCP ${plural(n, "en", ["server is", "servers are"])} connected but had no calls in ${days} days`,
-      detail: "These servers show up in sessions (instructions and/or the deferred tool list), but their tools were never called.",
-      evidence: (name, n, tok) => `${name}: in ${n} sessions/subagents${tok ? `, instructions \u2248 ${N(tok)} tokens in total` : ""}`,
-      fix: 'Disable unneeded servers via /mcp in Claude Code; claude.ai connectors ("claude.ai \u2026") \u2014 in Connectors settings on claude.ai.'
-    },
     bigResults: {
       example: (label, tok, project) => `${label} \u2014 ${N(tok)} tokens (${project})`,
       title: (tool, n, max) => `${tool}: ${n} oversized ${plural(n, "en", ["result", "results"])} (up to ${N(max)} tokens)`,
@@ -1620,7 +1614,7 @@ function en() {
     },
     hooks: {
       title: (plugin, n, min, err) => `Hooks ${plugin ? `of plugin ${plugin}` : "without a plugin"}: ${N(n)} runs, ${min} min of execution${err !== null ? `, ${pct(err)} with an error or stderr` : ""}`,
-      detail: (names, min, err) => `Hooks (${names}) run as a separate process on every such event; their total execution time is \u2248 ${min} min.${err !== null ? ` ${pct(err)} of runs ended with an error or wrote to stderr.` : ""}`,
+      detail: (names2, min, err) => `Hooks (${names2}) run as a separate process on every such event; their total execution time is \u2248 ${min} min.${err !== null ? ` ${pct(err)} of runs ended with an error or wrote to stderr.` : ""}`,
       runs: (n) => `Runs: ${N(n)}`,
       time: (sec) => `Total time: ${sec}s`,
       errors: (n) => `With error/stderr: ${N(n)}`,
@@ -1682,6 +1676,112 @@ function en() {
         reviewAction: (key, keep) => `Compare the skill ${key} with ${keep}`,
         whyReview: (plugin) => `a plugin skill cannot be turned off alone; tell me whether disabling ${plugin} as a whole makes sense, and which copy to keep`,
         summary: (n) => `${n} skill ${plural(n, "en", ["name is", "names are"])} listed more than once.`
+      },
+      // ---------- MCP (recommend-mcp.ts) ----------
+      mcpParts: (p) => [
+        p.instr ? `instructions ${N(p.instr)}` : "",
+        p.defs ? `tool definitions ${N(p.defs)}` : "",
+        p.names ? `tool names ${N(p.names)}` : ""
+      ].filter(Boolean).join(" + "),
+      mcpSource: {
+        user: (file) => `user config (${file})`,
+        local: (dirs) => `local config of ${dirs.join(", ")}`,
+        project: (dirs) => `.mcp.json of ${dirs.join(", ")}`,
+        plugin: (plugin) => `plugin ${plugin}`,
+        claudeai: "claude.ai connector",
+        unknown: "configured elsewhere"
+      },
+      unusedMcp: {
+        titleOne: (name, last) => `MCP server ${name} is connected but ${last}`,
+        titleMany: (n, days) => `${n} connected MCP ${plural(n, "en", ["server has", "servers have"])} not been used for ${days}+ days`,
+        detail: (days) => `No calls of their tools in the whole stored history for at least ${days} days (archived sessions included), yet every new session and subagent loads them: their instructions and their tools. With tool search on, only tool names are listed at the start (schemas load when a tool is used), so the saving is mostly the instructions and the names.`,
+        evidence: (name, source, last, per, parts) => `${name} (${source}): ${last}; \u2248 ${N(per)} tokens per session${parts ? ` (${parts})` : ""}`,
+        noSize: "size not measured (older transcripts)",
+        why: (last, per) => `${last}${per ? `; \u2248 ${N(per)} tokens of context per session` : ""}`,
+        summary: (n, days) => `${n} connected MCP ${plural(n, "en", ["server has", "servers have"])} not been used for ${days}+ days but still load into every session.`,
+        alsoFailed: (n) => `also failed to connect in ${n} ${plural(n, "en", ["session", "sessions"])}`,
+        pluginAction: (name, plugin) => `MCP server ${name} comes with the plugin ${plugin}`,
+        pluginUnusedWhy: (server2, last) => `its MCP server ${server2} is unused, and so is the plugin as a whole: ${last}`,
+        pluginWhy: (last, key) => `${last}. The plugin itself is still in use, and its server cannot be turned off alone: in a project that does not need it, turn it off in /mcp (that project only); or, if you can do without the whole plugin, disable it (claude plugin disable ${key} --scope user). Tell me which you prefer`,
+        connectorAction: (name) => `Disconnect the claude.ai connector ${name}`,
+        connectorWhy: (last) => `${last}. Claude Code cannot do this for me: disconnect it on claude.ai \u2192 Settings \u2192 Connectors (it then disappears everywhere), or turn it off for one project in /mcp`,
+        connectorsAllWhy: (n, days) => `none of the ${n} claude.ai ${plural(n, "en", ["connector", "connectors"])} Claude Code loads was used for ${days}+ days`,
+        unknownAction: (name) => `Find where the MCP server ${name} is configured`,
+        unknownWhy: (last) => `${last}. It is not in ~/.claude.json or a project's .mcp.json (managed settings, --mcp-config, an IDE or a plugin?): run claude mcp get with its name and tell me how it could be turned off`
+      },
+      mcpFailing: {
+        titleOne: (name) => `MCP server ${name} keeps failing`,
+        titleMany: (n) => `${n} MCP servers keep failing to connect or erroring`,
+        detail: "In this period these servers failed to connect, needed you to sign in, or most of their calls returned errors. A failing server is still tried at every start, and its tools are missing when a task needs them. Connection failures are recorded by recent Claude Code versions only.",
+        failed: (a, b, err) => `failed to connect in ${a} of ${b} sessions${err ? ` (last error: ${err})` : ""}`,
+        auth: (a) => `needed sign-in in ${a} ${plural(a, "en", ["session", "sessions"])}`,
+        errors: (e, c) => `${e} of ${c} tool calls returned an error`,
+        evidence: (name, facts) => `${name}: ${facts}`,
+        authAction: (name) => `Sign in to the MCP server ${name} again`,
+        authWhy: (facts, connector, name) => `${facts}. ${connector ? "Reconnect it on claude.ai \u2192 Settings \u2192 Connectors, or " : ""}run /mcp in Claude Code and choose Authenticate (or claude mcp login ${name} in a terminal); I have to do the sign-in myself \u2014 tell me what to click`,
+        fixAction: (name) => `Find out why the MCP server ${name} fails`,
+        fixWhy: (facts, name) => `${facts}. claude mcp get ${name} shows its status and the error; suggest a fix for the command, URL or credentials. If I no longer need it, tell me how to turn it off instead`,
+        summary: (n) => `${n} MCP ${plural(n, "en", ["server keeps", "servers keep"])} failing to connect or returning errors.`
+      },
+      mcpHeavy: {
+        title: (server2, n, max) => `MCP server ${server2}: ${n} ${plural(n, "en", ["result", "results"])} over 20K tokens (up to ${N(max)})`,
+        detail: (sum) => `Each oversized result lands in the context at once and is re-read on every following turn. \u2248 ${N(sum)} tokens in this period; the estimate assumes \u2248 5K would have been enough per call.`,
+        tipBrowser: "Browser: take screenshots at a lower scale or zoom into a region, read the page with a filter (interactive elements) or get_page_text / find instead of the full tree, close tabs you do not need.",
+        tipGithub: "GitHub: narrower queries (per_page, filters, a path), a line range instead of whole files, the list of changed files before full diffs.",
+        tipFigma: "Figma: get_metadata first, then design context for specific node ids instead of whole pages; avoid full-page screenshots.",
+        tipGeneric: (server2) => `Ask ${server2} for less: filters, limits, only the fields you need, pagination.`,
+        action: (server2, tools) => `Review how I call ${server2} (${tools})`,
+        why: (n, max, tip) => `${n} results over 20K tokens, up to ${N(max)}. ${tip} Suggest concrete call patterns; if a short line in a project CLAUDE.md would help, propose it, but do not add it unless I agree`,
+        summary: (server2, n) => `${n} results of the ${server2} MCP server were over 20K tokens.`
+      },
+      mcpProjects: {
+        title: (name, used, loaded) => `MCP server ${name} loads in every project, used in ${used} of ${loaded}`,
+        detail: (name, projects) => `It is configured for the user (~/.claude.json), so every session in every project loads its instructions and tools, but ${name} was used only in ${projects.join(", ")}. Configure it just for those projects (local scope, not committed) and remove it from the user scope.`,
+        perSession: (per) => `\u2248 ${N(per)} tokens per session`,
+        usedIn: (list) => `Used in: ${list}`,
+        idle: (n, sessions2) => `Loaded but unused in ${n} other ${plural(n, "en", ["project", "projects"])} (${sessions2} ${plural(sessions2, "en", ["session", "sessions"])} in the last 30 days)`,
+        why: (per, used) => `\u2248 ${N(per)} tokens in every session of every project; used only in ${used}`,
+        summary: (name) => `the MCP server ${name} is configured for the user, so it loads everywhere, but is used only in a few projects.`
+      },
+      // ---------- Startup context (recommend-startup.ts) ----------
+      fileKind: {
+        user: "your global CLAUDE.md",
+        project: "project CLAUDE.md",
+        local: "CLAUDE.local.md",
+        rules: "rules file",
+        memory: "auto-memory index"
+      },
+      bigInstructions: {
+        titleOne: (file, tok) => `${file} adds ~${N(tok)} tokens to every session`,
+        titleMany: (n, min) => `${n} instruction files over ${N(min)} tokens each`,
+        detail: (pct2) => `These files load at the start of every session in their scope, and of the subagents that get CLAUDE.md. Compressing them and moving rarely needed parts into files read on demand usually cuts about ${pct2}% \u2014 that is the estimate below.`,
+        evidence: (file, kind, tok, sessions2) => `${file} (${kind}): \u2248 ${N(tok)} tokens, loaded in ${sessions2} ${plural(sessions2, "en", ["session", "sessions"])} in the last 30 days`,
+        why: (kind, tok) => `${kind}, \u2248 ${N(tok)} tokens loaded at every start`,
+        summary: (n) => `${n} instruction ${plural(n, "en", ["file is", "files are"])} large and ${n === 1 ? "loads" : "load"} into every session.`
+      },
+      bigMemory: {
+        title: (tok) => `Auto-memory adds ~${N(tok)} tokens to every session`,
+        detail: (pct2) => `Claude Code loads the MEMORY.md index of a project's auto-memory at every start. Merging duplicates, keeping one short line per entry and archiving outdated memories usually cuts about ${pct2}% \u2014 that is the estimate below.`,
+        evidence: (file, tok, sessions2) => `${file}: \u2248 ${N(tok)} tokens, loaded in ${sessions2} ${plural(sessions2, "en", ["session", "sessions"])} in the last 30 days`,
+        why: (tok) => `\u2248 ${N(tok)} tokens loaded at every start`,
+        summary: (n) => `the auto-memory index of ${n} ${plural(n, "en", ["project has", "projects have"])} grown large.`
+      },
+      hookEvent: {
+        unnamed: "unnamed",
+        titleOne: (name, per) => `The ${name} hook adds ~${N(per)} tokens to every session`,
+        titleMany: (n, per) => `${n} hooks add ~${N(per)} tokens to every session`,
+        detail: "These hooks come from your settings files, not from a plugin that Clorbit recognized, and the text they print is added to the context at the start of every session (and subagent). Plugin hooks are covered on the Skills & plugins tab.",
+        evidence: (name, per, sessions2) => `${name}: \u2248 ${N(per)} tokens per session, in ${sessions2} ${plural(sessions2, "en", ["session", "sessions"])} in the last 30 days`,
+        action: (name) => `Review the ${name} hook that adds context at startup`,
+        why: (per, settingsFile) => `it adds \u2248 ${N(per)} tokens to every session. Find it in ${settingsFile} or in a project's .claude/settings.json / settings.local.json, and suggest how to shorten its output or print it only when needed. If it belongs to a plugin, tell me which`,
+        summary: (n) => `${n} ${plural(n, "en", ["hook adds", "hooks add"])} text to the context at the start of every session.`
+      },
+      skillListing: {
+        actionable: (per) => `Acting on the Skills & plugins recommendations would save \u2248 ${N(per)} tokens of startup context per session`
+      },
+      startupTotal: {
+        subagents: (n, per, total) => `Subagents start with their own startup context: ${N(n)} in this period \xD7 \u2248 ${N(per)} \u2248 ${N(total)} tokens`,
+        titleSubs: (n, total) => `Subagents paid the startup context ${N(n)} times: \u2248 ${N(total)} tokens in this period`
       }
     }
   };
@@ -1728,12 +1828,6 @@ function uk() {
       evidence: (label, per, perSub) => `${label}: \u2248 ${N(per)} \u043D\u0430 \u0441\u0435\u0441\u0456\u044E${perSub ? `, \u2248 ${N(perSub)} \u043D\u0430 \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430` : ""}`,
       fix: "\u041D\u0430\u0439\u043F\u0440\u043E\u0441\u0442\u0456\u0448\u0435 \u0441\u043A\u043E\u0440\u043E\u0442\u0438\u0442\u0438 \u0441\u043F\u0438\u0441\u043E\u043A \u0441\u043A\u0456\u043B\u0456\u0432 (\u0432\u0438\u043C\u043A\u043D\u0443\u0442\u0438 \u0437\u0430\u0439\u0432\u0456 \u043F\u043B\u0430\u0433\u0456\u043D\u0438, \u043F\u0440\u0438\u0431\u0440\u0430\u0442\u0438 \u043D\u0435\u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0456 \u0441\u043A\u0456\u043B\u0438) \u0456 CLAUDE.md; \u0434\u0440\u0456\u0431\u043D\u0456 \u0437\u0430\u0434\u0430\u0447\u0456 \u043A\u0440\u0430\u0449\u0435 \u0440\u043E\u0431\u0438\u0442\u0438 \u0431\u0435\u0437 \u043E\u043A\u0440\u0435\u043C\u043E\u0433\u043E \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430 \u2014 \u043A\u043E\u0436\u0435\u043D \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442 \u043F\u043B\u0430\u0442\u0438\u0442\u044C \u0446\u0435\u0439 \u0441\u0442\u0430\u0440\u0442\u043E\u0432\u0438\u0439 \u0432\u043D\u0435\u0441\u043E\u043A \u0437\u0430\u043D\u043E\u0432\u043E."
     },
-    unusedMcp: {
-      title: (n, days) => `${n} MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0456\u0432 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u043E, \u0430\u043B\u0435 \u0436\u043E\u0434\u043D\u043E\u0433\u043E \u0432\u0438\u043A\u043B\u0438\u043A\u0443 \u0437\u0430 ${days} \u0434\u043D.`,
-      detail: "\u0426\u0456 \u0441\u0435\u0440\u0432\u0435\u0440\u0438 \u0437'\u044F\u0432\u043B\u044F\u044E\u0442\u044C\u0441\u044F \u0432 \u0441\u0435\u0441\u0456\u044F\u0445 (\u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0457 \u0442\u0430/\u0430\u0431\u043E \u0441\u043F\u0438\u0441\u043E\u043A \u0432\u0456\u0434\u043A\u043B\u0430\u0434\u0435\u043D\u0438\u0445 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432), \u0430\u043B\u0435 \u0457\u0445\u043D\u0456 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0438 \u0436\u043E\u0434\u043D\u043E\u0433\u043E \u0440\u0430\u0437\u0443 \u043D\u0435 \u0432\u0438\u043A\u043B\u0438\u043A\u0430\u043B\u0438\u0441\u044C.",
-      evidence: (name, n, tok) => `${name}: \u0443 ${n} \u0441\u0435\u0441\u0456\u044F\u0445/\u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430\u0445${tok ? `, \u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0457 \u2248 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0441\u0443\u043C\u0430\u0440\u043D\u043E` : ""}`,
-      fix: "\u0412\u0438\u043C\u043A\u043D\u0438 \u043D\u0435\u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0456 \u0441\u0435\u0440\u0432\u0435\u0440\u0438 \u0447\u0435\u0440\u0435\u0437 /mcp \u0443 Claude Code; \u043A\u043E\u043D\u0435\u043A\u0442\u043E\u0440\u0438 claude.ai (\xABclaude.ai \u2026\xBB) \u2014 \u0443 \u043D\u0430\u043B\u0430\u0448\u0442\u0443\u0432\u0430\u043D\u043D\u044F\u0445 Connectors \u043D\u0430 claude.ai."
-    },
     bigResults: {
       example: (label, tok, project) => `${label} \u2014 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 (${project})`,
       title: (tool, n, max) => `${tool}: ${n} \u0437\u0430\u0432\u0435\u043B\u0438\u043A\u0438\u0445 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0456\u0432 (\u0434\u043E ${N(max)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432)`,
@@ -1769,7 +1863,7 @@ function uk() {
     },
     hooks: {
       title: (plugin, n, min, err) => `\u0425\u0443\u043A\u0438 ${plugin ? `\u043F\u043B\u0430\u0433\u0456\u043D\u0430 ${plugin}` : "\u0431\u0435\u0437 \u043F\u043B\u0430\u0433\u0456\u043D\u0430"}: ${N(n)} \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432, ${min} \u0445\u0432 \u0432\u0438\u043A\u043E\u043D\u0430\u043D\u043D\u044F${err !== null ? `, ${pct(err)} \u0437 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E \u0447\u0438 stderr` : ""}`,
-      detail: (names, min, err) => `\u0425\u0443\u043A\u0438 (${names}) \u0437\u0430\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u044C\u0441\u044F \u043E\u043A\u0440\u0435\u043C\u0438\u043C \u043F\u0440\u043E\u0446\u0435\u0441\u043E\u043C \u043D\u0430 \u043A\u043E\u0436\u043D\u0443 \u0442\u0430\u043A\u0443 \u043F\u043E\u0434\u0456\u044E; \u0441\u0443\u043C\u0430\u0440\u043D\u0438\u0439 \u0447\u0430\u0441 \u0457\u0445 \u0432\u0438\u043A\u043E\u043D\u0430\u043D\u043D\u044F \u2248 ${min} \u0445\u0432.${err !== null ? ` ${pct(err)} \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432 \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u043B\u0438\u0441\u044C \u0437 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E \u0430\u0431\u043E \u043F\u0438\u0441\u0430\u043B\u0438 \u0432 stderr.` : ""}`,
+      detail: (names2, min, err) => `\u0425\u0443\u043A\u0438 (${names2}) \u0437\u0430\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u044C\u0441\u044F \u043E\u043A\u0440\u0435\u043C\u0438\u043C \u043F\u0440\u043E\u0446\u0435\u0441\u043E\u043C \u043D\u0430 \u043A\u043E\u0436\u043D\u0443 \u0442\u0430\u043A\u0443 \u043F\u043E\u0434\u0456\u044E; \u0441\u0443\u043C\u0430\u0440\u043D\u0438\u0439 \u0447\u0430\u0441 \u0457\u0445 \u0432\u0438\u043A\u043E\u043D\u0430\u043D\u043D\u044F \u2248 ${min} \u0445\u0432.${err !== null ? ` ${pct(err)} \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432 \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u043B\u0438\u0441\u044C \u0437 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E \u0430\u0431\u043E \u043F\u0438\u0441\u0430\u043B\u0438 \u0432 stderr.` : ""}`,
       runs: (n) => `\u0417\u0430\u043F\u0443\u0441\u043A\u0456\u0432: ${N(n)}`,
       time: (sec) => `\u0421\u0443\u043C\u0430\u0440\u043D\u0438\u0439 \u0447\u0430\u0441: ${sec} \u0441`,
       errors: (n) => `\u0417 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E/stderr: ${N(n)}`,
@@ -1830,6 +1924,110 @@ function uk() {
         reviewAction: (key, keep) => `\u041F\u043E\u0440\u0456\u0432\u043D\u044F\u0442\u0438 \u0441\u043A\u0456\u043B ${key} \u0437 ${keep}`,
         whyReview: (plugin) => `\u0441\u043A\u0456\u043B \u043F\u043B\u0430\u0433\u0456\u043D\u0430 \u043D\u0435 \u0432\u0438\u043C\u0438\u043A\u0430\u0454\u0442\u044C\u0441\u044F \u043E\u043A\u0440\u0435\u043C\u043E; \u0441\u043A\u0430\u0436\u0438, \u0447\u0438 \u0454 \u0441\u0435\u043D\u0441 \u0432\u0438\u043C\u043A\u043D\u0443\u0442\u0438 ${plugin} \u043F\u043E\u0432\u043D\u0456\u0441\u0442\u044E \u0456 \u044F\u043A\u0443 \u043A\u043E\u043F\u0456\u044E \u0437\u0430\u043B\u0438\u0448\u0438\u0442\u0438`,
         summary: (n) => `${n} ${plural(n, "uk", ["\u043D\u0430\u0437\u0432\u0430 \u0441\u043A\u0456\u043B\u0430 \u0442\u0440\u0430\u043F\u043B\u044F\u0454\u0442\u044C\u0441\u044F", "\u043D\u0430\u0437\u0432\u0438 \u0441\u043A\u0456\u043B\u0456\u0432 \u0442\u0440\u0430\u043F\u043B\u044F\u044E\u0442\u044C\u0441\u044F", "\u043D\u0430\u0437\u0432 \u0441\u043A\u0456\u043B\u0456\u0432 \u0442\u0440\u0430\u043F\u043B\u044F\u044E\u0442\u044C\u0441\u044F"])} \u0443 \u0441\u043F\u0438\u0441\u043A\u0443 \u0431\u0456\u043B\u044C\u0448\u0435 \u043E\u0434\u043D\u043E\u0433\u043E \u0440\u0430\u0437\u0443.`
+      },
+      mcpParts: (p) => [
+        p.instr ? `\u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0457 ${N(p.instr)}` : "",
+        p.defs ? `\u0432\u0438\u0437\u043D\u0430\u0447\u0435\u043D\u043D\u044F \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432 ${N(p.defs)}` : "",
+        p.names ? `\u043D\u0430\u0437\u0432\u0438 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432 ${N(p.names)}` : ""
+      ].filter(Boolean).join(" + "),
+      mcpSource: {
+        user: (file) => `\u043A\u043E\u043D\u0444\u0456\u0433\u0443\u0440\u0430\u0446\u0456\u044F \u043A\u043E\u0440\u0438\u0441\u0442\u0443\u0432\u0430\u0447\u0430 (${file})`,
+        local: (dirs) => `\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u0430 \u043A\u043E\u043D\u0444\u0456\u0433\u0443\u0440\u0430\u0446\u0456\u044F ${dirs.join(", ")}`,
+        project: (dirs) => `.mcp.json \u0443 ${dirs.join(", ")}`,
+        plugin: (plugin) => `\u043F\u043B\u0430\u0433\u0456\u043D ${plugin}`,
+        claudeai: "\u043A\u043E\u043D\u0435\u043A\u0442\u043E\u0440 claude.ai",
+        unknown: "\u043D\u0430\u043B\u0430\u0448\u0442\u043E\u0432\u0430\u043D\u043E \u0434\u0435\u0456\u043D\u0434\u0435"
+      },
+      unusedMcp: {
+        titleOne: (name, last) => `MCP-\u0441\u0435\u0440\u0432\u0435\u0440 ${name} \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u043E, \u0430\u043B\u0435 ${last}`,
+        titleMany: (n, days) => `${n} ${plural(n, "uk", ["\u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0439 MCP-\u0441\u0435\u0440\u0432\u0435\u0440 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u0432\u0441\u044F", "\u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0456 MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0438 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C", "\u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0445 MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0456\u0432 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C"])} ${days}+ \u0434\u043D.`,
+        detail: (days) => `\u0416\u043E\u0434\u043D\u043E\u0433\u043E \u0432\u0438\u043A\u043B\u0438\u043A\u0443 \u0457\u0445\u043D\u0456\u0445 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432 \u0437\u0430 \u0432\u0441\u044E \u0437\u0431\u0435\u0440\u0435\u0436\u0435\u043D\u0443 \u0456\u0441\u0442\u043E\u0440\u0456\u044E \u0449\u043E\u043D\u0430\u0439\u043C\u0435\u043D\u0448\u0435 ${days} \u0434\u043D. (\u0437 \u0430\u0440\u0445\u0456\u0432\u043D\u0438\u043C\u0438 \u0441\u0435\u0441\u0456\u044F\u043C\u0438), \u0430 \u043A\u043E\u0436\u043D\u0430 \u043D\u043E\u0432\u0430 \u0441\u0435\u0441\u0456\u044F \u0456 \u043A\u043E\u0436\u0435\u043D \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442 \u0457\u0445 \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0454: \u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0457 \u0442\u0430 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0438. \u0417 \u0443\u0432\u0456\u043C\u043A\u043D\u0435\u043D\u0438\u043C \u043F\u043E\u0448\u0443\u043A\u043E\u043C \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432 \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0456 \u043F\u0435\u0440\u0435\u043B\u0456\u0447\u0435\u043D\u043E \u043B\u0438\u0448\u0435 \u043D\u0430\u0437\u0432\u0438 (\u0441\u0445\u0435\u043C\u0438 \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u044E\u0442\u044C\u0441\u044F, \u043A\u043E\u043B\u0438 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D), \u0442\u043E\u0436 \u0435\u043A\u043E\u043D\u043E\u043C\u0456\u044F \u2014 \u0437\u0434\u0435\u0431\u0456\u043B\u044C\u0448\u043E\u0433\u043E \u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0457 \u0439 \u043D\u0430\u0437\u0432\u0438.`,
+        evidence: (name, source, last, per, parts) => `${name} (${source}): ${last}; \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E${parts ? ` (${parts})` : ""}`,
+        noSize: "\u0440\u043E\u0437\u043C\u0456\u0440 \u043D\u0435 \u0432\u0438\u043C\u0456\u0440\u044F\u043D\u043E (\u0441\u0442\u0430\u0440\u0456\u0448\u0456 \u0442\u0440\u0430\u043D\u0441\u043A\u0440\u0438\u043F\u0442\u0438)",
+        why: (last, per) => `${last}${per ? `; \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E` : ""}`,
+        summary: (n, days) => `${n} ${plural(n, "uk", ["\u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0439 MCP-\u0441\u0435\u0440\u0432\u0435\u0440 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u0432\u0441\u044F", "\u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0456 MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0438 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C", "\u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0445 MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0456\u0432 \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u043B\u0438\u0441\u044C"])} ${days}+ \u0434\u043D., \u0430\u043B\u0435 \u0439 \u0434\u0430\u043B\u0456 \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u044E\u0442\u044C\u0441\u044F \u0432 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E.`,
+        alsoFailed: (n) => `\u0449\u0435 \u0439 \u043D\u0435 \u0437\u043C\u0456\u0433 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u0438\u0441\u044F \u0432 ${n} ${plural(n, "uk", ["\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u044F\u0445", "\u0441\u0435\u0441\u0456\u044F\u0445"])}`,
+        pluginAction: (name, plugin) => `MCP-\u0441\u0435\u0440\u0432\u0435\u0440 ${name} \u0456\u0434\u0435 \u0440\u0430\u0437\u043E\u043C \u0456\u0437 \u043F\u043B\u0430\u0433\u0456\u043D\u043E\u043C ${plugin}`,
+        pluginUnusedWhy: (server2, last) => `\u0439\u043E\u0433\u043E MCP-\u0441\u0435\u0440\u0432\u0435\u0440 ${server2} \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0454\u0442\u044C\u0441\u044F, \u044F\u043A \u0456 \u043F\u043B\u0430\u0433\u0456\u043D \u0437\u0430\u0433\u0430\u043B\u043E\u043C: ${last}`,
+        pluginWhy: (last, key) => `${last}. \u0421\u0430\u043C \u043F\u043B\u0430\u0433\u0456\u043D \u0449\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0454\u0442\u044C\u0441\u044F, \u0430 \u0439\u043E\u0433\u043E \u0441\u0435\u0440\u0432\u0435\u0440 \u043E\u043A\u0440\u0435\u043C\u043E \u043D\u0435 \u0432\u0438\u043C\u0438\u043A\u0430\u0454\u0442\u044C\u0441\u044F: \u0443 \u043F\u0440\u043E\u0454\u043A\u0442\u0456, \u0434\u0435 \u0432\u0456\u043D \u043D\u0435 \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D, \u0432\u0438\u043C\u043A\u043D\u0438 \u0439\u043E\u0433\u043E \u0432 /mcp (\u043B\u0438\u0448\u0435 \u0434\u043B\u044F \u0446\u044C\u043E\u0433\u043E \u043F\u0440\u043E\u0454\u043A\u0442\u0443); \u0430\u0431\u043E, \u044F\u043A\u0449\u043E \u043E\u0431\u0456\u0439\u0434\u0435\u0448\u0441\u044F \u0431\u0435\u0437 \u0443\u0441\u044C\u043E\u0433\u043E \u043F\u043B\u0430\u0433\u0456\u043D\u0430, \u0432\u0438\u043C\u043A\u043D\u0438 \u043F\u043B\u0430\u0433\u0456\u043D (claude plugin disable ${key} --scope user). \u0421\u043A\u0430\u0436\u0438, \u0449\u043E \u043E\u0431\u0438\u0440\u0430\u0454\u0448`,
+        connectorAction: (name) => `\u0412\u0456\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u0438 \u043A\u043E\u043D\u0435\u043A\u0442\u043E\u0440 claude.ai ${name}`,
+        connectorWhy: (last) => `${last}. Claude Code \u0446\u044C\u043E\u0433\u043E \u0437\u0430 \u043C\u0435\u043D\u0435 \u043D\u0435 \u0437\u0440\u043E\u0431\u0438\u0442\u044C: \u0432\u0456\u0434\u043A\u043B\u044E\u0447\u0438 \u0439\u043E\u0433\u043E \u043D\u0430 claude.ai \u2192 Settings \u2192 Connectors (\u0442\u043E\u0434\u0456 \u0432\u0456\u043D \u0437\u043D\u0438\u043A\u043D\u0435 \u0432\u0441\u044E\u0434\u0438) \u0430\u0431\u043E \u0432\u0438\u043C\u043A\u043D\u0438 \u0434\u043B\u044F \u043E\u0434\u043D\u043E\u0433\u043E \u043F\u0440\u043E\u0454\u043A\u0442\u0443 \u0432 /mcp`,
+        connectorsAllWhy: (n, days) => `\u0436\u043E\u0434\u0435\u043D \u0437 ${n} ${plural(n, "uk", ["\u043A\u043E\u043D\u0435\u043A\u0442\u043E\u0440\u0430", "\u043A\u043E\u043D\u0435\u043A\u0442\u043E\u0440\u0456\u0432", "\u043A\u043E\u043D\u0435\u043A\u0442\u043E\u0440\u0456\u0432"])} claude.ai, \u044F\u043A\u0456 \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0454 Claude Code, \u043D\u0435 \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u0432\u0441\u044F ${days}+ \u0434\u043D.`,
+        unknownAction: (name) => `\u0417'\u044F\u0441\u0443\u0432\u0430\u0442\u0438, \u0434\u0435 \u043D\u0430\u043B\u0430\u0448\u0442\u043E\u0432\u0430\u043D\u043E MCP-\u0441\u0435\u0440\u0432\u0435\u0440 ${name}`,
+        unknownWhy: (last) => `${last}. \u0419\u043E\u0433\u043E \u043D\u0435\u043C\u0430\u0454 \u0432 ~/.claude.json \u0447\u0438 .mcp.json \u043F\u0440\u043E\u0454\u043A\u0442\u0443 (\u043A\u0435\u0440\u043E\u0432\u0430\u043D\u0456 \u043D\u0430\u043B\u0430\u0448\u0442\u0443\u0432\u0430\u043D\u043D\u044F, --mcp-config, IDE \u0447\u0438 \u043F\u043B\u0430\u0433\u0456\u043D?): \u0432\u0438\u043A\u043E\u043D\u0430\u0439 claude mcp get \u0437 \u0439\u043E\u0433\u043E \u043D\u0430\u0437\u0432\u043E\u044E \u0456 \u0441\u043A\u0430\u0436\u0438, \u044F\u043A \u0439\u043E\u0433\u043E \u043C\u043E\u0436\u043D\u0430 \u0432\u0438\u043C\u043A\u043D\u0443\u0442\u0438`
+      },
+      mcpFailing: {
+        titleOne: (name) => `MCP-\u0441\u0435\u0440\u0432\u0435\u0440 ${name} \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u0437\u0431\u043E\u0457\u0442\u044C`,
+        titleMany: (n) => `${n} ${plural(n, "uk", ["MCP-\u0441\u0435\u0440\u0432\u0435\u0440 \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u043D\u0435 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0430\u0454\u0442\u044C\u0441\u044F", "MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0438 \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u043D\u0435 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0430\u044E\u0442\u044C\u0441\u044F", "MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0456\u0432 \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u043D\u0435 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0430\u044E\u0442\u044C\u0441\u044F"])} \u0430\u0431\u043E \u043F\u043E\u0432\u0435\u0440\u0442\u0430\u044E\u0442\u044C \u043F\u043E\u043C\u0438\u043B\u043A\u0438`,
+        detail: "\u0417\u0430 \u043F\u0435\u0440\u0456\u043E\u0434 \u0446\u0456 \u0441\u0435\u0440\u0432\u0435\u0440\u0438 \u043D\u0435 \u0437\u043C\u043E\u0433\u043B\u0438 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u0438\u0441\u044F, \u0432\u0438\u043C\u0430\u0433\u0430\u043B\u0438 \u0432\u0445\u043E\u0434\u0443 \u0430\u0431\u043E \u0431\u0456\u043B\u044C\u0448\u0456\u0441\u0442\u044C \u0457\u0445\u043D\u0456\u0445 \u0432\u0438\u043A\u043B\u0438\u043A\u0456\u0432 \u0437\u0430\u043A\u0456\u043D\u0447\u0438\u043B\u0430\u0441\u044C \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E. \u0421\u0435\u0440\u0432\u0435\u0440, \u0449\u043E \u0437\u0431\u043E\u0457\u0442\u044C, \u043E\u0434\u043D\u0430\u043A\u043E\u0432\u043E \u043F\u0440\u043E\u0431\u0443\u044E\u0442\u044C \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u0438 \u043D\u0430 \u043A\u043E\u0436\u043D\u043E\u043C\u0443 \u0441\u0442\u0430\u0440\u0442\u0456, \u0430 \u0439\u043E\u0433\u043E \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432 \u0431\u0440\u0430\u043A\u0443\u0454 \u0441\u0430\u043C\u0435 \u0442\u043E\u0434\u0456, \u043A\u043E\u043B\u0438 \u0432\u043E\u043D\u0438 \u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0456. \u0417\u0431\u043E\u0457 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u043D\u044F \u0437\u0430\u043F\u0438\u0441\u0443\u044E\u0442\u044C \u043B\u0438\u0448\u0435 \u043D\u043E\u0432\u0456\u0448\u0456 \u0432\u0435\u0440\u0441\u0456\u0457 Claude Code.",
+        failed: (a, b, err) => `\u043D\u0435 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0438\u0432\u0441\u044F \u0432 ${a} \u0437 ${b} \u0441\u0435\u0441\u0456\u0439${err ? ` (\u043E\u0441\u0442\u0430\u043D\u043D\u044F \u043F\u043E\u043C\u0438\u043B\u043A\u0430: ${err})` : ""}`,
+        auth: (a) => `\u0432\u0438\u043C\u0430\u0433\u0430\u0432 \u0432\u0445\u043E\u0434\u0443 \u0432 ${a} ${plural(a, "uk", ["\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u044F\u0445", "\u0441\u0435\u0441\u0456\u044F\u0445"])}`,
+        errors: (e, c) => `${e} \u0437 ${c} \u0432\u0438\u043A\u043B\u0438\u043A\u0456\u0432 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0456\u0432 \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u043B\u0438\u0441\u044C \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E`,
+        evidence: (name, facts) => `${name}: ${facts}`,
+        authAction: (name) => `\u0417\u043D\u043E\u0432\u0443 \u0443\u0432\u0456\u0439\u0442\u0438 \u0432 MCP-\u0441\u0435\u0440\u0432\u0435\u0440 ${name}`,
+        authWhy: (facts, connector, name) => `${facts}. ${connector ? "\u041F\u0435\u0440\u0435\u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0438 \u0439\u043E\u0433\u043E \u043D\u0430 claude.ai \u2192 Settings \u2192 Connectors \u0430\u0431\u043E " : ""}\u0437\u0430\u043F\u0443\u0441\u0442\u0438 /mcp \u0443 Claude Code \u0456 \u0432\u0438\u0431\u0435\u0440\u0438 Authenticate (\u0430\u0431\u043E claude mcp login ${name} \u0443 \u0442\u0435\u0440\u043C\u0456\u043D\u0430\u043B\u0456); \u0432\u0445\u0456\u0434 \u043C\u0443\u0448\u0443 \u0437\u0440\u043E\u0431\u0438\u0442\u0438 \u044F \u0441\u0430\u043C \u2014 \u043F\u0456\u0434\u043A\u0430\u0436\u0438, \u0449\u043E \u043D\u0430\u0442\u0438\u0441\u043D\u0443\u0442\u0438`,
+        fixAction: (name) => `\u0417'\u044F\u0441\u0443\u0432\u0430\u0442\u0438, \u0447\u043E\u043C\u0443 \u0437\u0431\u043E\u0457\u0442\u044C MCP-\u0441\u0435\u0440\u0432\u0435\u0440 ${name}`,
+        fixWhy: (facts, name) => `${facts}. claude mcp get ${name} \u043F\u043E\u043A\u0430\u0436\u0435 \u0439\u043E\u0433\u043E \u0441\u0442\u0430\u043D \u0456 \u043F\u043E\u043C\u0438\u043B\u043A\u0443; \u0437\u0430\u043F\u0440\u043E\u043F\u043E\u043D\u0443\u0439 \u0432\u0438\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043D\u044F \u043A\u043E\u043C\u0430\u043D\u0434\u0438, URL \u0447\u0438 \u043E\u0431\u043B\u0456\u043A\u043E\u0432\u0438\u0445 \u0434\u0430\u043D\u0438\u0445. \u042F\u043A\u0449\u043E \u0432\u0456\u043D \u043C\u0435\u043D\u0456 \u0432\u0436\u0435 \u043D\u0435 \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D \u2014 \u0441\u043A\u0430\u0436\u0438, \u044F\u043A \u0439\u043E\u0433\u043E \u0432\u0438\u043C\u043A\u043D\u0443\u0442\u0438`,
+        summary: (n) => `${n} ${plural(n, "uk", ["MCP-\u0441\u0435\u0440\u0432\u0435\u0440 \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u043D\u0435 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0430\u0454\u0442\u044C\u0441\u044F", "MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0438 \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u043D\u0435 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0430\u044E\u0442\u044C\u0441\u044F", "MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0456\u0432 \u043F\u043E\u0441\u0442\u0456\u0439\u043D\u043E \u043D\u0435 \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0430\u044E\u0442\u044C\u0441\u044F"])} \u0430\u0431\u043E \u043F\u043E\u0432\u0435\u0440\u0442\u0430\u044E\u0442\u044C \u043F\u043E\u043C\u0438\u043B\u043A\u0438.`
+      },
+      mcpHeavy: {
+        title: (server2, n, max) => `MCP-\u0441\u0435\u0440\u0432\u0435\u0440 ${server2}: ${n} ${plural(n, "uk", ["\u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442", "\u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0438", "\u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0456\u0432"])} \u043F\u043E\u043D\u0430\u0434 20 \u0442\u0438\u0441. \u0442\u043E\u043A\u0435\u043D\u0456\u0432 (\u0434\u043E ${N(max)})`,
+        detail: (sum) => `\u041A\u043E\u0436\u0435\u043D \u0437\u0430\u0432\u0435\u043B\u0438\u043A\u0438\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043E\u0434\u0440\u0430\u0437\u0443 \u043F\u043E\u0442\u0440\u0430\u043F\u043B\u044F\u0454 \u0432 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0456 \u0434\u0430\u043B\u0456 \u043F\u0435\u0440\u0435\u0447\u0438\u0442\u0443\u0454\u0442\u044C\u0441\u044F \u0449\u043E\u0445\u043E\u0434\u0443. \u2248 ${N(sum)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0437\u0430 \u043F\u0435\u0440\u0456\u043E\u0434; \u043E\u0446\u0456\u043D\u043A\u0430 \u0432\u0438\u0445\u043E\u0434\u0438\u0442\u044C \u0437 \u0442\u043E\u0433\u043E, \u0449\u043E \u2248 5 \u0442\u0438\u0441. \u043D\u0430 \u0432\u0438\u043A\u043B\u0438\u043A \u0432\u0438\u0441\u0442\u0430\u0447\u0438\u043B\u043E \u0431.`,
+        tipBrowser: "\u0411\u0440\u0430\u0443\u0437\u0435\u0440: \u0440\u043E\u0431\u0438 \u0441\u043A\u0440\u0438\u043D\u0448\u043E\u0442\u0438 \u0437 \u043C\u0435\u043D\u0448\u0438\u043C \u043C\u0430\u0441\u0448\u0442\u0430\u0431\u043E\u043C \u0430\u0431\u043E \u043D\u0430\u0431\u043B\u0438\u0436\u0435\u043D\u043D\u044F\u043C \u0434\u043E \u0434\u0456\u043B\u044F\u043D\u043A\u0438, \u0447\u0438\u0442\u0430\u0439 \u0441\u0442\u043E\u0440\u0456\u043D\u043A\u0443 \u0437 \u0444\u0456\u043B\u044C\u0442\u0440\u043E\u043C (\u0456\u043D\u0442\u0435\u0440\u0430\u043A\u0442\u0438\u0432\u043D\u0456 \u0435\u043B\u0435\u043C\u0435\u043D\u0442\u0438) \u0430\u0431\u043E \u0447\u0435\u0440\u0435\u0437 get_page_text / find \u0437\u0430\u043C\u0456\u0441\u0442\u044C \u043F\u043E\u0432\u043D\u043E\u0433\u043E \u0434\u0435\u0440\u0435\u0432\u0430, \u0437\u0430\u043A\u0440\u0438\u0432\u0430\u0439 \u0437\u0430\u0439\u0432\u0456 \u0432\u043A\u043B\u0430\u0434\u043A\u0438.",
+        tipGithub: "GitHub: \u0432\u0443\u0436\u0447\u0456 \u0437\u0430\u043F\u0438\u0442\u0438 (per_page, \u0444\u0456\u043B\u044C\u0442\u0440\u0438, \u0448\u043B\u044F\u0445), \u0434\u0456\u0430\u043F\u0430\u0437\u043E\u043D \u0440\u044F\u0434\u043A\u0456\u0432 \u0437\u0430\u043C\u0456\u0441\u0442\u044C \u0446\u0456\u043B\u0438\u0445 \u0444\u0430\u0439\u043B\u0456\u0432, \u0441\u043F\u0435\u0440\u0448\u0443 \u0441\u043F\u0438\u0441\u043E\u043A \u0437\u043C\u0456\u043D\u0435\u043D\u0438\u0445 \u0444\u0430\u0439\u043B\u0456\u0432, \u043F\u043E\u0442\u0456\u043C \u043F\u043E\u0432\u043D\u0456 \u0434\u0438\u0444\u0438.",
+        tipFigma: "Figma: \u0441\u043F\u0435\u0440\u0448\u0443 get_metadata, \u043F\u043E\u0442\u0456\u043C \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0434\u0438\u0437\u0430\u0439\u043D\u0443 \u0434\u043B\u044F \u043A\u043E\u043D\u043A\u0440\u0435\u0442\u043D\u0438\u0445 id \u0432\u0443\u0437\u043B\u0456\u0432 \u0437\u0430\u043C\u0456\u0441\u0442\u044C \u0446\u0456\u043B\u0438\u0445 \u0441\u0442\u043E\u0440\u0456\u043D\u043E\u043A; \u0443\u043D\u0438\u043A\u0430\u0439 \u0441\u043A\u0440\u0438\u043D\u0448\u043E\u0442\u0456\u0432 \u0443\u0441\u0456\u0454\u0457 \u0441\u0442\u043E\u0440\u0456\u043D\u043A\u0438.",
+        tipGeneric: (server2) => `\u041F\u0440\u043E\u0441\u0438 \u0432 ${server2} \u043C\u0435\u043D\u0448\u0435: \u0444\u0456\u043B\u044C\u0442\u0440\u0438, \u043B\u0456\u043C\u0456\u0442\u0438, \u043B\u0438\u0448\u0435 \u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0456 \u043F\u043E\u043B\u044F, \u043F\u0430\u0433\u0456\u043D\u0430\u0446\u0456\u044F.`,
+        action: (server2, tools) => `\u041F\u0435\u0440\u0435\u0433\u043B\u044F\u043D\u0443\u0442\u0438, \u044F\u043A \u044F \u0432\u0438\u043A\u043B\u0438\u043A\u0430\u044E ${server2} (${tools})`,
+        why: (n, max, tip) => `${n} \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0456\u0432 \u043F\u043E\u043D\u0430\u0434 20 \u0442\u0438\u0441. \u0442\u043E\u043A\u0435\u043D\u0456\u0432, \u0434\u043E ${N(max)}. ${tip} \u0417\u0430\u043F\u0440\u043E\u043F\u043E\u043D\u0443\u0439 \u043A\u043E\u043D\u043A\u0440\u0435\u0442\u043D\u0456 \u0441\u043F\u043E\u0441\u043E\u0431\u0438 \u0432\u0438\u043A\u043B\u0438\u043A\u0456\u0432; \u044F\u043A\u0449\u043E \u0434\u043E\u043F\u043E\u043C\u043E\u0436\u0435 \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u0440\u044F\u0434\u043E\u043A \u0443 CLAUDE.md \u043F\u0440\u043E\u0454\u043A\u0442\u0443 \u2014 \u0437\u0430\u043F\u0440\u043E\u043F\u043E\u043D\u0443\u0439 \u0439\u043E\u0433\u043E, \u0430\u043B\u0435 \u043D\u0435 \u0434\u043E\u0434\u0430\u0432\u0430\u0439 \u0431\u0435\u0437 \u043C\u043E\u0454\u0457 \u0437\u0433\u043E\u0434\u0438`,
+        summary: (server2, n) => `${n} \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0456\u0432 MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0430 ${server2} \u0431\u0443\u043B\u0438 \u043F\u043E\u043D\u0430\u0434 20 \u0442\u0438\u0441. \u0442\u043E\u043A\u0435\u043D\u0456\u0432.`
+      },
+      mcpProjects: {
+        title: (name, used, loaded) => `MCP-\u0441\u0435\u0440\u0432\u0435\u0440 ${name} \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0454\u0442\u044C\u0441\u044F \u0432 \u043A\u043E\u0436\u043D\u043E\u043C\u0443 \u043F\u0440\u043E\u0454\u043A\u0442\u0456, \u0430 \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D \u0443 ${used} \u0437 ${loaded}`,
+        detail: (name, projects) => `\u0419\u043E\u0433\u043E \u043D\u0430\u043B\u0430\u0448\u0442\u043E\u0432\u0430\u043D\u043E \u0434\u043B\u044F \u043A\u043E\u0440\u0438\u0441\u0442\u0443\u0432\u0430\u0447\u0430 (~/.claude.json), \u0442\u043E\u0436 \u043A\u043E\u0436\u043D\u0430 \u0441\u0435\u0441\u0456\u044F \u0432 \u043A\u043E\u0436\u043D\u043E\u043C\u0443 \u043F\u0440\u043E\u0454\u043A\u0442\u0456 \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0454 \u0439\u043E\u0433\u043E \u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0457 \u0442\u0430 \u0456\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0438, \u0430 ${name} \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0432\u0430\u0432\u0441\u044F \u043B\u0438\u0448\u0435 \u0432 ${projects.join(", ")}. \u041D\u0430\u043B\u0430\u0448\u0442\u0443\u0439 \u0439\u043E\u0433\u043E \u0442\u0456\u043B\u044C\u043A\u0438 \u0434\u043B\u044F \u0446\u0438\u0445 \u043F\u0440\u043E\u0454\u043A\u0442\u0456\u0432 (\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u043E, \u0431\u0435\u0437 \u043A\u043E\u043C\u0456\u0442\u0443) \u0456 \u043F\u0440\u0438\u0431\u0435\u0440\u0438 \u0437 \u0440\u0456\u0432\u043D\u044F \u043A\u043E\u0440\u0438\u0441\u0442\u0443\u0432\u0430\u0447\u0430.`,
+        perSession: (per) => `\u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E`,
+        usedIn: (list) => `\u0412\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0454\u0442\u044C\u0441\u044F \u0432: ${list}`,
+        idle: (n, sessions2) => `\u0417\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0454\u0442\u044C\u0441\u044F \u0431\u0435\u0437 \u043F\u043E\u0442\u0440\u0435\u0431\u0438 \u0449\u0435 \u0432 ${n} ${plural(n, "uk", ["\u043F\u0440\u043E\u0454\u043A\u0442\u0456", "\u043F\u0440\u043E\u0454\u043A\u0442\u0430\u0445", "\u043F\u0440\u043E\u0454\u043A\u0442\u0430\u0445"])} (${sessions2} ${plural(sessions2, "uk", ["\u0441\u0435\u0441\u0456\u044F", "\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u0439"])} \u0437\u0430 \u043E\u0441\u0442\u0430\u043D\u043D\u0456 30 \u0434\u043D\u0456\u0432)`,
+        why: (per, used) => `\u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0443 \u043A\u043E\u0436\u043D\u0456\u0439 \u0441\u0435\u0441\u0456\u0457 \u043A\u043E\u0436\u043D\u043E\u0433\u043E \u043F\u0440\u043E\u0454\u043A\u0442\u0443; \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u043E\u0432\u0443\u0454\u0442\u044C\u0441\u044F \u043B\u0438\u0448\u0435 \u0432 ${used}`,
+        summary: (name) => `MCP-\u0441\u0435\u0440\u0432\u0435\u0440 ${name} \u043D\u0430\u043B\u0430\u0448\u0442\u043E\u0432\u0430\u043D\u043E \u0434\u043B\u044F \u043A\u043E\u0440\u0438\u0441\u0442\u0443\u0432\u0430\u0447\u0430, \u0442\u043E\u0436 \u0432\u0456\u043D \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0454\u0442\u044C\u0441\u044F \u0432\u0441\u044E\u0434\u0438, \u0430 \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D \u043B\u0438\u0448\u0435 \u0432 \u043A\u0456\u043B\u044C\u043A\u043E\u0445 \u043F\u0440\u043E\u0454\u043A\u0442\u0430\u0445.`
+      },
+      fileKind: {
+        user: "\u0442\u0432\u0456\u0439 \u0433\u043B\u043E\u0431\u0430\u043B\u044C\u043D\u0438\u0439 CLAUDE.md",
+        project: "CLAUDE.md \u043F\u0440\u043E\u0454\u043A\u0442\u0443",
+        local: "CLAUDE.local.md",
+        rules: "\u0444\u0430\u0439\u043B \u043F\u0440\u0430\u0432\u0438\u043B",
+        memory: "\u0456\u043D\u0434\u0435\u043A\u0441 \u0430\u0432\u0442\u043E\u043F\u0430\u043C'\u044F\u0442\u0456"
+      },
+      bigInstructions: {
+        titleOne: (file, tok) => `${file} \u0434\u043E\u0434\u0430\u0454 ~${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0443 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E`,
+        titleMany: (n, min) => `${n} ${plural(n, "uk", ["\u0444\u0430\u0439\u043B \u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0439", "\u0444\u0430\u0439\u043B\u0438 \u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0439", "\u0444\u0430\u0439\u043B\u0456\u0432 \u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0439"])} \u043F\u043E\u043D\u0430\u0434 ${N(min)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043A\u043E\u0436\u0435\u043D`,
+        detail: (pct2) => `\u0426\u0456 \u0444\u0430\u0439\u043B\u0438 \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u044E\u0442\u044C\u0441\u044F \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0456 \u043A\u043E\u0436\u043D\u043E\u0457 \u0441\u0435\u0441\u0456\u0457 \u0443 \u0441\u0432\u043E\u0457\u0439 \u043E\u0431\u043B\u0430\u0441\u0442\u0456 \u0434\u0456\u0457, \u0430 \u0442\u0430\u043A\u043E\u0436 \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0456\u0432, \u0449\u043E \u043E\u0442\u0440\u0438\u043C\u0443\u044E\u0442\u044C CLAUDE.md. \u042F\u043A\u0449\u043E \u0457\u0445 \u0441\u0442\u0438\u0441\u043D\u0443\u0442\u0438, \u0430 \u0440\u0456\u0434\u043A\u043E \u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0435 \u0432\u0438\u043D\u0435\u0441\u0442\u0438 \u0432 \u043E\u043A\u0440\u0435\u043C\u0456 \u0444\u0430\u0439\u043B\u0438, \u044F\u043A\u0456 \u0447\u0438\u0442\u0430\u044E\u0442\u044C\u0441\u044F \u0437\u0430 \u043F\u043E\u0442\u0440\u0435\u0431\u0438, \u0437\u0430\u0437\u0432\u0438\u0447\u0430\u0439 \u0432\u0438\u0445\u043E\u0434\u0438\u0442\u044C \u043C\u0456\u043D\u0443\u0441 ${pct2}% \u2014 \u0446\u0435 \u0439 \u043E\u0446\u0456\u043D\u043A\u0430 \u043D\u0438\u0436\u0447\u0435.`,
+        evidence: (file, kind, tok, sessions2) => `${file} (${kind}): \u2248 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432, \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0432\u0430\u0432\u0441\u044F \u0432 ${sessions2} ${plural(sessions2, "uk", ["\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u044F\u0445", "\u0441\u0435\u0441\u0456\u044F\u0445"])} \u0437\u0430 \u043E\u0441\u0442\u0430\u043D\u043D\u0456 30 \u0434\u043D\u0456\u0432`,
+        why: (kind, tok) => `${kind}, \u2248 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u043A\u043E\u0436\u043D\u043E\u043C\u0443 \u0441\u0442\u0430\u0440\u0442\u0456`,
+        summary: (n) => `${n} ${plural(n, "uk", ["\u0444\u0430\u0439\u043B \u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0439 \u0437\u0430\u0432\u0435\u043B\u0438\u043A\u0438\u0439", "\u0444\u0430\u0439\u043B\u0438 \u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0439 \u0437\u0430\u0432\u0435\u043B\u0438\u043A\u0456", "\u0444\u0430\u0439\u043B\u0456\u0432 \u0456\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0456\u0439 \u0437\u0430\u0432\u0435\u043B\u0438\u043A\u0456"])} \u0456 ${n === 1 ? "\u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0454\u0442\u044C\u0441\u044F" : "\u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u044E\u0442\u044C\u0441\u044F"} \u0432 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E.`
+      },
+      bigMemory: {
+        title: (tok) => `\u0410\u0432\u0442\u043E\u043F\u0430\u043C'\u044F\u0442\u044C \u0434\u043E\u0434\u0430\u0454 ~${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0443 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E`,
+        detail: (pct2) => `Claude Code \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0454 \u0456\u043D\u0434\u0435\u043A\u0441 MEMORY.md \u0430\u0432\u0442\u043E\u043F\u0430\u043C'\u044F\u0442\u0456 \u043F\u0440\u043E\u0454\u043A\u0442\u0443 \u043D\u0430 \u043A\u043E\u0436\u043D\u043E\u043C\u0443 \u0441\u0442\u0430\u0440\u0442\u0456. \u042F\u043A\u0449\u043E \u043E\u0431'\u0454\u0434\u043D\u0430\u0442\u0438 \u0434\u0443\u0431\u043B\u0456\u043A\u0430\u0442\u0438, \u043B\u0438\u0448\u0438\u0442\u0438 \u043F\u043E \u043E\u0434\u043D\u043E\u043C\u0443 \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u043C\u0443 \u0440\u044F\u0434\u043A\u0443 \u043D\u0430 \u0437\u0430\u043F\u0438\u0441 \u0456 \u043F\u0435\u0440\u0435\u043D\u0435\u0441\u0442\u0438 \u0437\u0430\u0441\u0442\u0430\u0440\u0456\u043B\u0435 \u0432 \u0430\u0440\u0445\u0456\u0432, \u0437\u0430\u0437\u0432\u0438\u0447\u0430\u0439 \u0432\u0438\u0445\u043E\u0434\u0438\u0442\u044C \u043C\u0456\u043D\u0443\u0441 ${pct2}% \u2014 \u0446\u0435 \u0439 \u043E\u0446\u0456\u043D\u043A\u0430 \u043D\u0438\u0436\u0447\u0435.`,
+        evidence: (file, tok, sessions2) => `${file}: \u2248 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432, \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0432\u0430\u0432\u0441\u044F \u0432 ${sessions2} ${plural(sessions2, "uk", ["\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u044F\u0445", "\u0441\u0435\u0441\u0456\u044F\u0445"])} \u0437\u0430 \u043E\u0441\u0442\u0430\u043D\u043D\u0456 30 \u0434\u043D\u0456\u0432`,
+        why: (tok) => `\u2248 ${N(tok)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u043A\u043E\u0436\u043D\u043E\u043C\u0443 \u0441\u0442\u0430\u0440\u0442\u0456`,
+        summary: (n) => `\u0456\u043D\u0434\u0435\u043A\u0441 \u0430\u0432\u0442\u043E\u043F\u0430\u043C'\u044F\u0442\u0456 ${n} ${plural(n, "uk", ["\u043F\u0440\u043E\u0454\u043A\u0442\u0443", "\u043F\u0440\u043E\u0454\u043A\u0442\u0456\u0432", "\u043F\u0440\u043E\u0454\u043A\u0442\u0456\u0432"])} \u0440\u043E\u0437\u0440\u0456\u0441\u0441\u044F.`
+      },
+      hookEvent: {
+        unnamed: "\u0431\u0435\u0437 \u043D\u0430\u0437\u0432\u0438",
+        titleOne: (name, per) => `\u0425\u0443\u043A ${name} \u0434\u043E\u0434\u0430\u0454 ~${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0443 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E`,
+        titleMany: (n, per) => `${n} ${plural(n, "uk", ["\u0445\u0443\u043A \u0434\u043E\u0434\u0430\u0454", "\u0445\u0443\u043A\u0438 \u0434\u043E\u0434\u0430\u044E\u0442\u044C", "\u0445\u0443\u043A\u0456\u0432 \u0434\u043E\u0434\u0430\u044E\u0442\u044C"])} ~${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0443 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E`,
+        detail: "\u0426\u0456 \u0445\u0443\u043A\u0438 \u043F\u043E\u0445\u043E\u0434\u044F\u0442\u044C \u0437 \u0442\u0432\u043E\u0457\u0445 \u0444\u0430\u0439\u043B\u0456\u0432 \u043D\u0430\u043B\u0430\u0448\u0442\u0443\u0432\u0430\u043D\u044C, \u0430 \u043D\u0435 \u0437 \u043F\u043B\u0430\u0433\u0456\u043D\u0430, \u044F\u043A\u0438\u0439 Clorbit \u0440\u043E\u0437\u043F\u0456\u0437\u043D\u0430\u0432, \u0456 \u0442\u0435\u043A\u0441\u0442, \u044F\u043A\u0438\u0439 \u0432\u043E\u043D\u0438 \u0434\u0440\u0443\u043A\u0443\u044E\u0442\u044C, \u0434\u043E\u0434\u0430\u0454\u0442\u044C\u0441\u044F \u0432 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0456 \u043A\u043E\u0436\u043D\u043E\u0457 \u0441\u0435\u0441\u0456\u0457 (\u0456 \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0430). \u0425\u0443\u043A\u0438 \u043F\u043B\u0430\u0433\u0456\u043D\u0456\u0432 \u2014 \u043D\u0430 \u0432\u043A\u043B\u0430\u0434\u0446\u0456 \xAB\u0421\u043A\u0456\u043B\u0438 \u0439 \u043F\u043B\u0430\u0433\u0456\u043D\u0438\xBB.",
+        evidence: (name, per, sessions2) => `${name}: \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E, \u0443 ${sessions2} ${plural(sessions2, "uk", ["\u0441\u0435\u0441\u0456\u0457", "\u0441\u0435\u0441\u0456\u044F\u0445", "\u0441\u0435\u0441\u0456\u044F\u0445"])} \u0437\u0430 \u043E\u0441\u0442\u0430\u043D\u043D\u0456 30 \u0434\u043D\u0456\u0432`,
+        action: (name) => `\u041F\u0435\u0440\u0435\u0433\u043B\u044F\u043D\u0443\u0442\u0438 \u0445\u0443\u043A ${name}, \u0449\u043E \u0434\u043E\u0434\u0430\u0454 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0456`,
+        why: (per, settingsFile) => `\u0432\u0456\u043D \u0434\u043E\u0434\u0430\u0454 \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0443 \u043A\u043E\u0436\u043D\u0443 \u0441\u0435\u0441\u0456\u044E. \u0417\u043D\u0430\u0439\u0434\u0438 \u0439\u043E\u0433\u043E \u0432 ${settingsFile} \u0430\u0431\u043E \u0432 .claude/settings.json / settings.local.json \u043F\u0440\u043E\u0454\u043A\u0442\u0443 \u0439 \u0437\u0430\u043F\u0440\u043E\u043F\u043E\u043D\u0443\u0439, \u044F\u043A \u0441\u043A\u043E\u0440\u043E\u0442\u0438\u0442\u0438 \u0439\u043E\u0433\u043E \u0432\u0438\u0432\u0456\u0434 \u0430\u0431\u043E \u0434\u0440\u0443\u043A\u0443\u0432\u0430\u0442\u0438 \u0439\u043E\u0433\u043E \u043B\u0438\u0448\u0435 \u0437\u0430 \u043F\u043E\u0442\u0440\u0435\u0431\u0438. \u042F\u043A\u0449\u043E \u0432\u0456\u043D \u043D\u0430\u043B\u0435\u0436\u0438\u0442\u044C \u043F\u043B\u0430\u0433\u0456\u043D\u0443 \u2014 \u0441\u043A\u0430\u0436\u0438 \u044F\u043A\u043E\u043C\u0443`,
+        summary: (n) => `${n} ${plural(n, "uk", ["\u0445\u0443\u043A \u0434\u043E\u0434\u0430\u0454", "\u0445\u0443\u043A\u0438 \u0434\u043E\u0434\u0430\u044E\u0442\u044C", "\u0445\u0443\u043A\u0456\u0432 \u0434\u043E\u0434\u0430\u044E\u0442\u044C"])} \u0442\u0435\u043A\u0441\u0442 \u0443 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0456 \u043A\u043E\u0436\u043D\u043E\u0457 \u0441\u0435\u0441\u0456\u0457.`
+      },
+      skillListing: {
+        actionable: (per) => `\u0420\u0435\u043A\u043E\u043C\u0435\u043D\u0434\u0430\u0446\u0456\u0457 \u043D\u0430 \u0432\u043A\u043B\u0430\u0434\u0446\u0456 \xAB\u0421\u043A\u0456\u043B\u0438 \u0439 \u043F\u043B\u0430\u0433\u0456\u043D\u0438\xBB \u0437\u0430\u043E\u0449\u0430\u0434\u0438\u043B\u0438 \u0431 \u2248 ${N(per)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0441\u0442\u0430\u0440\u0442\u043E\u0432\u043E\u0433\u043E \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u0443 \u043D\u0430 \u0441\u0435\u0441\u0456\u044E`
+      },
+      startupTotal: {
+        subagents: (n, per, total) => `\u0421\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0438 \u0441\u0442\u0430\u0440\u0442\u0443\u044E\u0442\u044C \u0437\u0456 \u0441\u0432\u043E\u0457\u043C \u0441\u0442\u0430\u0440\u0442\u043E\u0432\u0438\u043C \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u043E\u043C: ${N(n)} \u0437\u0430 \u043F\u0435\u0440\u0456\u043E\u0434 \xD7 \u2248 ${N(per)} \u2248 ${N(total)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432`,
+        titleSubs: (n, total) => `\u0421\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0438 \u0441\u043F\u043B\u0430\u0442\u0438\u043B\u0438 \u0441\u0442\u0430\u0440\u0442\u043E\u0432\u0438\u0439 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 ${N(n)} \u0440\u0430\u0437\u0456\u0432: \u2248 ${N(total)} \u0442\u043E\u043A\u0435\u043D\u0456\u0432 \u0437\u0430 \u043F\u0435\u0440\u0456\u043E\u0434`
       }
     }
   };
@@ -1847,23 +2045,91 @@ var init_insights_text = __esm({
   }
 });
 
-// server/recommend.ts
+// server/mcp-config.ts
 import fs3 from "node:fs";
-import os2 from "node:os";
 import path4 from "node:path";
+function mcpNamesFrom(j) {
+  const o = j && typeof j === "object" ? j : {};
+  const local = {};
+  const projects = o.projects && typeof o.projects === "object" ? o.projects : {};
+  for (const [dir, p] of Object.entries(projects)) {
+    const n = names(p?.mcpServers);
+    if (n.length && path4.isAbsolute(dir)) local[dir] = n;
+  }
+  return { user: names(o.mcpServers), local };
+}
+function readClaudeJson(files) {
+  for (const file of files) {
+    let st;
+    try {
+      st = fs3.statSync(file);
+    } catch {
+      continue;
+    }
+    if (cache2 && cache2.file === file && cache2.mtime === st.mtimeMs && cache2.size === st.size) return cache2.v;
+    try {
+      const v = mcpNamesFrom(JSON.parse(fs3.readFileSync(file, "utf8")));
+      cache2 = { file, mtime: st.mtimeMs, size: st.size, v };
+      return v;
+    } catch {
+      if (cache2 && cache2.file === file) return cache2.v;
+      return { user: [], local: {} };
+    }
+  }
+  return { user: [], local: {} };
+}
+function mcpJsonServers(dir) {
+  const file = path4.join(dir, ".mcp.json");
+  let st;
+  try {
+    st = fs3.statSync(file);
+  } catch {
+    return [];
+  }
+  const hit = projectCache.get(file);
+  if (hit && hit.mtime === st.mtimeMs) return hit.v;
+  let v = [];
+  try {
+    v = names(JSON.parse(fs3.readFileSync(file, "utf8"))?.mcpServers);
+  } catch {
+  }
+  projectCache.set(file, { mtime: st.mtimeMs, v });
+  if (projectCache.size > 500) projectCache.delete(projectCache.keys().next().value);
+  return v;
+}
+function readMcpConfig(files = CLAUDE_JSON_FILES) {
+  return { ...readClaudeJson(files), projectFile: mcpJsonServers };
+}
+var names, cache2, projectCache;
+var init_mcp_config = __esm({
+  "server/mcp-config.ts"() {
+    "use strict";
+    init_config();
+    names = (v) => v && typeof v === "object" && !Array.isArray(v) ? Object.keys(v).filter((k) => k.length > 0 && k.length <= 120) : [];
+    cache2 = null;
+    projectCache = /* @__PURE__ */ new Map();
+  }
+});
+
+// server/recommend.ts
+import fs4 from "node:fs";
+import os2 from "node:os";
+import path5 from "node:path";
 function homeDisplay(p) {
   const home = os2.homedir();
-  return p === home ? "~" : p.startsWith(home + path4.sep) ? `~/${p.slice(home.length + 1).split(path4.sep).join("/")}` : p;
+  return p === home ? "~" : p.startsWith(home + path5.sep) ? `~/${p.slice(home.length + 1).split(path5.sep).join("/")}` : p;
 }
 function defaultEnv(o) {
-  const skills = path4.join(CLAUDE_DIR, "skills");
+  const skills = path5.join(CLAUDE_DIR, "skills");
   return {
     now: o.now ?? Date.now(),
     unusedDays: o.unusedDays,
     enabledPlugins: readSettings().enabledPlugins,
     settingsFile: homeDisplay(SETTINGS_FILE),
     skillsDir: homeDisplay(skills),
-    ownSkillExists: (name) => /^[\w.-]+$/.test(name) && fs3.existsSync(path4.join(skills, name))
+    ownSkillExists: (name) => /^[\w.-]+$/.test(name) && fs4.existsSync(path5.join(skills, name)),
+    mcp: readMcpConfig(),
+    claudeJsonFile: homeDisplay(CLAUDE_JSON_FILES[0])
   };
 }
 function hash8(s) {
@@ -1891,7 +2157,7 @@ function dayTs(date, s) {
 }
 function usageIndex(store2) {
   if (indexMemo && indexMemo.store === store2 && indexMemo.version === store2.version) return indexMemo.v;
-  const v = { plugin: /* @__PURE__ */ new Map(), skill: /* @__PURE__ */ new Map(), mcp: /* @__PURE__ */ new Map(), tool: /* @__PURE__ */ new Map(), pluginSeen: /* @__PURE__ */ new Map(), skillSeen: /* @__PURE__ */ new Map() };
+  const v = { plugin: /* @__PURE__ */ new Map(), skill: /* @__PURE__ */ new Map(), mcp: /* @__PURE__ */ new Map(), tool: /* @__PURE__ */ new Map(), pluginSeen: /* @__PURE__ */ new Map(), skillSeen: /* @__PURE__ */ new Map(), mcpSeen: /* @__PURE__ */ new Map() };
   for (const s of store2.files.values()) {
     for (const [date, b] of Object.entries(s.days)) {
       for (const [k, a] of Object.entries(b.plugins)) bump(v.plugin, k, a.last);
@@ -1904,6 +2170,7 @@ function usageIndex(store2) {
     for (const [p, c] of Object.entries(s.skillsByPlugin)) if (c > 0) first(v.pluginSeen, p, s.firstTs);
     for (const k of Object.keys(s.startup)) if (k.startsWith("hook:plugin:")) first(v.pluginSeen, k.slice("hook:plugin:".length), s.firstTs);
     for (const [k, c] of Object.entries(s.skillsByName ?? {})) if (c > 0) first(v.skillSeen, k, s.firstTs);
+    for (const k of s.mcpSeen) first(v.mcpSeen, k, s.firstTs);
   }
   indexMemo = { store: store2, version: store2.version, v };
   return v;
@@ -1917,6 +2184,12 @@ function pluginLastUse(idx, plugin) {
   for (const [k, ts] of idx.mcp) if (isPluginMcp(k, plugin) && ts > last) last = ts;
   const prefix = `mcp__plugin_${plugin}_`;
   for (const [k, ts] of idx.tool) if (k.startsWith(prefix) && ts > last) last = ts;
+  return last || null;
+}
+function mcpLastUse(idx, key) {
+  let last = 0;
+  for (const [k, ts] of idx.mcp) if (mcpKey(k) === key && ts > last) last = ts;
+  for (const [k, ts] of idx.tool) if (ts > last && mcpSplit(k)?.server === key) last = ts;
   return last || null;
 }
 function unusedFor(last, seen, env2) {
@@ -1988,6 +2261,7 @@ var init_recommend = __esm({
   "server/recommend.ts"() {
     "use strict";
     init_config();
+    init_mcp_config();
     init_util();
     DAY_MS = 864e5;
     PROJECTION_DAYS = 30;
@@ -2074,7 +2348,72 @@ function moveSkillItem(lang, o) {
 function reviewItem(o) {
   return { ...o, reviewOnly: true };
 }
-var TEXT, ACTIONS;
+function removeMcpServerItem(lang, o) {
+  const A = ACTIONS[lang];
+  const backup = A.backupOf(o.claudeJson);
+  if (o.scope === "local" && o.dir) {
+    return {
+      name: `${o.name} \u2192 ${o.dir}`,
+      action: A.removeMcpLocal(o.name, o.dir, o.claudeJson),
+      why: o.why,
+      commands: [`cd ${shq(o.dir)}`, `claude mcp remove ${shq(o.name)} --scope local`],
+      undo: [`cd ${shq(o.dir)}`, `claude mcp add-json ${shq(o.name)} ${jqGet(o.name, backup, true)} --scope local`],
+      files: [o.claudeJson]
+    };
+  }
+  return {
+    name: o.name,
+    action: A.removeMcpUser(o.name, o.claudeJson),
+    why: o.why,
+    commands: [`claude mcp remove ${shq(o.name)} --scope user`],
+    undo: [`claude mcp add-json ${shq(o.name)} ${jqGet(o.name, backup)} --scope user`],
+    files: [o.claudeJson]
+  };
+}
+function moveMcpToProjectsItem(lang, o) {
+  const A = ACTIONS[lang];
+  const n = shq(o.name);
+  return {
+    name: o.name,
+    action: A.moveMcp(o.name, o.dirs),
+    why: o.why,
+    commands: [
+      ...o.dirs.map((d) => `(cd ${shq(d)} && claude mcp add-json ${n} ${jqGet(o.name, shq(o.claudeJson))} --scope local)`),
+      `claude mcp remove ${n} --scope user`
+    ],
+    undo: [
+      ...o.dirs.map((d) => `(cd ${shq(d)} && claude mcp remove ${n} --scope local)`),
+      `claude mcp add-json ${n} ${jqGet(o.name, A.backupOf(o.claudeJson))} --scope user`
+    ],
+    files: [o.claudeJson]
+  };
+}
+function disableMcpJsonServerItem(lang, o) {
+  const file = `${o.dir}/.claude/settings.local.json`;
+  return { name: `${o.name} \u2192 ${o.dir}`, action: ACTIONS[lang].disableMcpJson(o.name, file), why: o.why, undo: [ACTIONS[lang].undoMcpJson(o.name)], files: [file] };
+}
+function disableClaudeAiConnectorsItem(lang, o) {
+  return { name: "disableClaudeAiConnectors", action: ACTIONS[lang].disableConnectors(o.settingsFile), why: o.why, undo: [ACTIONS[lang].undoConnectors], files: [o.settingsFile] };
+}
+function compressInstructionsItem(lang, o) {
+  return {
+    name: o.path,
+    action: ACTIONS[lang].compress(o.path),
+    why: o.why,
+    undo: [`cp ${ACTIONS[lang].backupOf(o.path)} ${shq(o.path)}`],
+    files: [o.path]
+  };
+}
+function consolidateMemoryItem(lang, o) {
+  return {
+    name: o.path,
+    action: ACTIONS[lang].consolidateMemory(o.path),
+    why: o.why,
+    undo: [`cp ${ACTIONS[lang].backupOf(o.path)} ${shq(o.path)}`],
+    files: [o.path]
+  };
+}
+var TEXT, ACTIONS, PROMPT_NOTES, jqGet;
 var init_prompts = __esm({
   "shared/prompts.ts"() {
     "use strict";
@@ -2132,14 +2471,456 @@ var init_prompts = __esm({
       en: {
         disablePlugin: (key) => `Disable the plugin ${key}`,
         enableLocal: (key, dir) => `Enable the plugin ${key} only in the project ${dir} (local scope, not committed)`,
-        moveSkill: (name, from, to) => `Move my own skill "${name}" out of the skills folder (${from} \u2192 ${to})`
+        moveSkill: (name, from, to) => `Move my own skill "${name}" out of the skills folder (${from} \u2192 ${to})`,
+        removeMcpUser: (name, file) => `Remove the MCP server "${name}" from the user scope (only its entry in ${file}; nothing else is touched)`,
+        removeMcpLocal: (name, dir, file) => `Remove the MCP server "${name}" configured for the project ${dir} (local scope: its entry in ${file})`,
+        moveMcp: (name, dirs) => `Move the MCP server "${name}" from the user scope to the projects that use it (${dirs.join(", ")}; local scope, not committed)`,
+        disableMcpJson: (name, file) => `Turn off the project MCP server "${name}" for me: add "${name}" to "disabledMcpjsonServers" in ${file} (create the file if it is missing; the project's .mcp.json stays as it is)`,
+        undoMcpJson: (name) => `remove "${name}" from "disabledMcpjsonServers" again`,
+        disableConnectors: (file) => `Stop loading claude.ai connectors in Claude Code: set "disableClaudeAiConnectors": true in ${file} (they stay connected on claude.ai and keep working there)`,
+        undoConnectors: 'set "disableClaudeAiConnectors" back to false (or remove the key)',
+        compress: (file) => `Compress ${file} without losing meaning`,
+        consolidateMemory: (file) => `Consolidate the auto-memory index ${file}`,
+        backupOf: (file) => `<the backup of ${file}>`
       },
       uk: {
         disablePlugin: (key) => `\u0412\u0438\u043C\u043A\u043D\u0443\u0442\u0438 \u043F\u043B\u0430\u0433\u0456\u043D ${key}`,
         enableLocal: (key, dir) => `\u0423\u0432\u0456\u043C\u043A\u043D\u0443\u0442\u0438 \u043F\u043B\u0430\u0433\u0456\u043D ${key} \u043B\u0438\u0448\u0435 \u0432 \u043F\u0440\u043E\u0454\u043A\u0442\u0456 ${dir} (\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u043E, \u0431\u0435\u0437 \u043A\u043E\u043C\u0456\u0442\u0443)`,
-        moveSkill: (name, from, to) => `\u041F\u0435\u0440\u0435\u043D\u0435\u0441\u0442\u0438 \u043C\u0456\u0439 \u0432\u043B\u0430\u0441\u043D\u0438\u0439 \u0441\u043A\u0456\u043B \xAB${name}\xBB \u0437 \u0442\u0435\u043A\u0438 \u0441\u043A\u0456\u043B\u0456\u0432 (${from} \u2192 ${to})`
+        moveSkill: (name, from, to) => `\u041F\u0435\u0440\u0435\u043D\u0435\u0441\u0442\u0438 \u043C\u0456\u0439 \u0432\u043B\u0430\u0441\u043D\u0438\u0439 \u0441\u043A\u0456\u043B \xAB${name}\xBB \u0437 \u0442\u0435\u043A\u0438 \u0441\u043A\u0456\u043B\u0456\u0432 (${from} \u2192 ${to})`,
+        removeMcpUser: (name, file) => `\u041F\u0440\u0438\u0431\u0440\u0430\u0442\u0438 MCP-\u0441\u0435\u0440\u0432\u0435\u0440 \xAB${name}\xBB \u0437 \u0440\u0456\u0432\u043D\u044F \u043A\u043E\u0440\u0438\u0441\u0442\u0443\u0432\u0430\u0447\u0430 (\u043B\u0438\u0448\u0435 \u0439\u043E\u0433\u043E \u0437\u0430\u043F\u0438\u0441 \u0443 ${file}; \u0431\u0456\u043B\u044C\u0448\u0435 \u043D\u0456\u0447\u043E\u0433\u043E \u043D\u0435 \u0447\u0456\u043F\u0430\u0442\u0438)`,
+        removeMcpLocal: (name, dir, file) => `\u041F\u0440\u0438\u0431\u0440\u0430\u0442\u0438 MCP-\u0441\u0435\u0440\u0432\u0435\u0440 \xAB${name}\xBB, \u043D\u0430\u043B\u0430\u0448\u0442\u043E\u0432\u0430\u043D\u0438\u0439 \u0434\u043B\u044F \u043F\u0440\u043E\u0454\u043A\u0442\u0443 ${dir} (\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u0438\u0439 \u0440\u0456\u0432\u0435\u043D\u044C: \u0439\u043E\u0433\u043E \u0437\u0430\u043F\u0438\u0441 \u0443 ${file})`,
+        moveMcp: (name, dirs) => `\u041F\u0435\u0440\u0435\u043D\u0435\u0441\u0442\u0438 MCP-\u0441\u0435\u0440\u0432\u0435\u0440 \xAB${name}\xBB \u0437 \u0440\u0456\u0432\u043D\u044F \u043A\u043E\u0440\u0438\u0441\u0442\u0443\u0432\u0430\u0447\u0430 \u0432 \u043F\u0440\u043E\u0454\u043A\u0442\u0438, \u0434\u0435 \u0432\u0456\u043D \u043F\u043E\u0442\u0440\u0456\u0431\u0435\u043D (${dirs.join(", ")}; \u043B\u043E\u043A\u0430\u043B\u044C\u043D\u043E, \u0431\u0435\u0437 \u043A\u043E\u043C\u0456\u0442\u0443)`,
+        disableMcpJson: (name, file) => `\u0412\u0438\u043C\u043A\u043D\u0443\u0442\u0438 \u0434\u043B\u044F \u043C\u0435\u043D\u0435 \u043F\u0440\u043E\u0454\u043A\u0442\u043D\u0438\u0439 MCP-\u0441\u0435\u0440\u0432\u0435\u0440 \xAB${name}\xBB: \u0434\u043E\u0434\u0430\u0442\u0438 "${name}" \u0434\u043E "disabledMcpjsonServers" \u0443 ${file} (\u0441\u0442\u0432\u043E\u0440\u0438\u0442\u0438 \u0444\u0430\u0439\u043B, \u044F\u043A\u0449\u043E \u0439\u043E\u0433\u043E \u043D\u0435\u043C\u0430\u0454; .mcp.json \u043F\u0440\u043E\u0454\u043A\u0442\u0443 \u043D\u0435 \u0437\u043C\u0456\u043D\u044E\u0432\u0430\u0442\u0438)`,
+        undoMcpJson: (name) => `\u0437\u043D\u043E\u0432\u0443 \u043F\u0440\u0438\u0431\u0440\u0430\u0442\u0438 "${name}" \u0437 "disabledMcpjsonServers"`,
+        disableConnectors: (file) => `\u041D\u0435 \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0432\u0430\u0442\u0438 \u043A\u043E\u043D\u0435\u043A\u0442\u043E\u0440\u0438 claude.ai \u0443 Claude Code: \u043F\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u0438 "disableClaudeAiConnectors": true \u0443 ${file} (\u043D\u0430 claude.ai \u0432\u043E\u043D\u0438 \u043B\u0438\u0448\u0430\u044E\u0442\u044C\u0441\u044F \u043F\u0456\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u043C\u0438 \u0439 \u043F\u0440\u0430\u0446\u044E\u044E\u0442\u044C)`,
+        undoConnectors: '\u043F\u043E\u0432\u0435\u0440\u043D\u0443\u0442\u0438 "disableClaudeAiConnectors" \u0443 false (\u0430\u0431\u043E \u043F\u0440\u0438\u0431\u0440\u0430\u0442\u0438 \u043A\u043B\u044E\u0447)',
+        compress: (file) => `\u0421\u0442\u0438\u0441\u043D\u0443\u0442\u0438 ${file} \u0431\u0435\u0437 \u0432\u0442\u0440\u0430\u0442\u0438 \u0437\u043C\u0456\u0441\u0442\u0443`,
+        consolidateMemory: (file) => `\u0423\u043F\u043E\u0440\u044F\u0434\u043A\u0443\u0432\u0430\u0442\u0438 \u0456\u043D\u0434\u0435\u043A\u0441 \u0430\u0432\u0442\u043E\u043F\u0430\u043C'\u044F\u0442\u0456 ${file}`,
+        backupOf: (file) => `<\u043A\u043E\u043F\u0456\u044F ${file}>`
       }
     };
+    PROMPT_NOTES = {
+      en: {
+        mcpRemove: (file) => `Removing an MCP server's entry with "claude mcp remove" is the one removal allowed here, and only after ${file} is backed up; put each removed server's JSON config into the report so it can be added back.`,
+        jq: "The commands use jq to copy a server's JSON config; if jq is missing, copy the JSON by hand from the file.",
+        compress: [
+          "Keep every rule, fact and instruction: remove repetition, filler and outdated parts, merge overlapping sections, prefer short bullet points.",
+          "Move parts needed only now and then (long examples, reference tables, procedures for rare tasks) into separate files next to it and leave one line saying when to read each file (a plain path, not an @import: @imports are loaded at startup too). A procedure Claude follows step by step can become a skill instead.",
+          "Show me the before/after size (wc -c) and a short summary of what moved where."
+        ],
+        memory: [
+          "Keep every memory that is still true. Merge duplicates and near-duplicates, keep one short line per entry in the index, and fix entries that point to missing files.",
+          'Move memory files that are clearly outdated into an "archive" folder next to them (do not delete them) and drop their lines from the index; ask me when unsure.',
+          "Show me the before/after size of the index (wc -c)."
+        ]
+      },
+      uk: {
+        mcpRemove: (file) => `\u041F\u0440\u0438\u0431\u0440\u0430\u0442\u0438 \u0437\u0430\u043F\u0438\u0441 MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0430 \u043A\u043E\u043C\u0430\u043D\u0434\u043E\u044E "claude mcp remove" \u2014 \u0454\u0434\u0438\u043D\u0435 \u0434\u043E\u0437\u0432\u043E\u043B\u0435\u043D\u0435 \u0442\u0443\u0442 \u0432\u0438\u0434\u0430\u043B\u0435\u043D\u043D\u044F, \u0456 \u043B\u0438\u0448\u0435 \u043F\u0456\u0441\u043B\u044F \u043A\u043E\u043F\u0456\u0457 ${file}; \u0443 \u0437\u0432\u0456\u0442\u0456 \u043D\u0430\u0432\u0435\u0434\u0438 JSON-\u043A\u043E\u043D\u0444\u0456\u0433\u0443\u0440\u0430\u0446\u0456\u044E \u043A\u043E\u0436\u043D\u043E\u0433\u043E \u043F\u0440\u0438\u0431\u0440\u0430\u043D\u043E\u0433\u043E \u0441\u0435\u0440\u0432\u0435\u0440\u0430, \u0449\u043E\u0431 \u0439\u043E\u0433\u043E \u043C\u043E\u0436\u043D\u0430 \u0431\u0443\u043B\u043E \u043F\u043E\u0432\u0435\u0440\u043D\u0443\u0442\u0438.`,
+        jq: "\u041A\u043E\u043C\u0430\u043D\u0434\u0438 \u043A\u043E\u043F\u0456\u044E\u044E\u0442\u044C JSON-\u043A\u043E\u043D\u0444\u0456\u0433\u0443\u0440\u0430\u0446\u0456\u044E \u0441\u0435\u0440\u0432\u0435\u0440\u0430 \u0447\u0435\u0440\u0435\u0437 jq; \u044F\u043A\u0449\u043E jq \u043D\u0435\u043C\u0430\u0454 \u2014 \u0441\u043A\u043E\u043F\u0456\u044E\u0439 JSON \u0437 \u0444\u0430\u0439\u043B\u0443 \u0432\u0440\u0443\u0447\u043D\u0443.",
+        compress: [
+          "\u0417\u0431\u0435\u0440\u0435\u0436\u0438 \u043A\u043E\u0436\u043D\u0435 \u043F\u0440\u0430\u0432\u0438\u043B\u043E, \u0444\u0430\u043A\u0442 \u0456 \u0432\u043A\u0430\u0437\u0456\u0432\u043A\u0443: \u043F\u0440\u0438\u0431\u0435\u0440\u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u0438, \xAB\u0432\u043E\u0434\u0443\xBB \u0439 \u0437\u0430\u0441\u0442\u0430\u0440\u0456\u043B\u0435, \u043E\u0431'\u0454\u0434\u043D\u0430\u0439 \u0440\u043E\u0437\u0434\u0456\u043B\u0438, \u0449\u043E \u043F\u0435\u0440\u0435\u0442\u0438\u043D\u0430\u044E\u0442\u044C\u0441\u044F, \u0432\u0456\u0434\u0434\u0430\u0432\u0430\u0439 \u043F\u0435\u0440\u0435\u0432\u0430\u0433\u0443 \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u043C \u043F\u0443\u043D\u043A\u0442\u0430\u043C.",
+          "\u0422\u0435, \u0449\u043E \u043F\u043E\u0442\u0440\u0456\u0431\u043D\u043E \u043B\u0438\u0448\u0435 \u0437\u0440\u0456\u0434\u043A\u0430 (\u0434\u043E\u0432\u0433\u0456 \u043F\u0440\u0438\u043A\u043B\u0430\u0434\u0438, \u0434\u043E\u0432\u0456\u0434\u043A\u043E\u0432\u0456 \u0442\u0430\u0431\u043B\u0438\u0446\u0456, \u043F\u0440\u043E\u0446\u0435\u0434\u0443\u0440\u0438 \u0434\u043B\u044F \u0440\u0456\u0434\u043A\u0456\u0441\u043D\u0438\u0445 \u0437\u0430\u0434\u0430\u0447), \u0432\u0438\u043D\u0435\u0441\u0438 \u0432 \u043E\u043A\u0440\u0435\u043C\u0456 \u0444\u0430\u0439\u043B\u0438 \u043F\u043E\u0440\u0443\u0447 \u0456 \u0437\u0430\u043B\u0438\u0448 \u043F\u043E \u043E\u0434\u043D\u043E\u043C\u0443 \u0440\u044F\u0434\u043A\u0443, \u043A\u043E\u043B\u0438 \u0447\u0438\u0442\u0430\u0442\u0438 \u043A\u043E\u0436\u0435\u043D \u0444\u0430\u0439\u043B (\u043F\u0440\u043E\u0441\u0442\u0438\u0439 \u0448\u043B\u044F\u0445, \u043D\u0435 @import: @import \u0442\u0435\u0436 \u0437\u0430\u0432\u0430\u043D\u0442\u0430\u0436\u0443\u0454\u0442\u044C\u0441\u044F \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0456). \u041F\u0440\u043E\u0446\u0435\u0434\u0443\u0440\u0443, \u044F\u043A\u0443 Claude \u0432\u0438\u043A\u043E\u043D\u0443\u0454 \u043A\u0440\u043E\u043A \u0437\u0430 \u043A\u0440\u043E\u043A\u043E\u043C, \u043C\u043E\u0436\u043D\u0430 \u0437\u0440\u043E\u0431\u0438\u0442\u0438 \u0441\u043A\u0456\u043B\u043E\u043C.",
+          "\u041F\u043E\u043A\u0430\u0436\u0438 \u0440\u043E\u0437\u043C\u0456\u0440 \u0434\u043E \u0439 \u043F\u0456\u0441\u043B\u044F (wc -c) \u0456 \u043A\u043E\u0440\u043E\u0442\u043A\u043E \u2014 \u0449\u043E \u043A\u0443\u0434\u0438 \u043F\u0435\u0440\u0435\u043D\u0435\u0441\u0435\u043D\u043E."
+        ],
+        memory: [
+          "\u0417\u0431\u0435\u0440\u0435\u0436\u0438 \u043A\u043E\u0436\u0435\u043D \u0441\u043F\u043E\u0433\u0430\u0434, \u0449\u043E \u0434\u043E\u0441\u0456 \u043F\u0440\u0430\u0432\u0434\u0438\u0432\u0438\u0439. \u041E\u0431'\u0454\u0434\u043D\u0430\u0439 \u0434\u0443\u0431\u043B\u0456\u043A\u0430\u0442\u0438 \u0439 \u043C\u0430\u0439\u0436\u0435 \u0434\u0443\u0431\u043B\u0456\u043A\u0430\u0442\u0438, \u043B\u0438\u0448\u0438 \u0432 \u0456\u043D\u0434\u0435\u043A\u0441\u0456 \u043F\u043E \u043E\u0434\u043D\u043E\u043C\u0443 \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u043C\u0443 \u0440\u044F\u0434\u043A\u0443 \u043D\u0430 \u0437\u0430\u043F\u0438\u0441, \u0432\u0438\u043F\u0440\u0430\u0432 \u0437\u0430\u043F\u0438\u0441\u0438, \u0449\u043E \u0432\u043A\u0430\u0437\u0443\u044E\u0442\u044C \u043D\u0430 \u0432\u0456\u0434\u0441\u0443\u0442\u043D\u0456 \u0444\u0430\u0439\u043B\u0438.",
+          `\u042F\u0432\u043D\u043E \u0437\u0430\u0441\u0442\u0430\u0440\u0456\u043B\u0456 \u0444\u0430\u0439\u043B\u0438 \u043F\u0430\u043C'\u044F\u0442\u0456 \u043F\u0435\u0440\u0435\u043D\u0435\u0441\u0438 \u0432 \u0442\u0435\u043A\u0443 "archive" \u043F\u043E\u0440\u0443\u0447 (\u043D\u0435 \u0432\u0438\u0434\u0430\u043B\u044F\u0439) \u0456 \u043F\u0440\u0438\u0431\u0435\u0440\u0438 \u0457\u0445\u043D\u0456 \u0440\u044F\u0434\u043A\u0438 \u0437 \u0456\u043D\u0434\u0435\u043A\u0441\u0443; \u044F\u043A\u0449\u043E \u0441\u0443\u043C\u043D\u0456\u0432\u0430\u0454\u0448\u0441\u044F \u2014 \u0441\u043F\u0438\u0442\u0430\u0439 \u043C\u0435\u043D\u0435.`,
+          "\u041F\u043E\u043A\u0430\u0436\u0438 \u0440\u043E\u0437\u043C\u0456\u0440 \u0456\u043D\u0434\u0435\u043A\u0441\u0443 \u0434\u043E \u0439 \u043F\u0456\u0441\u043B\u044F (wc -c)."
+        ]
+      }
+    };
+    jqGet = (name, file, dirVar = false) => `"$(jq -c${dirVar ? ' --arg d "$PWD"' : ""} --arg n ${shq(name)} '${dirVar ? ".projects[$d].mcpServers[$n]" : ".mcpServers[$n]"}' ${file})"`;
+  }
+});
+
+// server/recommend-mcp.ts
+import path6 from "node:path";
+function mcpParts(s) {
+  let m = partsMemo.get(s);
+  if (m) return m;
+  m = /* @__PURE__ */ new Map();
+  const at = (k) => {
+    let p = m.get(k);
+    if (!p) m.set(k, p = { instr: 0, defs: 0, names: 0 });
+    return p;
+  };
+  for (const [n, c] of Object.entries(s.mcpBlocks)) at(mcpKey(n)).instr += c;
+  for (const [k, c] of Object.entries(s.mcpToolDefs ?? {})) at(k).defs += c;
+  for (const [k, c] of Object.entries(s.mcpToolNames ?? {})) at(k).names += c;
+  partsMemo.set(s, m);
+  return m;
+}
+function upwards(dir) {
+  const out = [];
+  for (let d = dir, i = 0; i < 12; i++) {
+    out.push(d);
+    const up = path6.dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return out;
+}
+function mcpSource(key, display, env2, cwds) {
+  if (display?.startsWith("plugin:")) return { kind: "plugin", plugin: display.split(":")[1] };
+  if (key.startsWith("plugin_")) {
+    const names2 = Object.keys(env2.enabledPlugins).map((k) => k.split("@")[0]).sort((a, b) => b.length - a.length);
+    const p = names2.find((n) => key.startsWith(`plugin_${mcpKey(n)}_`));
+    return { kind: "plugin", plugin: p ?? key.slice("plugin_".length).split("_")[0] };
+  }
+  if (display?.startsWith("claude.ai ") || key.startsWith("claude_ai_")) return { kind: "claudeai" };
+  const match = (list) => list.find((n) => mcpKey(n) === key);
+  const user = match(env2.mcp.user);
+  if (user) return { kind: "user", name: user };
+  const local = [];
+  let localName;
+  for (const [dir, list] of Object.entries(env2.mcp.local)) {
+    const n = match(list);
+    if (n) {
+      local.push(dir);
+      localName = n;
+    }
+  }
+  if (localName) return { kind: "local", name: localName, dirs: local.sort() };
+  const project = /* @__PURE__ */ new Set();
+  let projectName;
+  for (const cwd of cwds) {
+    for (const d of upwards(cwd)) {
+      const n = match(env2.mcp.projectFile(d));
+      if (n) {
+        project.add(d);
+        projectName = n;
+        break;
+      }
+    }
+  }
+  if (projectName) return { kind: "project", name: projectName, dirs: [...project].sort() };
+  return { kind: "unknown" };
+}
+function mcpRecommendations(store2, range, lang, env2, covered) {
+  const TT = insightText(lang);
+  const T = TT.rec;
+  const idx = usageIndex(store2);
+  const w = costWindow(store2, env2.now);
+  const ctx = new Ctx(store2);
+  const out = [];
+  const days = env2.unusedDays;
+  const lastText = (last, seen) => last ? T.lastUsed(daysBetween(last, env2.now)) : T.never(seen ? localDate(seen) : null);
+  const keyOfPlugin = (p) => Object.keys(env2.enabledPlugins).find((k) => k.split("@")[0] === p && env2.enabledPlugins[k]) ?? null;
+  const disp = /* @__PURE__ */ new Map();
+  for (const s of store2.files.values()) {
+    for (const k of Object.keys(s.mcpBlocks)) disp.set(mcpKey(k), k);
+    for (const k of Object.keys(s.mcpIssues ?? {})) disp.set(mcpKey(k), k);
+    for (const b of Object.values(s.days)) for (const k of Object.keys(b.mcpServers)) disp.set(mcpKey(k), k);
+  }
+  const from = env2.now - PROJECTION_DAYS * DAY_MS;
+  const recent2 = [...store2.files.values()].filter((s) => s.firstTs >= from && s.firstTs <= env2.now);
+  const cwdsOf = /* @__PURE__ */ new Map();
+  for (const s of recent2) {
+    const cwd = s.cwd ?? store2.mainOf(s.sessionId)?.cwd ?? null;
+    for (const k of s.mcpSeen) {
+      const set = cwdsOf.get(k) ?? /* @__PURE__ */ new Set();
+      if (cwd) set.add(cwd);
+      cwdsOf.set(k, set);
+    }
+  }
+  const sources = /* @__PURE__ */ new Map();
+  const sourceOf = (key) => {
+    let v = sources.get(key);
+    if (!v) sources.set(key, v = mcpSource(key, disp.get(key), env2, [...cwdsOf.get(key) ?? []].sort()));
+    return v;
+  };
+  const sourceLabel = (src) => {
+    switch (src.kind) {
+      case "user":
+        return T.mcpSource.user(env2.claudeJsonFile);
+      case "local":
+        return T.mcpSource.local(src.dirs.map(homeDisplay));
+      case "project":
+        return T.mcpSource.project(src.dirs.map(homeDisplay));
+      case "plugin":
+        return T.mcpSource.plugin(src.plugin);
+      case "claudeai":
+        return T.mcpSource.claudeai;
+      default:
+        return T.mcpSource.unknown;
+    }
+  };
+  const fails = /* @__PURE__ */ new Map();
+  const inRange = (ts) => {
+    const d = localDate(ts);
+    return d >= range.from && d <= range.to;
+  };
+  for (const s of store2.files.values()) {
+    if (!s.firstTs || !inRange(s.firstTs)) continue;
+    for (const k of s.mcpSeen) {
+      const f = fails.get(k) ?? { failed: 0, auth: 0, seen: /* @__PURE__ */ new Set(), err: null, errLast: 0 };
+      f.seen.add(s.sessionId);
+      fails.set(k, f);
+    }
+    for (const [name, it] of Object.entries(s.mcpIssues ?? {})) {
+      const k = mcpKey(name);
+      const f = fails.get(k) ?? { failed: 0, auth: 0, seen: /* @__PURE__ */ new Set(), err: null, errLast: 0 };
+      f.seen.add(s.sessionId);
+      if (it.failed) f.failed++;
+      if (it.auth) f.auth++;
+      if (it.error && it.last >= f.errLast) {
+        f.err = it.error;
+        f.errLast = it.last;
+      }
+      fails.set(k, f);
+    }
+  }
+  const toolErr = /* @__PURE__ */ new Map();
+  for (const { b } of ctx.days(range)) {
+    for (const [name, t] of Object.entries(b.tools)) {
+      const m = mcpSplit(name);
+      if (!m) continue;
+      const a = toolErr.get(m.server) ?? { calls: 0, err: 0 };
+      a.calls += t.calls;
+      a.err += t.err ?? 0;
+      toolErr.set(m.server, a);
+    }
+  }
+  const inA = /* @__PURE__ */ new Set();
+  {
+    const rows = [];
+    for (const key of [...cwdsOf.keys()].sort()) {
+      const last = mcpLastUse(idx, key);
+      const seen = idx.mcpSeen.get(key) ?? null;
+      if (!unusedFor(last, seen, env2)) continue;
+      const src = sourceOf(key);
+      if (src.kind === "plugin" && covered.plugins.has(src.plugin)) continue;
+      const saving = costOf(w, (s) => charsOf(s, key));
+      const part = (f) => costOf(w, (s) => {
+        const p = mcpParts(s).get(key);
+        return p ? f(p) : 0;
+      }).perSession ?? 0;
+      rows.push({ key, label: labelOf(key, disp.get(key)), src, last, lt: lastText(last, seen), saving, parts: { instr: part((p) => p.instr), defs: part((p) => p.defs), names: part((p) => p.names) } });
+    }
+    if (rows.length) {
+      rows.sort((a, b) => (b.saving.period ?? 0) - (a.saving.period ?? 0) || a.label.localeCompare(b.label));
+      const items = [];
+      let removes = false;
+      let plugins = false;
+      const connectors = rows.filter((r) => r.src.kind === "claudeai");
+      const allConnectorsIdle = connectors.length > 0 && [...cwdsOf.keys()].filter((k) => sourceOf(k).kind === "claudeai").every((k) => connectors.some((r) => r.key === k));
+      for (const r of rows) {
+        const per = r.saving.perSession ?? 0;
+        const why = T.unusedMcp.why(r.lt, per);
+        const src = r.src;
+        if (src.kind === "user") {
+          removes = true;
+          items.push(removeMcpServerItem(lang, { name: src.name, scope: "user", claudeJson: env2.claudeJsonFile, why }));
+        } else if (src.kind === "local") {
+          removes = true;
+          for (const d of src.dirs) items.push(removeMcpServerItem(lang, { name: src.name, scope: "local", dir: homeDisplay(d), claudeJson: env2.claudeJsonFile, why }));
+        } else if (src.kind === "project") for (const d of src.dirs) items.push(disableMcpJsonServerItem(lang, { name: src.name, dir: homeDisplay(d), why }));
+        else if (src.kind === "plugin") {
+          const pk = keyOfPlugin(src.plugin);
+          const pLast = pluginLastUse(idx, src.plugin);
+          if (pk && unusedFor(pLast, idx.pluginSeen.get(src.plugin) ?? idx.mcpSeen.get(r.key), env2)) {
+            plugins = true;
+            items.push(disablePluginItem(lang, { key: pk, why: T.unusedMcp.pluginUnusedWhy(r.label, lastText(pLast, idx.pluginSeen.get(src.plugin) ?? idx.mcpSeen.get(r.key))), settingsFile: env2.settingsFile }));
+          } else items.push(reviewItem({ name: r.label, action: T.unusedMcp.pluginAction(r.label, src.plugin), why: T.unusedMcp.pluginWhy(r.lt, pk ?? `${src.plugin}@\u2026`) }));
+        } else if (src.kind === "claudeai") {
+          if (!allConnectorsIdle) items.push(reviewItem({ name: r.label, action: T.unusedMcp.connectorAction(r.label.replace(/^claude\.ai /, "")), why: T.unusedMcp.connectorWhy(r.lt) }));
+        } else items.push(reviewItem({ name: r.label, action: T.unusedMcp.unknownAction(r.label), why: T.unusedMcp.unknownWhy(r.lt) }));
+      }
+      if (allConnectorsIdle) items.push(disableClaudeAiConnectorsItem(lang, { settingsFile: env2.settingsFile, why: T.unusedMcp.connectorsAllWhy(connectors.length, days) }));
+      for (const r of rows) inA.add(r.key);
+      const saving = publicSaving(addSavings(rows.map((r) => r.saving)));
+      const one = rows.length === 1 ? rows[0] : null;
+      const notes = removes ? [PROMPT_NOTES[lang].mcpRemove(env2.claudeJsonFile), PROMPT_NOTES[lang].jq] : [];
+      out.push({
+        id: stableId("unused-mcp", rows.map((r) => r.key)),
+        severity: saving.period ? severityOf(saving) : "info",
+        title: one ? T.unusedMcp.titleOne(one.label, one.lt) : T.unusedMcp.titleMany(rows.length, days),
+        detail: T.unusedMcp.detail(days),
+        evidence: rows.map((r) => T.unusedMcp.evidence(r.label, sourceLabel(r.src), r.lt, r.saving.perSession ?? 0, T.mcpParts(r.parts) || T.unusedMcp.noSize)),
+        estSavingTokens: saving.period || void 0,
+        pages: ["mcp", "startup"],
+        scope: "history",
+        saving: saving.perSession || saving.perSubagent ? saving : void 0,
+        targets: rows.map((r) => {
+          const f = fails.get(r.key);
+          const failedN = f ? f.failed + f.auth : 0;
+          return {
+            key: r.key,
+            label: r.label,
+            kind: "mcp",
+            lastUsed: r.last,
+            tokensPerSession: r.saving.perSession,
+            note: [sourceLabel(r.src), failedN ? T.unusedMcp.alsoFailed(failedN) : ""].filter(Boolean).join(" \xB7 ")
+          };
+        }),
+        prompts: buildPrompts({ lang, summary: T.unusedMcp.summary(rows.length, days), items, verify: ["claude mcp list", ...plugins ? ["claude plugin list"] : []], notes })
+      });
+    }
+  }
+  {
+    const rows = [];
+    for (const key of /* @__PURE__ */ new Set([...fails.keys(), ...toolErr.keys()])) {
+      if (inA.has(key)) continue;
+      const f = fails.get(key);
+      const e = toolErr.get(key);
+      const bad = f ? f.failed + f.auth : 0;
+      const total = f?.seen.size ?? 0;
+      const failing = !!f && bad >= FAIL_MIN_SESSIONS && bad >= total * FAIL_MIN_SHARE;
+      const erroring = !!e && e.calls >= ERR_MIN_CALLS && e.err >= e.calls * ERR_MIN_SHARE;
+      if (!failing && !erroring) continue;
+      const facts = [
+        failing && f.failed ? T.mcpFailing.failed(f.failed, total, f.err) : "",
+        failing && f.auth ? T.mcpFailing.auth(f.auth) : "",
+        erroring ? T.mcpFailing.errors(e.err, e.calls) : ""
+      ].filter(Boolean).join("; ");
+      const share = Math.max(failing ? bad / Math.max(1, total) : 0, erroring ? e.err / e.calls : 0);
+      rows.push({ key, label: labelOf(key, disp.get(key)), facts, auth: failing && f.auth >= f.failed, share });
+    }
+    if (rows.length) {
+      rows.sort((a, b) => b.share - a.share || a.label.localeCompare(b.label));
+      const name = (r) => {
+        const s = sourceOf(r.key);
+        return "name" in s ? s.name : r.label;
+      };
+      const items = rows.map((r) => r.auth ? reviewItem({ name: r.label, action: T.mcpFailing.authAction(r.label), why: T.mcpFailing.authWhy(r.facts, sourceOf(r.key).kind === "claudeai", name(r)) }) : reviewItem({ name: r.label, action: T.mcpFailing.fixAction(r.label), why: T.mcpFailing.fixWhy(r.facts, name(r)) }));
+      out.push({
+        id: stableId("mcp-failing", rows.map((r) => r.key)),
+        severity: rows.some((r) => r.share >= 0.5) ? "warn" : "info",
+        title: rows.length === 1 ? T.mcpFailing.titleOne(rows[0].label) : T.mcpFailing.titleMany(rows.length),
+        detail: T.mcpFailing.detail,
+        evidence: rows.map((r) => T.mcpFailing.evidence(r.label, r.facts)),
+        pages: ["mcp"],
+        scope: "range",
+        targets: rows.map((r) => ({ key: r.key, label: r.label, kind: "mcp", note: r.facts })),
+        prompts: buildPrompts({ lang, summary: T.mcpFailing.summary(rows.length), items, verify: ["claude mcp list"] })
+      });
+    }
+  }
+  {
+    const heavy = /* @__PURE__ */ new Map();
+    for (const s of store2.files.values()) {
+      for (const r of s.bigResults) {
+        const m = mcpSplit(r.tool);
+        if (!m || !inRange(r.ts)) continue;
+        const a = heavy.get(m.server) ?? { n: 0, sum: 0, max: 0, tools: /* @__PURE__ */ new Map(), ex: [] };
+        a.n++;
+        a.sum += r.tokens;
+        a.max = Math.max(a.max, r.tokens);
+        a.tools.set(m.tool, (a.tools.get(m.tool) ?? 0) + 1);
+        if (a.ex.length < 4) a.ex.push(TT.bigResults.example(r.label, r.tokens, ctx.project(s)));
+        heavy.set(m.server, a);
+      }
+    }
+    const rangeDays = Math.max(1, Math.round(((/* @__PURE__ */ new Date(`${range.to}T00:00:00`)).getTime() - (/* @__PURE__ */ new Date(`${range.from}T00:00:00`)).getTime()) / DAY_MS) + 1);
+    for (const [key, a] of [...heavy.entries()].sort((x, y) => y[1].sum - x[1].sum).slice(0, HEAVY_MAX)) {
+      const label = labelOf(key, disp.get(key));
+      const tools = [...a.tools.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]));
+      const tip = /chrome|browser|playwright|puppeteer/i.test(key) ? T.mcpHeavy.tipBrowser : /github/i.test(key) ? T.mcpHeavy.tipGithub : /figma/i.test(key) ? T.mcpHeavy.tipFigma : T.mcpHeavy.tipGeneric(label);
+      const period = Math.max(0, Math.round(a.sum - a.n * HEAVY_ENOUGH));
+      out.push({
+        id: `big-results-mcp:${key}`,
+        severity: a.sum > 2e6 ? "high" : a.sum > 3e5 ? "warn" : "info",
+        title: T.mcpHeavy.title(label, a.n, a.max),
+        detail: `${T.mcpHeavy.detail(a.sum)} ${tip}`,
+        evidence: a.ex,
+        estSavingTokens: period || void 0,
+        pages: ["mcp", "tools"],
+        scope: "range",
+        saving: period ? { period, days: rangeDays, basis: "range" } : void 0,
+        targets: tools.map(([t, n]) => ({ key: `mcp__${key}__${t}`, label: t, kind: "mcp", note: `${n}\xD7 > 20K` })),
+        prompts: buildPrompts({
+          lang,
+          summary: T.mcpHeavy.summary(label, a.n),
+          items: [reviewItem({ name: label, action: T.mcpHeavy.action(label, tools.slice(0, 3).map(([t]) => t).join(", ")), why: T.mcpHeavy.why(a.n, a.max, tip) })]
+        })
+      });
+    }
+  }
+  {
+    const cards = [];
+    for (const key of [...cwdsOf.keys()].sort()) {
+      if (inA.has(key)) continue;
+      const src = sourceOf(key);
+      if (src.kind !== "user") continue;
+      const used = /* @__PURE__ */ new Map();
+      for (const s of store2.files.values()) {
+        let last = 0;
+        for (const b of Object.values(s.days)) {
+          for (const [k, a] of Object.entries(b.mcpServers)) if (mcpKey(k) === key && a.last > last) last = a.last;
+          for (const [k, t] of Object.entries(b.tools)) if (t.calls > 0 && mcpSplit(k)?.server === key) last = Math.max(last, t.last || s.lastTs);
+        }
+        if (!last) continue;
+        const p = ctx.project(s);
+        const cwd = store2.mainOf(s.sessionId)?.cwd ?? s.cwd;
+        const u = used.get(p) ?? { cwd: null, last: 0 };
+        if (!u.cwd && cwd) u.cwd = cwd;
+        u.last = Math.max(u.last, last);
+        used.set(p, u);
+      }
+      const loaded = /* @__PURE__ */ new Map();
+      for (const s of w.mains) if (s.mcpSeen.includes(key) || charsOf(s, key) > 0) loaded.set(ctx.project(s), (loaded.get(ctx.project(s)) ?? 0) + 1);
+      const idle = [...loaded.keys()].filter((p) => !used.has(p));
+      const usedLoaded = [...loaded.keys()].filter((p) => used.has(p));
+      if (!usedLoaded.length || !idle.length) continue;
+      const total = costOf(w, (s) => charsOf(s, key));
+      if ((total.perSession ?? 0) < PROJECTS_MIN_TOKENS) continue;
+      const avoid = costOf(w, (s) => used.has(ctx.project(s)) ? 0 : charsOf(s, key));
+      if (!total.total || avoid.total < total.total * PROJECTS_MIN_AVOIDABLE) continue;
+      const label = labelOf(key, disp.get(key));
+      const usedProjects = [...used.keys()].sort();
+      const usedText = usedProjects.map((p) => `${p} (${lastText(used.get(p).last, null)})`).join(", ");
+      const dirs = usedProjects.map((p) => used.get(p).cwd).filter((d) => !!d).slice(0, MAX_PROJECTS).map(homeDisplay);
+      const saving = publicSaving({ ...avoid, perSession: total.perSession, perSubagent: total.perSubagent, pctStartup: total.pctStartup });
+      const idleSessions = w.mains.filter((s) => !used.has(ctx.project(s)) && loaded.has(ctx.project(s))).length;
+      cards.push({
+        id: stableId(`mcp-projects:${key}`, usedProjects),
+        severity: severityOf(saving),
+        title: T.mcpProjects.title(label, usedLoaded.length, loaded.size),
+        detail: T.mcpProjects.detail(label, usedProjects),
+        evidence: [T.mcpProjects.perSession(total.perSession ?? 0), T.mcpProjects.usedIn(usedText), T.mcpProjects.idle(idle.length, idleSessions)],
+        estSavingTokens: saving.period,
+        pages: ["mcp", "startup"],
+        scope: "history",
+        saving,
+        targets: [{ key, label, kind: "mcp", lastUsed: mcpLastUse(idx, key), tokensPerSession: total.perSession, note: sourceLabel(src) }],
+        prompts: dirs.length ? buildPrompts({
+          lang,
+          summary: T.mcpProjects.summary(label),
+          items: [moveMcpToProjectsItem(lang, { name: src.name, dirs, claudeJson: env2.claudeJsonFile, why: T.mcpProjects.why(total.perSession ?? 0, usedProjects.join(", ")) })],
+          verify: ["claude mcp list"],
+          notes: [PROMPT_NOTES[lang].mcpRemove(env2.claudeJsonFile), PROMPT_NOTES[lang].jq]
+        }) : void 0
+      });
+    }
+    out.push(...cards.sort((a, b) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0)).slice(0, PROJECTS_MAX_CARDS));
+  }
+  return out;
+}
+var FAIL_MIN_SESSIONS, FAIL_MIN_SHARE, ERR_MIN_CALLS, ERR_MIN_SHARE, HEAVY_MAX, HEAVY_ENOUGH, PROJECTS_MIN_TOKENS, PROJECTS_MIN_AVOIDABLE, PROJECTS_MAX_CARDS, MAX_PROJECTS, partsMemo, charsOf, labelOf;
+var init_recommend_mcp = __esm({
+  "server/recommend-mcp.ts"() {
+    "use strict";
+    init_prompts();
+    init_analytics();
+    init_insights_text();
+    init_recommend();
+    init_util();
+    FAIL_MIN_SESSIONS = 3;
+    FAIL_MIN_SHARE = 0.25;
+    ERR_MIN_CALLS = 10;
+    ERR_MIN_SHARE = 0.3;
+    HEAVY_MAX = 3;
+    HEAVY_ENOUGH = 5e3;
+    PROJECTS_MIN_TOKENS = 150;
+    PROJECTS_MIN_AVOIDABLE = 0.3;
+    PROJECTS_MAX_CARDS = 3;
+    MAX_PROJECTS = 6;
+    partsMemo = /* @__PURE__ */ new WeakMap();
+    charsOf = (s, key) => {
+      const p = mcpParts(s).get(key);
+      return p ? p.instr + p.defs + p.names : 0;
+    };
+    labelOf = (key, display) => display ?? (key.startsWith("claude_ai_") ? `claude.ai ${key.slice(10).replace(/_/g, " ")}` : key);
   }
 });
 
@@ -2268,7 +3049,7 @@ function skillRecommendations(store2, range, lang, env2) {
       const key = keyOf2.get(name);
       const items = key ? [
         disablePluginItem(lang, { key, why: T.hookContext.why(per, usedIn, withHook.length), settingsFile: env2.settingsFile }),
-        ...projects.filter((p) => cwdOf.has(p)).slice(0, MAX_PROJECTS).map((p) => enablePluginInProjectItem(lang, { key, dir: homeDisplay(cwdOf.get(p)), why: T.hookContext.whyEnable(p) }))
+        ...projects.filter((p) => cwdOf.has(p)).slice(0, MAX_PROJECTS2).map((p) => enablePluginInProjectItem(lang, { key, dir: homeDisplay(cwdOf.get(p)), why: T.hookContext.whyEnable(p) }))
       ] : [];
       out.push({
         id: `hook-context:${name}`,
@@ -2411,7 +3192,7 @@ function skillRecommendations(store2, range, lang, env2) {
   }
   return out;
 }
-var HOOK_MIN_TOKENS, HOOK_MIN_AVOIDABLE, MAX_PROJECTS, mcpChars;
+var HOOK_MIN_TOKENS, HOOK_MIN_AVOIDABLE, MAX_PROJECTS2, mcpChars;
 var init_recommend_skills = __esm({
   "server/recommend-skills.ts"() {
     "use strict";
@@ -2423,7 +3204,7 @@ var init_recommend_skills = __esm({
     init_util();
     HOOK_MIN_TOKENS = 300;
     HOOK_MIN_AVOIDABLE = 0.2;
-    MAX_PROJECTS = 6;
+    MAX_PROJECTS2 = 6;
     mcpChars = (s, plugin) => {
       let n = 0;
       for (const [k, c] of Object.entries(s.mcpBlocks)) if (isPluginMcp(k, plugin)) n += c;
@@ -2432,17 +3213,206 @@ var init_recommend_skills = __esm({
   }
 });
 
-// server/insights.ts
-import path5 from "node:path";
-function filesStartedIn(store2, range) {
+// server/recommend-startup.ts
+function fileKind(p, type) {
+  const t = type.toLowerCase();
+  if (t === "automem" || t === "memory") return "memory";
+  if (t === "managed") return "managed";
+  if (/[\\/]rules[\\/][^\\/]+\.md$/i.test(p)) return "rules";
+  if (t === "local" || /CLAUDE\.local\.md$/i.test(p)) return "local";
+  if (t === "user") return "user";
+  return "project";
+}
+function startupRecommendations(store2, range, lang, env2, o) {
+  const TT = insightText(lang);
+  const T = TT.rec;
+  const w = costWindow(store2, env2.now);
   const out = [];
-  for (const s of store2.files.values()) {
-    if (!s.firstTs) continue;
-    const d = localDate(s.firstTs);
-    if (d >= range.from && d <= range.to) out.push(s);
+  const pct2 = Math.round(COMPRESS_RATIO * 100);
+  {
+    const files = /* @__PURE__ */ new Map();
+    for (const s of [...w.mains, ...w.subs]) {
+      for (const [p, f] of Object.entries(s.memoryFiles ?? {})) {
+        const kind = fileKind(p, f.type);
+        const cur = files.get(p) ?? { kind, chars: f.chars, at: s.firstTs, sessions: 0, project: projectOf(s.cwd, s.projectDir) };
+        if (s.firstTs >= cur.at) {
+          cur.chars = f.chars;
+          cur.at = s.firstTs;
+          cur.kind = kind;
+          cur.project = projectOf(s.cwd, s.projectDir);
+        }
+        if (s.agentId === null) cur.sessions++;
+        files.set(p, cur);
+      }
+    }
+    const big = (want, min) => [...files.entries()].filter(([, f]) => want(f.kind) && estTokens(f.chars) > min).map(([p, f]) => ({ p, show: homeDisplay(p), ...f, tok: estTokens(f.chars), saving: scale(publicSaving(costOf(w, (s) => s.memoryFiles?.[p]?.chars ?? 0)), COMPRESS_RATIO) })).sort((a, b) => b.tok - a.tok || a.p.localeCompare(b.p));
+    const kindLabel = (k) => T.fileKind[k] ?? T.fileKind.project;
+    const instr = big((k) => k !== "memory" && k !== "managed", FILE_MIN_TOKENS);
+    if (instr.length) {
+      const saving = addSavings(instr.map((f) => f.saving));
+      const one = instr.length === 1 ? instr[0] : null;
+      out.push({
+        id: stableId("big-instructions", instr.map((f) => f.p)),
+        severity: severityOf(saving),
+        title: one ? T.bigInstructions.titleOne(one.show, one.tok) : T.bigInstructions.titleMany(instr.length, FILE_MIN_TOKENS),
+        detail: T.bigInstructions.detail(pct2),
+        evidence: instr.map((f) => T.bigInstructions.evidence(f.show, kindLabel(f.kind), f.tok, f.sessions)),
+        estSavingTokens: saving.period || void 0,
+        pages: ["startup"],
+        scope: "history",
+        saving,
+        targets: instr.map((f) => ({ key: f.p, label: f.show, kind: "file", tokensPerSession: f.tok, note: kindLabel(f.kind) })),
+        prompts: buildPrompts({
+          lang,
+          summary: T.bigInstructions.summary(instr.length),
+          items: instr.map((f) => compressInstructionsItem(lang, { path: f.show, why: T.bigInstructions.why(kindLabel(f.kind), f.tok) })),
+          verify: [`wc -c ${instr.map((f) => shq(f.show)).join(" ")}`],
+          notes: PROMPT_NOTES[lang].compress
+        })
+      });
+    }
+    const mem = big((k) => k === "memory", MEMORY_MIN_TOKENS);
+    if (mem.length) {
+      const saving = addSavings(mem.map((f) => f.saving));
+      const tok = Math.max(...mem.map((f) => f.tok));
+      out.push({
+        id: stableId("big-memory", mem.map((f) => f.p)),
+        severity: severityOf(saving),
+        title: T.bigMemory.title(tok),
+        detail: T.bigMemory.detail(pct2),
+        evidence: mem.map((f) => T.bigMemory.evidence(f.show, f.tok, f.sessions)),
+        estSavingTokens: saving.period || void 0,
+        pages: ["startup"],
+        scope: "history",
+        saving,
+        targets: mem.map((f) => ({ key: f.p, label: f.show, kind: "file", tokensPerSession: f.tok, note: f.project })),
+        prompts: buildPrompts({
+          lang,
+          summary: T.bigMemory.summary(mem.length),
+          items: mem.map((f) => consolidateMemoryItem(lang, { path: f.show, why: T.bigMemory.why(f.tok) })),
+          verify: [`wc -c ${mem.map((f) => shq(f.show)).join(" ")}`],
+          notes: PROMPT_NOTES[lang].memory
+        })
+      });
+    }
+  }
+  {
+    const keys = /* @__PURE__ */ new Set();
+    for (const s of [...w.mains, ...w.subs]) for (const k of Object.keys(s.startup)) if (k.startsWith("hook:event:")) keys.add(k);
+    const rows2 = [];
+    for (const key of [...keys].sort()) {
+      const withIt = w.mains.filter((s) => (s.startup[key] ?? 0) > 0);
+      const subsWith = w.subs.filter((s) => (s.startup[key] ?? 0) > 0);
+      const pool = withIt.length ? withIt : subsWith;
+      if (!pool.length) continue;
+      const per = Math.round(pool.reduce((n, s) => n + estTokens(s.startup[key]), 0) / pool.length);
+      if (per < HOOK_MIN_TOKENS2) continue;
+      rows2.push({ key, name: key.slice("hook:event:".length) || T.hookEvent.unnamed, per, sessions: withIt.length, saving: costOf(w, (s) => s.startup[key] ?? 0) });
+    }
+    if (rows2.length) {
+      rows2.sort((a, b) => b.per - a.per);
+      const saving = publicSaving(addSavings(rows2.map((r) => r.saving)));
+      const per = rows2.reduce((n, r) => n + r.per, 0);
+      out.push({
+        id: stableId("hook-event-context", rows2.map((r) => r.key)),
+        severity: severityOf(saving),
+        title: rows2.length === 1 ? T.hookEvent.titleOne(rows2[0].name, rows2[0].per) : T.hookEvent.titleMany(rows2.length, per),
+        detail: T.hookEvent.detail,
+        evidence: rows2.map((r) => T.hookEvent.evidence(r.name, r.per, r.sessions)),
+        estSavingTokens: saving.period || void 0,
+        pages: ["startup"],
+        scope: "history",
+        saving,
+        targets: rows2.map((r) => ({ key: r.key, label: r.name, kind: "hook", tokensPerSession: r.per })),
+        prompts: buildPrompts({
+          lang,
+          summary: T.hookEvent.summary(rows2.length),
+          items: rows2.map((r) => reviewItem({ name: r.name, action: T.hookEvent.action(r.name), why: T.hookEvent.why(r.per, env2.settingsFile) }))
+        })
+      });
+    }
+  }
+  const rows = o.attr.startupContext;
+  const skillRow = rows.find((r) => r.key === STARTUP.skills);
+  if (skillRow && skillRow.total > 0) {
+    const rw = rangeWindow(store2, range);
+    const byPlugin = /* @__PURE__ */ new Map();
+    for (const s of [...rw.mains, ...rw.subs]) for (const [p, c] of Object.entries(s.skillsByPlugin)) byPlugin.set(p, (byPlugin.get(p) ?? 0) + c);
+    const top = [...byPlugin.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const per = Number(skillRow.extra?.perSession ?? 0);
+    const perSub = Number(skillRow.extra?.perSubagent ?? 0);
+    const listing = o.skillCards.filter((c) => /^(unused-plugins|unused-skills|unused-own-skills):/.test(c.id) && c.saving?.basis === "projection");
+    const actionable = listing.length ? addSavings(listing.map((c) => c.saving)) : null;
+    out.push({
+      id: "startup-skill-listing",
+      pages: ["startup"],
+      severity: skillRow.total > 5e6 ? "high" : "warn",
+      title: TT.skillListing.title(per, perSub),
+      detail: TT.skillListing.detail(perSub > 0, skillRow.total),
+      evidence: [
+        ...actionable?.perSession ? [T.skillListing.actionable(actionable.perSession)] : [],
+        ...top.map(([p, c]) => TT.skillListing.evidence(skillGroupLabel(p, lang), estTokens(c)))
+      ],
+      fix: TT.skillListing.fix,
+      scope: "range",
+      saving: actionable?.perSession ? actionable : void 0,
+      seeAlso: "skills"
+    });
+  }
+  {
+    const perMain = rows.reduce((n, r) => n + Number(r.extra?.perSession ?? 0), 0);
+    const perSub = rows.reduce((n, r) => n + Number(r.extra?.perSubagent ?? 0), 0);
+    const startupTotal = rows.reduce((n, r) => n + r.total, 0);
+    if (perMain > 0) {
+      const rw = rangeWindow(store2, range);
+      const subTotal = rows.reduce((n, r) => n + Number(r.extra?.subagentTokens ?? 0), 0);
+      const mainTotal = startupTotal - subTotal;
+      const subs = rw.subs.length;
+      const heavySubs = subs >= SUBS_MIN && subTotal > mainTotal;
+      const top = [...rows].sort((a, b) => Number(b.extra?.perSession ?? 0) - Number(a.extra?.perSession ?? 0)).slice(0, 5);
+      out.push({
+        id: "startup-total",
+        pages: ["startup", "overview"],
+        severity: heavySubs ? "warn" : "info",
+        title: heavySubs ? T.startupTotal.titleSubs(subs, subTotal) : TT.startupTotal.title(perMain, perSub),
+        detail: TT.startupTotal.detail(startupTotal),
+        evidence: [
+          ...heavySubs ? [TT.startupTotal.title(perMain, perSub)] : [],
+          ...subs && perSub ? [T.startupTotal.subagents(subs, perSub, subTotal)] : [],
+          ...top.map((r) => TT.startupTotal.evidence(r.label, Number(r.extra?.perSession ?? 0), Number(r.extra?.perSubagent ?? 0)))
+        ],
+        fix: TT.startupTotal.fix,
+        scope: "range"
+      });
+    }
   }
   return out;
 }
+var FILE_MIN_TOKENS, MEMORY_MIN_TOKENS, COMPRESS_RATIO, HOOK_MIN_TOKENS2, SUBS_MIN, scale;
+var init_recommend_startup = __esm({
+  "server/recommend-startup.ts"() {
+    "use strict";
+    init_prompts();
+    init_i18n();
+    init_insights_text();
+    init_recommend();
+    init_util();
+    FILE_MIN_TOKENS = 2e3;
+    MEMORY_MIN_TOKENS = 1e3;
+    COMPRESS_RATIO = 0.4;
+    HOOK_MIN_TOKENS2 = 300;
+    SUBS_MIN = 20;
+    scale = (s, f) => {
+      const r = (n) => n ? Math.round(n * f) : void 0;
+      const out = { ...s, perSession: r(s.perSession), perSubagent: r(s.perSubagent), period: r(s.period), pctStartup: s.pctStartup ? s.pctStartup * f : void 0 };
+      for (const k of Object.keys(out)) if (out[k] === void 0) delete out[k];
+      return out;
+    };
+  }
+});
+
+// server/insights.ts
+import path7 from "node:path";
 function filesActiveIn(store2, range) {
   const out = [];
   for (const s of store2.files.values()) {
@@ -2459,7 +3429,7 @@ function toolFix(tool, T) {
 }
 function insights(store2, range, hookLog2, lang = "en", opts = {}) {
   const env2 = { ...defaultEnv({ unusedDays: opts.unusedDays ?? DEFAULT_SETTINGS.recommendations.unusedDays }), ...opts.env };
-  const key = `ins:${lang}:${range.from}:${range.to}:${env2.unusedDays}:${localDate(env2.now)}:${hash8(JSON.stringify(env2.enabledPlugins))}`;
+  const key = `ins:${lang}:${range.from}:${range.to}:${env2.unusedDays}:${localDate(env2.now)}:${hash8(JSON.stringify([env2.enabledPlugins, env2.mcp.user, env2.mcp.local]))}`;
   const base = opts.env ? compute(store2, range, lang, env2) : memoize(store2, key, () => compute(store2, range, lang, env2));
   const extra = hookLog2 ? waitInsights(store2, hookLog2, range, lang) : [];
   const all = extra.length ? [...base, ...extra].sort(bySaving) : base;
@@ -2533,79 +3503,24 @@ function waitInsights(store2, hookLog2, range, lang = "en") {
 }
 function compute(store2, range, lang, env2) {
   const T = insightText(lang);
-  const out = skillRecommendations(store2, range, lang, env2);
+  const skills = skillRecommendations(store2, range, lang, env2);
   const attr = attribution(store2, range, lang);
+  const coveredPlugins = new Set(skills.filter((i) => i.id.startsWith("unused-plugins:")).flatMap((i) => (i.targets ?? []).map((t) => t.label)));
+  const out = [
+    ...skills,
+    ...mcpRecommendations(store2, range, lang, env2, { plugins: coveredPlugins }),
+    ...startupRecommendations(store2, range, lang, env2, { attr, skillCards: skills })
+  ];
   const ov = overview(store2, range);
   const grand = ov.totals.total || 1;
   const settings2 = readSettings();
   const ctx = new Ctx(store2);
-  const started = filesStartedIn(store2, range);
-  const days = Math.max(1, ov.daily.length);
   const pluginKey = (name) => Object.keys(settings2.enabledPlugins).find((k) => k.split("@")[0] === name) ?? `${name}@\u2026`;
-  const skillRow = attr.startupContext.find((r) => r.key === STARTUP.skills);
-  if (skillRow && skillRow.total > 0) {
-    const byPlugin = /* @__PURE__ */ new Map();
-    for (const s of started) for (const [p, c] of Object.entries(s.skillsByPlugin)) byPlugin.set(p, (byPlugin.get(p) ?? 0) + c);
-    const top = [...byPlugin.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
-    const per = Number(skillRow.extra?.perSession ?? 0);
-    const perSub2 = Number(skillRow.extra?.perSubagent ?? 0);
-    out.push({
-      id: "startup-skill-listing",
-      pages: ["startup"],
-      severity: skillRow.total > 5e6 ? "high" : "warn",
-      title: T.skillListing.title(per, perSub2),
-      detail: T.skillListing.detail(perSub2 > 0, skillRow.total),
-      evidence: top.map(([p, c]) => T.skillListing.evidence(skillGroupLabel(p, lang), estTokens(c))),
-      fix: T.skillListing.fix,
-      estSavingTokens: Math.round(skillRow.total * 0.3)
-    });
-  }
-  const perMain = attr.startupContext.reduce((n, r) => n + Number(r.extra?.perSession ?? 0), 0);
-  const perSub = attr.startupContext.reduce((n, r) => n + Number(r.extra?.perSubagent ?? 0), 0);
-  const startupTotal = attr.startupContext.reduce((n, r) => n + r.total, 0);
-  if (perMain > 0) {
-    const top = [...attr.startupContext].sort((a, b) => Number(b.extra?.perSession ?? 0) - Number(a.extra?.perSession ?? 0)).slice(0, 5);
-    out.push({
-      id: "startup-total",
-      pages: ["startup", "overview"],
-      severity: "info",
-      title: T.startupTotal.title(perMain, perSub),
-      detail: T.startupTotal.detail(startupTotal),
-      evidence: top.map((r) => T.startupTotal.evidence(r.label, Number(r.extra?.perSession ?? 0), Number(r.extra?.perSubagent ?? 0))),
-      fix: T.startupTotal.fix
-    });
-  }
   const filesInRange = filesActiveIn(store2, range);
-  const disp = mcpDisplayNames(store2);
-  const seen = /* @__PURE__ */ new Map();
-  const blockChars = /* @__PURE__ */ new Map();
-  for (const s of filesInRange) {
-    for (const k of s.mcpSeen) seen.set(k, (seen.get(k) ?? 0) + 1);
-    for (const [n, c] of Object.entries(s.mcpBlocks)) blockChars.set(mcpKey(n), (blockChars.get(mcpKey(n)) ?? 0) + c);
-  }
-  const usedMcp = /* @__PURE__ */ new Set();
-  for (const r of attr.tools) {
-    const m = mcpSplit(r.key);
-    if (m && r.calls > 0) usedMcp.add(m.server);
-  }
-  for (const r of attr.mcpServers) if (r.total > 0 || r.calls > 0) usedMcp.add(mcpKey(r.key));
-  const unusedMcp = [...seen.entries()].filter(([k]) => !usedMcp.has(k)).sort((a, b) => (blockChars.get(b[0]) ?? 0) - (blockChars.get(a[0]) ?? 0) || b[1] - a[1]);
-  if (unusedMcp.length) {
-    const saving = unusedMcp.reduce((n, [k]) => n + estTokens(blockChars.get(k) ?? 0), 0);
-    out.push({
-      id: "unused-mcp",
-      pages: ["mcp"],
-      severity: saving > 1e6 ? "warn" : "info",
-      title: T.unusedMcp.title(unusedMcp.length, days),
-      detail: T.unusedMcp.detail,
-      evidence: unusedMcp.slice(0, 12).map(([k, n]) => T.unusedMcp.evidence(disp.get(k) ?? k, n, blockChars.get(k) ? estTokens(blockChars.get(k)) : 0)),
-      fix: T.unusedMcp.fix,
-      estSavingTokens: saving
-    });
-  }
   const big = /* @__PURE__ */ new Map();
   for (const s of filesInRange) {
     for (const r of s.bigResults) {
+      if (mcpSplit(r.tool)) continue;
       const d = localDate(r.ts);
       if (d < range.from || d > range.to) continue;
       const a = big.get(r.tool) ?? { n: 0, sum: 0, max: 0, ex: [] };
@@ -2649,7 +3564,7 @@ function compute(store2, range, lang, env2) {
       detail: T.repeatedReads.detail(sessionsN, extra, readAvg),
       evidence: repeated.slice(0, 8).map((r) => {
         const main = store2.mainOf(r.sid);
-        return `${path5.basename(r.file)} \xD7${r.n} \u2014 ${main?.title ?? ctx.projectOfSession.get(r.sid) ?? r.sid.slice(0, 8)}`;
+        return `${path7.basename(r.file)} \xD7${r.n} \u2014 ${main?.title ?? ctx.projectOfSession.get(r.sid) ?? r.sid.slice(0, 8)}`;
       }),
       fix: T.repeatedReads.fix,
       estSavingTokens: Math.round(extra * readAvg)
@@ -2764,10 +3679,11 @@ var init_insights = __esm({
     init_config();
     init_hook_log();
     init_util();
-    init_i18n();
     init_insights_text();
     init_recommend();
+    init_recommend_mcp();
     init_recommend_skills();
+    init_recommend_startup();
     sevRank = { high: 0, warn: 1, info: 2 };
     bySaving = (a, b) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity];
     waitMemo = /* @__PURE__ */ new Map();
@@ -3128,7 +4044,7 @@ var init_automation = __esm({
 });
 
 // server/plan.ts
-import fs4 from "node:fs";
+import fs5 from "node:fs";
 function str2(v, max = 40) {
   if (typeof v !== "string") return null;
   const s = v.trim();
@@ -3153,23 +4069,23 @@ function readPlan(files = CLAUDE_JSON_FILES) {
   for (const file of files) {
     let st;
     try {
-      st = fs4.statSync(file);
+      st = fs5.statSync(file);
     } catch {
       continue;
     }
-    if (cache2 && cache2.file === file && cache2.mtime === st.mtimeMs && cache2.size === st.size) return cache2.plan;
+    if (cache3 && cache3.file === file && cache3.mtime === st.mtimeMs && cache3.size === st.size) return cache3.plan;
     let plan = null;
     try {
-      plan = planFrom(JSON.parse(fs4.readFileSync(file, "utf8"))?.oauthAccount);
+      plan = planFrom(JSON.parse(fs5.readFileSync(file, "utf8"))?.oauthAccount);
     } catch {
-      if (cache2 && cache2.file === file) return cache2.plan;
+      if (cache3 && cache3.file === file) return cache3.plan;
     }
-    cache2 = { file, mtime: st.mtimeMs, size: st.size, plan };
+    cache3 = { file, mtime: st.mtimeMs, size: st.size, plan };
     return plan;
   }
   return null;
 }
-var NAMES, cache2;
+var NAMES, cache3;
 var init_plan = __esm({
   "server/plan.ts"() {
     "use strict";
@@ -3180,12 +4096,12 @@ var init_plan = __esm({
       claude_team: "Team",
       claude_enterprise: "Enterprise"
     };
-    cache2 = null;
+    cache3 = null;
   }
 });
 
 // server/lines.ts
-import fs5 from "node:fs/promises";
+import fs6 from "node:fs/promises";
 function classifyPrefix(head) {
   if (head[0] !== 123 || head[1] !== 34) return null;
   const p = head.subarray(0, 24).toString("latin1");
@@ -3193,7 +4109,7 @@ function classifyPrefix(head) {
   return null;
 }
 async function readLines(file, start, sink, maxBytes = Infinity) {
-  const fh = await fs5.open(file, "r");
+  const fh = await fs6.open(file, "r");
   try {
     const buf = Buffer.allocUnsafe(CHUNK);
     let pos = start;
@@ -3294,8 +4210,8 @@ var init_lines = __esm({
 });
 
 // server/scanner.ts
-import fs6 from "node:fs";
-import path6 from "node:path";
+import fs7 from "node:fs";
+import path8 from "node:path";
 function emptyCarry() {
   return {
     recentReq: [],
@@ -3334,11 +4250,11 @@ function emptyDay() {
   };
 }
 function identify(projectsDir, file) {
-  const rel = path6.relative(projectsDir, file).split(path6.sep);
+  const rel = path8.relative(projectsDir, file).split(path8.sep);
   if (rel.length < 2 || rel[0] === ".." || !file.endsWith(".jsonl")) return null;
   const projectDir = rel[0];
-  if (rel.length === 2) return { sessionId: path6.basename(rel[1], ".jsonl"), agentId: null, projectDir };
-  const base = path6.basename(file, ".jsonl");
+  if (rel.length === 2) return { sessionId: path8.basename(rel[1], ".jsonl"), agentId: null, projectDir };
+  const base = path8.basename(file, ".jsonl");
   if (rel[2] !== "subagents" || !base.startsWith("agent-")) return null;
   return { sessionId: rel[1], agentId: base.slice(6), projectDir };
 }
@@ -3387,8 +4303,8 @@ function newSummary(file, id) {
 function readMeta(file) {
   const metaPath = file.replace(/\.jsonl$/, ".meta.json");
   try {
-    const m = JSON.parse(fs6.readFileSync(metaPath, "utf8"));
-    const wf = path6.basename(path6.dirname(file));
+    const m = JSON.parse(fs7.readFileSync(metaPath, "utf8"));
+    const wf = path8.basename(path8.dirname(file));
     return {
       agentType: m.agentType || "general-purpose",
       description: m.description ?? null,
@@ -3434,10 +4350,14 @@ function detectPlugin(texts, known) {
   }
   return best;
 }
+function declined(content) {
+  const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((b) => typeof b?.text === "string" ? b.text : "").join(" ") : "";
+  return /doesn't want to proceed|user rejected|was rejected|permission to use .* (has been|was) denied|interrupted by user|\[Request interrupted/i.test(text.slice(0, 400));
+}
 async function scanFile(projectsDir, file, prev, opts, onEvent) {
   let st;
   try {
-    st = fs6.statSync(file);
+    st = fs7.statSync(file);
   } catch {
     return null;
   }
@@ -3683,6 +4603,7 @@ var init_scanner = __esm({
             ta.res += tokens;
             ta.resN++;
             if (tokens > ta.max) ta.max = tokens;
+            if (blk.is_error === true && !declined(blk.content)) ta.err = (ta.err ?? 0) + 1;
             if (tokens > BIG_RESULT) {
               s.bigResults.push({ tool: name, label: p?.label ?? name, tokens, ts });
               if (s.bigResults.length > MAX_BIG) {
@@ -3776,9 +4697,9 @@ var init_scanner = __esm({
           }
           case "mcp_instructions_delta": {
             this.addStartup(LABELS.mcp, size);
-            const names = Array.isArray(a.addedNames) ? a.addedNames : [];
+            const names2 = Array.isArray(a.addedNames) ? a.addedNames : [];
             const blocks = Array.isArray(a.addedBlocks) ? a.addedBlocks : [];
-            names.forEach((n, i) => {
+            names2.forEach((n, i) => {
               const k = mcpKey(String(n));
               if (!s.mcpSeen.includes(k)) s.mcpSeen.push(k);
               if (!c.startupDone) s.mcpBlocks[String(n)] = (s.mcpBlocks[String(n)] ?? 0) + (typeof blocks[i] === "string" ? blocks[i].length : 0);
@@ -3788,20 +4709,36 @@ var init_scanner = __esm({
           case "deferred_tools_record":
           case "deferred_tools_delta": {
             this.addStartup(LABELS.deferred, size);
-            const names = Array.isArray(a.addedNames) ? a.addedNames : Array.isArray(a.entries) ? a.entries.map((e) => e?.name).filter(Boolean) : [];
-            for (const n of names) {
+            const names2 = Array.isArray(a.addedNames) ? a.addedNames : Array.isArray(a.entries) ? a.entries.map((e) => e?.name).filter(Boolean) : [];
+            const lines = Array.isArray(a.addedLines) ? a.addedLines.filter((x) => typeof x === "string") : [];
+            for (const n of names2) {
               const m = mcpSplit(String(n));
-              if (m && !s.mcpSeen.includes(m.server)) s.mcpSeen.push(m.server);
+              if (!m) continue;
+              if (!s.mcpSeen.includes(m.server)) s.mcpSeen.push(m.server);
+              if (!c.startupDone) {
+                const ln = lines.find((l) => l === n || l.startsWith(`${n}:`) || l.startsWith(`${n} `));
+                const per = s.mcpToolNames ??= {};
+                per[m.server] = (per[m.server] ?? 0) + (ln ?? String(n)).length + 1;
+              }
             }
+            this.mcpIssues(a, ts);
             return;
           }
           case "agent_listing_delta":
             this.addStartup(LABELS.agents, size);
             return;
           case "instructions":
-          case "nested_memory":
+          case "nested_memory": {
             this.addStartup(LABELS.claudeMd, size);
+            if (c.startupDone) return;
+            const files = a.type === "instructions" ? Array.isArray(a.files) ? a.files : [] : [a.content && typeof a.content === "object" ? { path: a.path, ...a.content } : a];
+            for (const f of files) {
+              if (!f || typeof f !== "object" || typeof f.path !== "string" || typeof f.content !== "string" || !f.content) continue;
+              const mf = s.memoryFiles ??= {};
+              mf[f.path] = { type: String(f.type ?? f.kind ?? ""), chars: Math.max(mf[f.path]?.chars ?? 0, f.content.length) };
+            }
             return;
+          }
           case "prompt_snapshot": {
             const sp = Array.isArray(a.systemPrompt) ? a.systemPrompt : [];
             const chars = sp.reduce((n, x) => n + (typeof x === "string" ? x.length : 0), 0) || lineLen;
@@ -3809,12 +4746,44 @@ var init_scanner = __esm({
             if (Array.isArray(a.tools) && a.tools.length) {
               const tc = JSON.stringify(a.tools).length;
               if (tc > (s.startup[LABELS.toolDefs] ?? 0)) s.startup[LABELS.toolDefs] = tc;
+              if (!c.startupDone) {
+                const per = {};
+                for (const t of a.tools) {
+                  const m = t && typeof t.name === "string" ? mcpSplit(t.name) : null;
+                  if (m) per[m.server] = (per[m.server] ?? 0) + JSON.stringify(t).length;
+                }
+                const defs = s.mcpToolDefs ??= {};
+                for (const [k, n] of Object.entries(per)) if (n > (defs[k] ?? 0)) defs[k] = n;
+              }
             }
             return;
           }
           default:
             if (ENV_TYPES.has(a.type)) this.addStartup(LABELS.env, rendered);
             else if (rendered) this.addStartup(LABELS.other, rendered);
+        }
+      }
+      /** `failedMcpServers` ({ name, error?, errorCode? }) and `needsAuthMcpServers` (names) of a deferred tools attachment. */
+      mcpIssues(a, ts) {
+        const failed = Array.isArray(a.failedMcpServers) ? a.failedMcpServers : [];
+        const auth = Array.isArray(a.needsAuthMcpServers) ? a.needsAuthMcpServers : [];
+        if (!failed.length && !auth.length) return;
+        const issues = this.s.mcpIssues ??= {};
+        const at = (name) => issues[name] ??= { failed: 0, auth: 0, last: 0 };
+        for (const f of failed) {
+          const name = typeof f === "string" ? f : typeof f?.name === "string" ? f.name : null;
+          if (!name) continue;
+          const it = at(name);
+          it.failed++;
+          it.last = Math.max(it.last, ts);
+          const err = typeof f?.error === "string" ? f.error : typeof f?.errorCode === "string" ? f.errorCode : null;
+          if (err) it.error = trimText(err, 80);
+        }
+        for (const n of auth) {
+          if (typeof n !== "string" || !n) continue;
+          const it = at(n);
+          it.auth++;
+          it.last = Math.max(it.last, ts);
         }
       }
       /** Trims per-minute buckets to the last hour of activity. */
@@ -3829,53 +4798,53 @@ var init_scanner = __esm({
 
 // server/store.ts
 import { EventEmitter } from "node:events";
-import fs7 from "node:fs";
+import fs8 from "node:fs";
 import os3 from "node:os";
-import path7 from "node:path";
+import path9 from "node:path";
 import { Worker } from "node:worker_threads";
 function listTranscripts(projectsDir) {
   const out = [];
   let dirs = [];
   try {
-    dirs = fs7.readdirSync(projectsDir);
+    dirs = fs8.readdirSync(projectsDir);
   } catch {
     return out;
   }
   for (const d of dirs) {
-    const pd = path7.join(projectsDir, d);
+    const pd = path9.join(projectsDir, d);
     let entries;
     try {
-      entries = fs7.readdirSync(pd, { withFileTypes: true });
+      entries = fs8.readdirSync(pd, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const e of entries) {
-      if (e.isFile() && e.name.endsWith(".jsonl")) out.push(path7.join(pd, e.name));
+      if (e.isFile() && e.name.endsWith(".jsonl")) out.push(path9.join(pd, e.name));
       else if (e.isDirectory()) {
-        const sub = path7.join(pd, e.name, "subagents");
+        const sub = path9.join(pd, e.name, "subagents");
         let se;
         try {
-          se = fs7.readdirSync(sub, { withFileTypes: true });
+          se = fs8.readdirSync(sub, { withFileTypes: true });
         } catch {
           continue;
         }
         for (const x of se) {
-          if (x.isFile() && x.name.startsWith("agent-") && x.name.endsWith(".jsonl")) out.push(path7.join(sub, x.name));
+          if (x.isFile() && x.name.startsWith("agent-") && x.name.endsWith(".jsonl")) out.push(path9.join(sub, x.name));
           else if (x.isDirectory() && x.name === "workflows") {
             let wfs = [];
             try {
-              wfs = fs7.readdirSync(path7.join(sub, "workflows"));
+              wfs = fs8.readdirSync(path9.join(sub, "workflows"));
             } catch {
               continue;
             }
             for (const wf of wfs) {
               let af = [];
               try {
-                af = fs7.readdirSync(path7.join(sub, "workflows", wf));
+                af = fs8.readdirSync(path9.join(sub, "workflows", wf));
               } catch {
                 continue;
               }
-              for (const f of af) if (f.startsWith("agent-") && f.endsWith(".jsonl")) out.push(path7.join(sub, "workflows", wf, f));
+              for (const f of af) if (f.startsWith("agent-") && f.endsWith(".jsonl")) out.push(path9.join(sub, "workflows", wf, f));
             }
           }
         }
@@ -4035,7 +5004,7 @@ var init_store = __esm({
         const list = listTranscripts(this.projectsDir);
         const withM = list.map((f) => {
           try {
-            const s = fs7.statSync(f);
+            const s = fs8.statSync(f);
             return { f, m: s.mtimeMs, size: s.size };
           } catch {
             return null;
@@ -4100,7 +5069,7 @@ var init_store = __esm({
       refresh(file) {
         return this.enqueue(file, async () => {
           if (!identify(this.projectsDir, file)) return;
-          if (!fs7.existsSync(file)) {
+          if (!fs8.existsSync(file)) {
             this.markMissing(file);
             return;
           }
@@ -4319,8 +5288,8 @@ var init_tree = __esm({
 
 // server/live.ts
 import { EventEmitter as EventEmitter2 } from "node:events";
-import fs8 from "node:fs";
-import path8 from "node:path";
+import fs9 from "node:fs";
+import path10 from "node:path";
 function isAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -4331,16 +5300,16 @@ function isAlive(pid) {
 }
 function readPidFiles(dir = SESSIONS_DIR) {
   const out = /* @__PURE__ */ new Map();
-  let names = [];
+  let names2 = [];
   try {
-    names = fs8.readdirSync(dir);
+    names2 = fs9.readdirSync(dir);
   } catch {
     return out;
   }
-  for (const n of names) {
+  for (const n of names2) {
     if (!/^\d+\.json$/.test(n)) continue;
     try {
-      const j = JSON.parse(fs8.readFileSync(path8.join(dir, n), "utf8"));
+      const j = JSON.parse(fs9.readFileSync(path10.join(dir, n), "utf8"));
       const pid = Number(j.pid ?? n.split(".")[0]);
       if (!j.sessionId) continue;
       const info = {
@@ -4365,9 +5334,9 @@ function readHeadOrigin(file) {
   const out = { entrypoint: null, promptOrigin: null };
   let fd = null;
   try {
-    fd = fs8.openSync(file, "r");
+    fd = fs9.openSync(file, "r");
     const buf = Buffer.alloc(HEAD_BYTES);
-    const n = fs8.readSync(fd, buf, 0, HEAD_BYTES, 0);
+    const n = fs9.readSync(fd, buf, 0, HEAD_BYTES, 0);
     const lines = buf.subarray(0, n).toString("utf8").split("\n");
     if (n === HEAD_BYTES) lines.pop();
     for (const line of lines) {
@@ -4388,7 +5357,7 @@ function readHeadOrigin(file) {
   } catch {
   } finally {
     if (fd !== null) try {
-      fs8.closeSync(fd);
+      fs9.closeSync(fd);
     } catch {
     }
   }
@@ -4425,9 +5394,9 @@ function limitsFromStatusline(j, updatedAt) {
 }
 function readLimits() {
   try {
-    const file = fs8.existsSync(STATUSLINE_FILE) || !fs8.existsSync(LEGACY_STATUSLINE_FILE) ? STATUSLINE_FILE : LEGACY_STATUSLINE_FILE;
-    const st = fs8.statSync(file);
-    return { capture: true, limits: limitsFromStatusline(JSON.parse(fs8.readFileSync(file, "utf8")), Math.round(st.mtimeMs)) };
+    const file = fs9.existsSync(STATUSLINE_FILE) || !fs9.existsSync(LEGACY_STATUSLINE_FILE) ? STATUSLINE_FILE : LEGACY_STATUSLINE_FILE;
+    const st = fs9.statSync(file);
+    return { capture: true, limits: limitsFromStatusline(JSON.parse(fs9.readFileSync(file, "utf8")), Math.round(st.mtimeMs)) };
   } catch {
     return { limits: null, capture: false };
   }
@@ -4496,18 +5465,18 @@ var init_live = __esm({
       }
       start() {
         try {
-          const w = fs8.watch(PROJECTS_DIR, { recursive: true }, (_ev, name) => {
+          const w = fs9.watch(PROJECTS_DIR, { recursive: true }, (_ev, name) => {
             if (!name) return;
             const f = String(name);
-            if (f.endsWith(".jsonl")) this.schedule(path8.join(PROJECTS_DIR, f));
-            else if (f.endsWith(".meta.json")) this.schedule(path8.join(PROJECTS_DIR, f.replace(/\.meta\.json$/, ".jsonl")));
+            if (f.endsWith(".jsonl")) this.schedule(path10.join(PROJECTS_DIR, f));
+            else if (f.endsWith(".meta.json")) this.schedule(path10.join(PROJECTS_DIR, f.replace(/\.meta\.json$/, ".jsonl")));
           });
           this.watchers.push(w);
         } catch (e) {
           console.warn("[clorbit] fs.watch on projects is unavailable:", e.message);
         }
         try {
-          const w = fs8.watch(SESSIONS_DIR, () => this.schedule("__sessions__"));
+          const w = fs9.watch(SESSIONS_DIR, () => this.schedule("__sessions__"));
           this.watchers.push(w);
         } catch {
         }
@@ -4541,7 +5510,7 @@ var init_live = __esm({
           const live2 = this.pids.get(s.sessionId)?.alive || now - s.lastTs < 10 * 6e4;
           if (!live2) continue;
           try {
-            const st = fs8.statSync(s.path);
+            const st = fs9.statSync(s.path);
             if (st.size !== s.size || st.mtimeMs !== s.mtimeMs) void this.store.refresh(s.path);
           } catch {
           }
@@ -4550,12 +5519,12 @@ var init_live = __esm({
           for (const p of this.pids.values()) {
             if (!p.alive) continue;
             const main = this.store.mainOf(p.sessionId);
-            const dir = main ? path8.join(path8.dirname(main.path), p.sessionId, "subagents") : null;
+            const dir = main ? path10.join(path10.dirname(main.path), p.sessionId, "subagents") : null;
             if (!dir) continue;
             try {
-              for (const f of fs8.readdirSync(dir)) {
+              for (const f of fs9.readdirSync(dir)) {
                 if (f.startsWith("agent-") && f.endsWith(".jsonl")) {
-                  const full = path8.join(dir, f);
+                  const full = path10.join(dir, f);
                   if (!this.store.files.has(full)) void this.store.refresh(full);
                 }
               }
@@ -5014,8 +5983,8 @@ var init_notify = __esm({
 
 // server/notifier.ts
 import { execFile } from "node:child_process";
-import fs9 from "node:fs";
-import path9 from "node:path";
+import fs10 from "node:fs";
+import path11 from "node:path";
 function escapeAppleScript(s) {
   return s.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
@@ -5029,8 +5998,8 @@ function notifierCommand(tool, title, body) {
 }
 function executable(file) {
   try {
-    fs9.accessSync(file, fs9.constants.X_OK);
-    return fs9.statSync(file).isFile();
+    fs10.accessSync(file, fs10.constants.X_OK);
+    return fs10.statSync(file).isFile();
   } catch {
     return false;
   }
@@ -5038,7 +6007,7 @@ function executable(file) {
 function detectTool(platform = process.platform, pathEnv = process.env.PATH ?? "") {
   if (platform === "darwin") return executable("/usr/bin/osascript") ? "osascript" : null;
   if (platform === "linux") {
-    for (const dir of pathEnv.split(path9.delimiter)) if (dir && executable(path9.join(dir, "notify-send"))) return "notify-send";
+    for (const dir of pathEnv.split(path11.delimiter)) if (dir && executable(path11.join(dir, "notify-send"))) return "notify-send";
   }
   return null;
 }
@@ -5884,9 +6853,9 @@ var init_replay2 = __esm({
 });
 
 // server/changes.ts
-import fs10 from "node:fs/promises";
+import fs11 from "node:fs/promises";
 import os4 from "node:os";
-import path10 from "node:path";
+import path12 from "node:path";
 function stringAt2(buf, at) {
   const end = buf.indexOf(34, at);
   return end > at ? buf.toString("latin1", at, end) : null;
@@ -5974,11 +6943,11 @@ function changeOf(name, input, ts) {
   return { path: p, added, removed, hunks, write: false };
 }
 function relPath(abs, cwd, home = os4.homedir()) {
-  if (!path10.isAbsolute(abs)) return abs;
-  const norm = path10.normalize(abs);
+  if (!path12.isAbsolute(abs)) return abs;
+  const norm = path12.normalize(abs);
   if (cwd) {
-    const c = path10.normalize(cwd).replace(/\/+$/, "");
-    if (norm === c) return path10.basename(norm);
+    const c = path12.normalize(cwd).replace(/\/+$/, "");
+    if (norm === c) return path12.basename(norm);
     if (norm.startsWith(c + "/")) return norm.slice(c.length + 1);
   }
   if (home && norm.startsWith(home.replace(/\/+$/, "") + "/")) {
@@ -6030,7 +6999,7 @@ function buildChanges(files, steps, stepsTotal, meta) {
     if (f.edits || f.failed) {
       const c = {
         path: rel,
-        name: path10.basename(f.abs),
+        name: path12.basename(f.abs),
         added: f.added,
         removed: f.removed,
         edits: f.edits,
@@ -6052,7 +7021,7 @@ function buildChanges(files, steps, stepsTotal, meta) {
       }
     } else if (f.reads) {
       readsTotal++;
-      reads.push({ path: rel, name: path10.basename(f.abs), count: f.reads, lastTs: f.lastTs });
+      reads.push({ path: rel, name: path12.basename(f.abs), count: f.reads, lastTs: f.lastTs });
     }
   }
   changed.sort((a, b) => Number(b.edits > 0) - Number(a.edits > 0) || b.lastTs - a.lastTs || a.path.localeCompare(b.path));
@@ -6074,11 +7043,11 @@ function buildChanges(files, steps, stepsTotal, meta) {
 async function sinkFor(f) {
   let st;
   try {
-    st = await fs10.stat(f.path);
+    st = await fs11.stat(f.path);
   } catch {
     return null;
   }
-  let hit = cache3.get(f.path);
+  let hit = cache4.get(f.path);
   if (hit && st.size < hit.size) hit = void 0;
   if (!hit) hit = { offset: 0, mtimeMs: 0, size: 0, sink: new ChangesSink(f.agentId === null) };
   if (st.size !== hit.offset) {
@@ -6090,9 +7059,9 @@ async function sinkFor(f) {
   }
   hit.size = st.size;
   hit.mtimeMs = st.mtimeMs;
-  cache3.delete(f.path);
-  cache3.set(f.path, hit);
-  if (cache3.size > CACHE_MAX) cache3.delete(cache3.keys().next().value);
+  cache4.delete(f.path);
+  cache4.set(f.path, hit);
+  if (cache4.size > CACHE_MAX) cache4.delete(cache4.keys().next().value);
   return hit.sink;
 }
 async function agentChanges(files, sessionId, agentId, opts = {}) {
@@ -6129,7 +7098,7 @@ async function agentChanges(files, sessionId, agentId, opts = {}) {
 async function sessionAgentChanges(store2, sessionId, agentId) {
   return agentChanges(store2.sessionFiles(sessionId), sessionId, agentId, { isMissing: (p) => store2.isMissing(p) });
 }
-var CHANGE_LIMITS, CHANGE_TOOLS, TOOL_USE_ID2, IS_ERROR, TIMESTAMP2, TUR2, ASSISTANT, SIDECHAIN2, clip, ChangesSink, cache3, CACHE_MAX;
+var CHANGE_LIMITS, CHANGE_TOOLS, TOOL_USE_ID2, IS_ERROR, TIMESTAMP2, TUR2, ASSISTANT, SIDECHAIN2, clip, ChangesSink, cache4, CACHE_MAX;
 var init_changes = __esm({
   "server/changes.ts"() {
     "use strict";
@@ -6289,16 +7258,16 @@ var init_changes = __esm({
         }
       }
     };
-    cache3 = /* @__PURE__ */ new Map();
+    cache4 = /* @__PURE__ */ new Map();
     CACHE_MAX = 32;
   }
 });
 
 // server/index.ts
 var index_exports = {};
-import fs11 from "node:fs";
+import fs12 from "node:fs";
 import http from "node:http";
-import path11 from "node:path";
+import path13 from "node:path";
 function about() {
   const st = db ? (hookLog.flush(), db.stats()) : null;
   const lim = readLimits();
@@ -6340,16 +7309,16 @@ function json(res, code, body) {
   res.end(s);
 }
 function serveStatic(res, urlPath) {
-  const safe = path11.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
-  let file = path11.join(DIST_DIR, safe);
-  if (!file.startsWith(DIST_DIR) || !fs11.existsSync(file) || fs11.statSync(file).isDirectory()) file = path11.join(DIST_DIR, "index.html");
-  if (!fs11.existsSync(file)) {
+  const safe = path13.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
+  let file = path13.join(DIST_DIR, safe);
+  if (!file.startsWith(DIST_DIR) || !fs12.existsSync(file) || fs12.statSync(file).isDirectory()) file = path13.join(DIST_DIR, "index.html");
+  if (!fs12.existsSync(file)) {
     res.writeHead(404);
     res.end("dist is not built: run pnpm build");
     return;
   }
-  res.writeHead(200, { "content-type": MIME[path11.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
-  fs11.createReadStream(file).pipe(res);
+  res.writeHead(200, { "content-type": MIME[path13.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
+  fs12.createReadStream(file).pipe(res);
 }
 function readBody(req, limit = 2e6) {
   return new Promise((resolve, reject) => {
@@ -6541,7 +7510,7 @@ var init_index = __esm({
     PID_FILE = env("PID_FILE");
     ownsPidFile = () => {
       try {
-        return PID_FILE && JSON.parse(fs11.readFileSync(PID_FILE, "utf8")).pid === process.pid;
+        return PID_FILE && JSON.parse(fs12.readFileSync(PID_FILE, "utf8")).pid === process.pid;
       } catch {
         return false;
       }
@@ -6554,14 +7523,14 @@ var init_index = __esm({
     server.listen(PORT, HOST, () => {
       if (PID_FILE) {
         try {
-          fs11.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
+          fs12.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
         } catch (e) {
           console.error(`[clorbit] could not write ${PID_FILE}:`, e.message);
         }
       }
       const lock = env("START_LOCK");
       if (lock) try {
-        fs11.rmSync(lock, { force: true });
+        fs12.rmSync(lock, { force: true });
       } catch {
       }
       console.log(`[clorbit] v${VERSION} http://${HOST}:${PORT} ready in ${Date.now() - t0} ms; ${store.files.size} files in the database, ${store.missing.size} archived (loaded in ${store.stats.loadMs} ms)`);
@@ -6584,7 +7553,7 @@ var init_index = __esm({
       }
       for (const c of clients.keys()) c.end();
       if (ownsPidFile()) try {
-        fs11.unlinkSync(PID_FILE);
+        fs12.unlinkSync(PID_FILE);
       } catch {
       }
       server.close();

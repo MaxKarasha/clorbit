@@ -6,6 +6,7 @@ import { alpha } from '../lib/colors';
 import { fmtInt, fmtPct, fmtTokens } from '../lib/format';
 import { href } from '../lib/router';
 import RankList from '../components/RankList';
+import Recommendations from '../components/Recommendations';
 import { Chip, cx, Empty, PageHeader, Panel, Tooltip, TipRow, useTip } from '../components/ui';
 import { Eyebrow, Guard, rangeQs, useRangeApi } from './common';
 
@@ -89,6 +90,7 @@ export default function StartupContext() {
         title={t('ctx.title')}
         lede={t('ctx.lede')}
       />
+      <Recommendations page="startup" />
       <Guard state={q} label={t('ctx.loading')}>
         {(d) => <Body d={d} periodTotal={ov.data?.totals.total ?? null} sessionsTotal={ov.data?.totals.sessions ?? null} />}
       </Guard>

@@ -10,10 +10,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { InsightSaving, Insight } from '../shared/api.ts';
-import { CLAUDE_DIR, readSettings, SETTINGS_FILE } from './config';
+import { CLAUDE_DIR, CLAUDE_JSON_FILES, readSettings, SETTINGS_FILE } from './config';
+import { readMcpConfig, type McpConfig } from './mcp-config';
 import type { Store } from './store';
 import type { FileSummary } from './types';
-import { estTokens, localDate } from './util';
+import { estTokens, localDate, mcpKey, mcpSplit } from './util';
 
 export const DAY_MS = 86_400_000;
 /** Projections are "over 30 days", from the last 30 days of history. */
@@ -30,6 +31,10 @@ export interface RecommendEnv {
   skillsDir: string;
   /** Does ~/.claude/skills/<name> exist? (Built-in and project skills also show up in the listing.) */
   ownSkillExists: (name: string) => boolean;
+  /** Where MCP servers are configured (names only). */
+  mcp: McpConfig;
+  /** Display path of Claude Code's ~/.claude.json (user- and local-scope MCP servers live there). */
+  claudeJsonFile: string;
 }
 
 /** '/Users/me/.claude' → '~/.claude' (prompts are easier to read and do not leak the user name). */
@@ -47,6 +52,8 @@ export function defaultEnv(o: { now?: number; unusedDays: number }): RecommendEn
     settingsFile: homeDisplay(SETTINGS_FILE),
     skillsDir: homeDisplay(skills),
     ownSkillExists: (name) => /^[\w.-]+$/.test(name) && fs.existsSync(path.join(skills, name)),
+    mcp: readMcpConfig(),
+    claudeJsonFile: homeDisplay(CLAUDE_JSON_FILES[0]),
   };
 }
 
@@ -85,6 +92,7 @@ export interface UsageIndex {
   tool: Map<string, number>;       // tool name → last call
   pluginSeen: Map<string, number>; // plugin → first session whose startup context had its skills or hook block
   skillSeen: Map<string, number>;  // skill key → first session whose skill listing had it
+  mcpSeen: Map<string, number>;    // MCP server key (as in mcp__<key>__) → first file that saw it
 }
 
 const bump = (m: Map<string, number>, k: string, ts: number) => { if (ts > (m.get(k) ?? 0)) m.set(k, ts); };
@@ -102,7 +110,7 @@ let indexMemo: { store: Store; version: number; v: UsageIndex } | null = null;
 /** Last use of everything, over every stored summary (archived ones included). Memoized per store version. */
 export function usageIndex(store: Store): UsageIndex {
   if (indexMemo && indexMemo.store === store && indexMemo.version === store.version) return indexMemo.v;
-  const v: UsageIndex = { plugin: new Map(), skill: new Map(), mcp: new Map(), tool: new Map(), pluginSeen: new Map(), skillSeen: new Map() };
+  const v: UsageIndex = { plugin: new Map(), skill: new Map(), mcp: new Map(), tool: new Map(), pluginSeen: new Map(), skillSeen: new Map(), mcpSeen: new Map() };
   for (const s of store.files.values()) {
     for (const [date, b] of Object.entries(s.days)) {
       for (const [k, a] of Object.entries(b.plugins)) bump(v.plugin, k, a.last);
@@ -115,6 +123,7 @@ export function usageIndex(store: Store): UsageIndex {
     for (const [p, c] of Object.entries(s.skillsByPlugin)) if (c > 0) first(v.pluginSeen, p, s.firstTs);
     for (const k of Object.keys(s.startup)) if (k.startsWith('hook:plugin:')) first(v.pluginSeen, k.slice('hook:plugin:'.length), s.firstTs);
     for (const [k, c] of Object.entries(s.skillsByName ?? {})) if (c > 0) first(v.skillSeen, k, s.firstTs);
+    for (const k of s.mcpSeen) first(v.mcpSeen, k, s.firstTs);
   }
   indexMemo = { store, version: store.version, v };
   return v;
@@ -132,6 +141,14 @@ export function pluginLastUse(idx: UsageIndex, plugin: string): number | null {
   for (const [k, ts] of idx.mcp) if (isPluginMcp(k, plugin) && ts > last) last = ts;
   const prefix = `mcp__plugin_${plugin}_`;
   for (const [k, ts] of idx.tool) if (k.startsWith(prefix) && ts > last) last = ts;
+  return last || null;
+}
+
+/** Last use of an MCP server by its key (attributed turns under its display name, or calls of its tools). null = never. */
+export function mcpLastUse(idx: UsageIndex, key: string): number | null {
+  let last = 0;
+  for (const [k, ts] of idx.mcp) if (mcpKey(k) === key && ts > last) last = ts;
+  for (const [k, ts] of idx.tool) if (ts > last && mcpSplit(k)?.server === key) last = ts;
   return last || null;
 }
 

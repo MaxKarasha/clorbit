@@ -1,7 +1,7 @@
 // Internal server types: the summary of one .jsonl file, persisted in SQLite.
 import type { T4 } from './util';
 
-export const SUMMARY_VERSION = 6;
+export const SUMMARY_VERSION = 7;
 /**
  * The oldest summary version that is still loaded. Older-but-compatible rows of transcripts that still exist are
  * re-parsed on the next scan; archived ones (transcript gone) are kept as they are, so every field added since
@@ -10,7 +10,11 @@ export const SUMMARY_VERSION = 6;
 export const MIN_SUMMARY_VERSION = 5;
 
 export interface UsageAgg { t: T4; turns: number; last: number }
-export interface ToolAgg { calls: number; res: number; resN: number; max: number; last: number }
+export interface ToolAgg {
+  calls: number; res: number; resN: number; max: number; last: number;
+  /** Results flagged is_error (not counting the user declining a call). Optional: absent before v7. */
+  err?: number;
+}
 export interface HookAgg { n: number; ms: number; err: number }
 
 /** Aggregates of one file for one local date. */
@@ -104,10 +108,31 @@ export interface FileSummary {
   skillsByName?: Record<string, number>;
   mcpBlocks: Record<string, number>;      // chars of MCP instructions per server
   mcpSeen: string[];                      // MCP server keys (as in mcp__<key>__)
+  /** Startup only: chars of MCP tool definitions per server key (prompt_snapshot tools: name, description, schema). v7+. */
+  mcpToolDefs?: Record<string, number>;
+  /** Startup only: chars of deferred MCP tool entries per server key (with tool search on, only names are listed). v7+. */
+  mcpToolNames?: Record<string, number>;
+  /** MCP servers reported as failed to connect or needing authentication (deferred tools attachments), by display name. v7+. */
+  mcpIssues?: Record<string, McpIssue>;
+  /** Startup only: instruction files (CLAUDE.md, CLAUDE.local.md, rules, auto-memory) by path. v7+. */
+  memoryFiles?: Record<string, MemoryFile>;
   spawns: Record<string, SpawnInfo>;      // toolUseId of an Agent call → info
   reads: Record<string, number>;          // path → how many times it was Read
   bigResults: BigResult[];
   carry: Carry;
+}
+
+export interface McpIssue {
+  failed: number;          // reports of a failed connection in this file
+  auth: number;            // reports of "needs authentication"
+  last: number;            // the latest report
+  error?: string;          // the latest error text (≤ 80 chars)
+}
+
+export interface MemoryFile {
+  /** Claude Code's memory type: 'User' | 'Project' | 'Local' | 'Managed' | 'AutoMem' (or the lowercase kind). */
+  type: string;
+  chars: number;
 }
 
 export interface ScanOptions {

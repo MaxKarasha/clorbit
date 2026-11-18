@@ -30,6 +30,21 @@ function session(n: number, daysAgo: number, use?: string) {
   fs.writeFileSync(path.join(claude, 'projects', '-work-app', `${sid(n)}.jsonl`), lines.join('\n') + '\n');
 }
 
+/** A session that loads the MCP server "pencil" (never called) and a large global CLAUDE.md. */
+function mcpSession(n: number, daysAgo: number) {
+  const ts = new Date(Date.now() - daysAgo * DAY).toISOString();
+  const lines = [
+    JSON.stringify({ type: 'attachment', attachment: { type: 'mcp_instructions_delta', addedNames: ['pencil'], addedBlocks: ['p'.repeat(3600)] }, timestamp: ts }),
+    JSON.stringify({ type: 'attachment', attachment: { type: 'deferred_tools_delta', addedNames: ['mcp__pencil__draw'], addedLines: ['mcp__pencil__draw'] }, timestamp: ts }),
+    JSON.stringify({ type: 'attachment', attachment: { type: 'instructions', files: [{ path: path.join(claude, 'CLAUDE.md'), type: 'User', content: 'c'.repeat(10_000) }] }, timestamp: ts }),
+    JSON.stringify({
+      type: 'assistant', requestId: `mr${n}`, timestamp: ts, sessionId: sid(n), cwd: '/work/app',
+      message: { model: 'claude-opus-5-5', id: `mm${n}`, stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: 'ok' }] },
+    }),
+  ];
+  fs.writeFileSync(path.join(claude, 'projects', '-work-app', `${sid(n)}.jsonl`), lines.join('\n') + '\n');
+}
+
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
@@ -59,6 +74,10 @@ beforeAll(async () => {
   session(1, 40);
   session(2, 3, 'delta:d1');
   session(3, 1, 'delta:d1');
+  mcpSession(10, 45);
+  mcpSession(11, 2);
+  // Claude Code's account file: only the MCP server names are read from it.
+  fs.writeFileSync(path.join(tmp, 'claude.json'), JSON.stringify({ mcpServers: { pencil: { command: 'pencil-mcp', env: { TOKEN: 'secret' } } } }));
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   server = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
@@ -106,6 +125,30 @@ describe('GET /api/insights', () => {
     expect(mcp.some((i) => i.id.startsWith('unused-plugins:'))).toBe(false);
     expect(all.length).toBeGreaterThanOrEqual((await get(`${RANGE}&page=skills`)).length);
     expect(await get(`${RANGE}&page=bogus`)).toEqual([]);
+  });
+
+  it('?page=mcp: the unused server, with the command for its scope', async () => {
+    const list = await get(`${RANGE}&page=mcp`);
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.every((i) => i.pages?.includes('mcp'))).toBe(true);
+    const card = list.find((i) => i.id.startsWith('unused-mcp:'))!;
+    expect(card.targets!.map((t) => t.key)).toEqual(['pencil']);
+    expect(card.prompts!.all).toContain('claude mcp remove pencil --scope user');
+    expect(card.prompts!.all).toContain('claude.json.bak-$(date +%Y%m%d-%H%M%S)');
+    expect(JSON.stringify(list)).not.toContain('secret');
+    const uk = (await get(`${RANGE}&page=mcp&lang=uk`)).find((i) => i.id.startsWith('unused-mcp:'))!;
+    expect(uk.title).toMatch(/MCP-сервер pencil/);
+  });
+
+  it('?page=startup: the large CLAUDE.md, the total and the unused server', async () => {
+    const list = await get(`${RANGE}&page=startup`);
+    expect(list.every((i) => i.pages?.includes('startup'))).toBe(true);
+    const big = list.find((i) => i.id.startsWith('big-instructions:'))!;
+    expect(big.prompts!.all).toMatch(/Compress .*CLAUDE\.md without losing meaning/);
+    expect(big.saving!.perSession).toBeGreaterThan(0);
+    expect(list.some((i) => i.id === 'startup-total')).toBe(true);
+    expect(list.some((i) => i.id.startsWith('unused-mcp:'))).toBe(true);
+    expect(list.some((i) => i.id.startsWith('mcp-failing:'))).toBe(false);
   });
 
   it('?unusedDays overrides the threshold; ?lang=uk words the prompts in Ukrainian', async () => {

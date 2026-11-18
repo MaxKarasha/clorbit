@@ -1,6 +1,9 @@
 // The prompt builder: both variants, both languages, exact commands, the safety rules.
 import { describe, expect, it } from 'vitest';
-import { buildPrompts, disablePluginItem, enablePluginInProjectItem, moveSkillItem, reviewItem, shq, type PromptLang } from '../prompts';
+import {
+  buildPrompts, compressInstructionsItem, consolidateMemoryItem, disableClaudeAiConnectorsItem, disableMcpJsonServerItem, disablePluginItem,
+  enablePluginInProjectItem, moveMcpToProjectsItem, moveSkillItem, PROMPT_NOTES, removeMcpServerItem, reviewItem, shq, type PromptLang,
+} from '../prompts';
 
 const spec = (lang: PromptLang) => ({
   lang,
@@ -59,6 +62,49 @@ describe('buildPrompts', () => {
   it('without verify commands the report line still reads well', () => {
     const p = buildPrompts({ ...spec('en'), verify: [] });
     expect(p.all).toContain('At the end, show me a short report');
+  });
+});
+
+describe('MCP and instruction-file items', () => {
+  const mcp = (lang: PromptLang) => buildPrompts({
+    lang,
+    summary: 's',
+    items: [
+      removeMcpServerItem(lang, { name: 'pencil', scope: 'user', claudeJson: '~/.claude.json', why: 'unused' }),
+      removeMcpServerItem(lang, { name: 'db', scope: 'local', dir: '~/code/my app', claudeJson: '~/.claude.json', why: 'unused' }),
+      moveMcpToProjectsItem(lang, { name: 'github', dirs: ['~/code/a', '~/code/b'], claudeJson: '~/.claude.json', why: 'used in a, b' }),
+      disableMcpJsonServerItem(lang, { name: 'sentry', dir: '~/code/a', why: 'unused' }),
+      disableClaudeAiConnectorsItem(lang, { settingsFile: '~/.claude/settings.json', why: 'none used' }),
+      compressInstructionsItem(lang, { path: '~/.claude/CLAUDE.md', why: 'big' }),
+      consolidateMemoryItem(lang, { path: '~/.claude/projects/-x/memory/MEMORY.md', why: 'big' }),
+    ],
+    verify: ['claude mcp list'],
+    notes: [PROMPT_NOTES[lang].mcpRemove('~/.claude.json'), PROMPT_NOTES[lang].jq, ...PROMPT_NOTES[lang].compress, ...PROMPT_NOTES[lang].memory],
+  });
+  for (const lang of ['en', 'uk'] as const) {
+    it(`${lang}: exact claude mcp commands per scope, undo from the backup, backups of every file, no rm`, () => {
+      const p = mcp(lang);
+      for (const text of [p.all, p.ask]) {
+        expect(text).toContain('claude mcp remove pencil --scope user');
+        expect(text).toContain('cd "$HOME/code/my app" && claude mcp remove db --scope local');
+        expect(text).toContain(`(cd ~/code/a && claude mcp add-json github "$(jq -c --arg n github '.mcpServers[$n]' ~/.claude.json)" --scope local) && (cd ~/code/b && claude mcp add-json github`);
+        expect(text).toContain(') && claude mcp remove github --scope user');
+        expect(text).toContain('"disabledMcpjsonServers"');
+        expect(text).toContain('"disableClaudeAiConnectors": true');
+        for (const f of ['~/.claude.json', '~/code/a/.claude/settings.local.json', '~/.claude/settings.json', '~/.claude/CLAUDE.md', '~/.claude/projects/-x/memory/MEMORY.md']) {
+          expect(text).toContain(`cp ${f} ${f}.bak-$(date +%Y%m%d-%H%M%S)`);
+        }
+        expect(text).toContain('claude mcp list');
+        expect(text).not.toMatch(/\brm\b/);
+        expect(text).not.toMatch(/[ыэъё]/i);
+      }
+    });
+  }
+  it('en wording of the notes: the one allowed removal, @imports load at startup, archive instead of delete', () => {
+    const p = mcp('en');
+    expect(p.all).toContain('"claude mcp remove" is the one removal allowed here, and only after ~/.claude.json is backed up');
+    expect(p.all).toContain('not an @import');
+    expect(p.all).toContain('into an "archive" folder next to them (do not delete them)');
   });
 });
 

@@ -415,6 +415,8 @@ export interface Insight {
   targets?: InsightTarget[];
   /** Ready-to-paste prompts for a Claude Code session, in the request's language. Clorbit itself never changes anything. */
   prompts?: InsightPrompts;
+  /** The tab whose recommendations handle this card's items (the card links there instead of repeating them). Additive (0.4+). */
+  seeAlso?: InsightPage;
 }
 
 /** The analytics tabs a recommendation can be shown on. */
@@ -443,7 +445,7 @@ export interface InsightTarget {
   key: string;
   /** Display name. */
   label: string;
-  kind?: 'plugin' | 'skill' | 'ownSkill' | 'mcp' | 'other';
+  kind?: 'plugin' | 'skill' | 'ownSkill' | 'mcp' | 'file' | 'hook' | 'other';
   /** Last use (epoch ms) across the whole history; null = never used; absent = not applicable. */
   lastUsed?: number | null;
   /** Context tokens this item adds to every session (estimate). */
