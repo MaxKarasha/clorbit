@@ -211,9 +211,9 @@ describe('limits history', () => {
     expect(log.record({ fiveHourPct: null, fiveHourResetsAt: null, sevenDayPct: null, sevenDayResetsAt: null, updatedAt: 4000 })).toBe(false);
     expect(log.record({ ...base, fiveHourPct: 0, fiveHourResetsAt: 6_000_000, updatedAt: 3000 })).toBe(true); // window reset; ts kept increasing
     expect(log.history(0, 10_000)).toEqual([
-      { ts: 1000, fiveHourPct: 10, sevenDayPct: 40 },
-      { ts: 3000, fiveHourPct: 12, sevenDayPct: 40 },
-      { ts: 3001, fiveHourPct: 0, sevenDayPct: 40 },
+      { ts: 1000, fiveHourPct: 10, sevenDayPct: 40, fiveHourResetsAt: 5_000_000, sevenDayResetsAt: 9_000_000 },
+      { ts: 3000, fiveHourPct: 12, sevenDayPct: 40, fiveHourResetsAt: 5_000_000, sevenDayResetsAt: 9_000_000 },
+      { ts: 3001, fiveHourPct: 0, sevenDayPct: 40, fiveHourResetsAt: 6_000_000, sevenDayResetsAt: 9_000_000 },
     ]);
     expect(log.history(2000, 3000)).toHaveLength(1);
     // Dedupe survives a restart (last row is reloaded).

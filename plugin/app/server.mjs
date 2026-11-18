@@ -169,6 +169,9 @@ var init_i18n = __esm({
         compaction: "{p}: context compacted",
         contextHigh: "{p}: context {pct}% full",
         limitHigh: "Subscription limit ({w}): {pct}% used",
+        limitForecast: "The {w} limit will run out around {time} \u2014 {left} before the reset ({pct}% used now)",
+        durHM: "{h} h {m} min",
+        durM: "{m} min",
         w5h: "5 h",
         w7d: "7 days",
         subagent: "a subagent",
@@ -186,6 +189,9 @@ var init_i18n = __esm({
         compaction: "{p}: \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0441\u0442\u0438\u0441\u043D\u0443\u0442\u043E",
         contextHigh: "{p}: \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0437\u0430\u043F\u043E\u0432\u043D\u0435\u043D\u043E \u043D\u0430 {pct}%",
         limitHigh: "\u041B\u0456\u043C\u0456\u0442 \u043F\u0456\u0434\u043F\u0438\u0441\u043A\u0438 ({w}): \u0432\u0438\u043A\u043E\u0440\u0438\u0441\u0442\u0430\u043D\u043E {pct}%",
+        limitForecast: "\u041B\u0456\u043C\u0456\u0442 {w} \u0432\u0438\u0447\u0435\u0440\u043F\u0430\u0454\u0442\u044C\u0441\u044F \u0431\u043B\u0438\u0437\u044C\u043A\u043E {time} \u2014 \u0437\u0430 {left} \u0434\u043E \u0441\u043A\u0438\u0434\u0430\u043D\u043D\u044F (\u0437\u0430\u0440\u0430\u0437 {pct}%)",
+        durHM: "{h} \u0433\u043E\u0434 {m} \u0445\u0432",
+        durM: "{m} \u0445\u0432",
         w5h: "5 \u0433\u043E\u0434",
         w7d: "7 \u0434\u043D\u0456\u0432",
         subagent: "\u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442",
@@ -1991,6 +1997,264 @@ var init_insights = __esm({
   }
 });
 
+// shared/forecast.ts
+function windowSeries(points, w) {
+  const out = [];
+  for (const p of points) {
+    const pct2 = w === "5h" ? p.fiveHourPct : p.sevenDayPct;
+    if (pct2 == null || !Number.isFinite(pct2)) continue;
+    const r = w === "5h" ? p.fiveHourResetsAt : p.sevenDayResetsAt;
+    out.push({ ts: p.ts, pct: pct2, resetsAt: r ?? null });
+  }
+  return out.sort((a, b) => a.ts - b.ts);
+}
+function isNewWindow(a, b, w) {
+  if (a.resetsAt != null && b.resetsAt != null && Math.abs(b.resetsAt - a.resetsAt) > FORECAST_TUNING[w].resetTolerance) return true;
+  if (a.resetsAt != null && b.ts >= a.resetsAt && b.resetsAt == null) return true;
+  return b.pct < a.pct - 0.5;
+}
+function splitWindows(series, w) {
+  const out = [];
+  let cur = [];
+  for (const p of series) {
+    if (cur.length && isNewWindow(cur[cur.length - 1], p, w)) {
+      out.push(cur);
+      cur = [];
+    }
+    cur.push(p);
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+function linearFit(pts) {
+  let sw = 0, sx = 0, sy = 0;
+  for (const p of pts) {
+    sw += p.w;
+    sx += p.w * p.x;
+    sy += p.w * p.y;
+  }
+  if (pts.length < 2 || !(sw > 0)) return null;
+  const mx = sx / sw, my = sy / sw;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const p of pts) {
+    const dx = p.x - mx, dy = p.y - my;
+    sxx += p.w * dx * dx;
+    sxy += p.w * dx * dy;
+    syy += p.w * dy * dy;
+  }
+  if (!(sxx > 0)) return null;
+  const slope = sxy / sxx;
+  const r2 = syy > 0 ? Math.min(1, sxy * sxy / (sxx * syy)) : 1;
+  return { slope, intercept: my - slope * mx, r2 };
+}
+function tokensBetween(usage, a, b) {
+  if (!(b > a)) return 0;
+  let sum = 0;
+  for (const u of usage) {
+    const len = u.end - u.start;
+    if (len <= 0 || u.end <= a || u.start >= b) continue;
+    sum += u.tokens * ((Math.min(b, u.end) - Math.max(a, u.start)) / len);
+  }
+  return sum;
+}
+function forecastWindow(inp) {
+  const { window: w, now } = inp;
+  const cfg = FORECAST_TUNING[w];
+  const cur = inp.current;
+  if (!cur || cur.pct == null || !Number.isFinite(cur.pct)) return none(w, null, null);
+  const curTs = Math.min(Number.isFinite(cur.ts) ? cur.ts : now, now);
+  const pctNow = Math.max(0, cur.pct);
+  const resetsAt = cur.resetsAt != null && Number.isFinite(cur.resetsAt) ? cur.resetsAt : null;
+  if (resetsAt != null && now >= resetsAt) return { ...none(w, 0, null), reset: true };
+  const series = inp.history.filter((p) => Number.isFinite(p.ts) && Number.isFinite(p.pct)).map((p) => ({ ...p, ts: Math.min(p.ts, now) }));
+  series.sort((a, b) => a.ts - b.ts);
+  const last = series[series.length - 1];
+  const latest = { ts: curTs, pct: pctNow, resetsAt };
+  if (!last || last.ts < curTs || last.pct !== pctNow || last.resetsAt !== resetsAt) {
+    if (last && last.ts >= curTs) latest.ts = last.ts;
+    series.push(latest);
+  }
+  const wins = splitWindows(series, w);
+  let seg = wins[wins.length - 1];
+  if (resetsAt != null) seg = seg.filter((p) => p.ts >= resetsAt - WINDOW_MS[w] - cfg.resetTolerance);
+  if (!seg.length) seg = [latest];
+  const n = seg.length;
+  const anchor = seg[n - 1];
+  const span = anchor.ts - seg[0].ts;
+  if (anchor.pct >= 100) {
+    const first = seg.find((p) => p.pct >= 100) ?? anchor;
+    return { window: w, pct: anchor.pct, resetsAt, ratePerHour: 0, hitsAt: Math.min(first.ts, now), pctAtReset: 100, confidence: "high", basis: "limits", points: n, exhausted: true };
+  }
+  let rate = 0;
+  let basis = "none";
+  let confidence = "low";
+  const fit = linearFit(seg.map((p) => ({ x: (p.ts - anchor.ts) / H, y: p.pct, w: Math.pow(0.5, (anchor.ts - p.ts) / cfg.halfLife) })));
+  const rise = anchor.pct - seg[0].pct;
+  const limitsOk = !!fit && (n >= 3 && span >= cfg.minSpan || n === 2 && span >= 3 * cfg.minSpan);
+  if (limitsOk && fit) {
+    basis = "limits";
+    rate = Math.max(0, fit.slope);
+    confidence = n >= 6 && span >= cfg.goodSpan && (fit.r2 >= 0.5 || rise <= 2) ? "high" : n >= 3 && span >= 1.5 * cfg.minSpan ? "medium" : "low";
+  } else if (n >= 2) {
+    const spent = inp.usage ? tokensBetween(inp.usage, seg[0].ts, anchor.ts) : 0;
+    const recentFrom = now - cfg.recent;
+    const recent2 = inp.usage ? tokensBetween(inp.usage, recentFrom, now) : 0;
+    if (rise > 0 && spent > 0) {
+      basis = "tokens";
+      rate = rise / spent * (recent2 / (cfg.recent / H));
+      confidence = rise >= 3 && span >= cfg.minSpan ? "medium" : "low";
+    } else if (fit) {
+      basis = "limits";
+      rate = Math.max(0, fit.slope);
+      confidence = "low";
+    }
+  }
+  if (basis === "none") return none(w, anchor.pct, resetsAt, n);
+  if (!Number.isFinite(rate) || rate < 0) rate = 0;
+  let from = anchor.ts;
+  if (now - anchor.ts > cfg.stale) {
+    from = now;
+    if (basis === "limits") confidence = LOWER[confidence];
+  }
+  const at = (t) => Math.min(100, anchor.pct + rate * Math.max(0, t - from) / H);
+  let hitsAt = null;
+  if (rate > 1e-9) {
+    hitsAt = Math.max(now, from + (100 - anchor.pct) / rate * H);
+    const horizon = resetsAt ?? now + WINDOW_MS[w];
+    if (hitsAt >= horizon) hitsAt = null;
+  }
+  return {
+    window: w,
+    pct: anchor.pct,
+    resetsAt,
+    ratePerHour: round2(rate),
+    hitsAt: hitsAt == null ? null : Math.round(hitsAt),
+    pctAtReset: resetsAt == null ? null : round2(at(resetsAt)),
+    confidence,
+    basis,
+    points: n
+  };
+}
+function forecastLimits({ now, limits, history, usage }) {
+  const has = !!limits && (limits.fiveHourPct != null || limits.sevenDayPct != null);
+  const cur = (w) => has && limits ? {
+    pct: w === "5h" ? limits.fiveHourPct : limits.sevenDayPct,
+    resetsAt: w === "5h" ? limits.fiveHourResetsAt : limits.sevenDayResetsAt,
+    ts: limits.updatedAt || now
+  } : null;
+  return {
+    source: has ? "statusline" : "none",
+    now,
+    updatedAt: has && limits ? limits.updatedAt : null,
+    fiveHour: forecastWindow({ window: "5h", now, current: cur("5h"), history: windowSeries(history, "5h"), usage }),
+    sevenDay: forecastWindow({ window: "7d", now, current: cur("7d"), history: windowSeries(history, "7d"), usage })
+  };
+}
+function forecastWarns(f, margin = FORECAST_MARGIN_MS) {
+  return !!f && !f.exhausted && f.hitsAt != null && f.resetsAt != null && f.resetsAt - f.hitsAt > margin && f.confidence !== "low";
+}
+var H, MIN, WINDOW_MS, FORECAST_TUNING, TOKEN_WEIGHTS, none, LOWER, round2, FORECAST_MARGIN_MS;
+var init_forecast = __esm({
+  "shared/forecast.ts"() {
+    "use strict";
+    H = 36e5;
+    MIN = 6e4;
+    WINDOW_MS = { "5h": 5 * H, "7d": 7 * 24 * H };
+    FORECAST_TUNING = {
+      "5h": { halfLife: 30 * MIN, minSpan: 10 * MIN, goodSpan: 45 * MIN, stale: 20 * MIN, resetTolerance: 10 * MIN, recent: 30 * MIN },
+      "7d": { halfLife: 48 * H, minSpan: 2 * H, goodSpan: 12 * H, stale: 6 * H, resetTolerance: H, recent: 3 * H }
+    };
+    TOKEN_WEIGHTS = { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 };
+    none = (window, pct2, resetsAt, points = 0) => ({
+      window,
+      pct: pct2,
+      resetsAt,
+      ratePerHour: 0,
+      hitsAt: null,
+      pctAtReset: null,
+      confidence: "low",
+      basis: "none",
+      points
+    });
+    LOWER = { high: "medium", medium: "low", low: "low" };
+    round2 = (n) => Math.round(n * 100) / 100;
+    FORECAST_MARGIN_MS = 20 * MIN;
+  }
+});
+
+// server/limits-forecast.ts
+function usageBuckets(files, from, now) {
+  const cut = now - H2;
+  const cutMin = Math.floor(cut / MIN2);
+  const byStart = /* @__PURE__ */ new Map();
+  const add = (start, end, tokens) => {
+    if (!(tokens > 0) || end <= start) return;
+    const b = byStart.get(start);
+    if (b) b.tokens += tokens;
+    else byStart.set(start, { end, tokens });
+  };
+  const fromDate = localDate(from);
+  for (const s of files) {
+    if (s.lastTs < from) continue;
+    for (const [date, day] of Object.entries(s.days)) {
+      if (date < fromDate) continue;
+      const [y, m, d] = date.split("-").map(Number);
+      for (const [h, t] of Object.entries(day.hours)) {
+        const start = new Date(y, m - 1, d, Number(h)).getTime();
+        const end = start + H2;
+        if (end <= from || start >= cut) continue;
+        const keep = end > cut ? (cut - start) / H2 : 1;
+        add(start, Math.min(end, cut), weightT4(t) * keep);
+      }
+    }
+    const total = sumT4(s.total);
+    const mix = total > 0 ? weightT4(s.total) / total : 1;
+    for (const [k, v] of Object.entries(s.minutes)) {
+      const mk = Number(k);
+      if (mk < cutMin || mk * MIN2 > now) continue;
+      const start = Math.max(mk * MIN2, cut);
+      add(start, mk * MIN2 + MIN2, v * mix);
+    }
+  }
+  return [...byStart].map(([start, b]) => ({ start, end: b.end, tokens: b.tokens })).sort((a, b) => a.start - b.start);
+}
+var H2, MIN2, FORECAST_LOOKBACK_MS, FORECAST_TTL_MS, weightT4, LimitsForecaster;
+var init_limits_forecast = __esm({
+  "server/limits-forecast.ts"() {
+    "use strict";
+    init_forecast();
+    init_util();
+    H2 = 36e5;
+    MIN2 = 6e4;
+    FORECAST_LOOKBACK_MS = 8 * 24 * H2;
+    FORECAST_TTL_MS = 15e3;
+    weightT4 = (t) => t[0] * TOKEN_WEIGHTS.input + t[1] * TOKEN_WEIGHTS.output + t[2] * TOKEN_WEIGHTS.cacheRead + t[3] * TOKEN_WEIGHTS.cacheWrite;
+    LimitsForecaster = class {
+      constructor(history, files) {
+        this.history = history;
+        this.files = files;
+      }
+      history;
+      files;
+      cache = null;
+      get(limits, now = Date.now()) {
+        const key = JSON.stringify(limits);
+        const c = this.cache;
+        if (c && c.key === key && now - c.at < FORECAST_TTL_MS && now >= c.at) return c.v;
+        let v;
+        if (!limits || limits.fiveHourPct == null && limits.sevenDayPct == null) {
+          v = forecastLimits({ now, limits: null, history: [] });
+        } else {
+          const from = now - FORECAST_LOOKBACK_MS;
+          v = forecastLimits({ now, limits, history: this.history(from, now), usage: usageBuckets(this.files(), from, now) });
+        }
+        this.cache = { at: now, key, v };
+        return v;
+      }
+    };
+  }
+});
+
 // server/limits-log.ts
 function parseTsRange(q, now = Date.now()) {
   const parse = (v, end) => {
@@ -2056,8 +2320,8 @@ var init_limits_log = __esm({
       }
       history(from, to) {
         if (!this.db) return [];
-        const rows = this.db.stmt("SELECT ts, five_pct, week_pct FROM limits WHERE ts >= ? AND ts <= ? ORDER BY ts").all(from, to);
-        return rows.map((r) => ({ ts: r.ts, fiveHourPct: r.five_pct, sevenDayPct: r.week_pct }));
+        const rows = this.db.stmt("SELECT ts, five_pct, five_resets_at, week_pct, week_resets_at FROM limits WHERE ts >= ? AND ts <= ? ORDER BY ts").all(from, to);
+        return rows.map((r) => ({ ts: r.ts, fiveHourPct: r.five_pct, sevenDayPct: r.week_pct, fiveHourResetsAt: r.five_resets_at, sevenDayResetsAt: r.week_resets_at }));
       }
     };
   }
@@ -3352,6 +3616,8 @@ var init_live = __esm({
       baseline = false;
       /** Automation signals read from the head of pre-0.2.1 summaries' transcripts, by path. */
       heads = /* @__PURE__ */ new Map();
+      /** Subscription-limit forecast for the snapshot (set by the server; see limits-forecast.ts). */
+      forecast = null;
       emitEvent(e) {
         this.cache = null;
         this.emit("event", e);
@@ -3632,6 +3898,12 @@ var init_live = __esm({
         const order = { waiting: 0, working: 1, idle: 2, stopped: 3 };
         sessions2.sort((a, b) => order[a.status] - order[b.status] || b.lastActivity - a.lastActivity);
         const lim = readLimits();
+        let limitsForecast = null;
+        try {
+          limitsForecast = this.forecast ? this.forecast(lim.limits, now) : null;
+        } catch (e) {
+          console.error("[clorbit] limits forecast failed:", e.message);
+        }
         const t24tok = toTokens(t24);
         const denom = t24[0] + t24[2] + t24[3];
         const v = {
@@ -3651,6 +3923,7 @@ var init_live = __esm({
             projects24h: projects.size
           },
           limits: lim.limits,
+          limitsForecast,
           // Hooks count as installed when the clorbit plugin (or legacy fleet-hooks) is enabled, or events already arrived.
           hooksInstalled: hookPluginEnabled() || this.hooks.installed,
           statuslineCapture: lim.capture,
@@ -3699,19 +3972,24 @@ var init_recent_events = __esm({
 });
 
 // shared/notify.ts
+function resetKey(at) {
+  return at ? String(Math.round(at / 6e4)) : "unknown";
+}
 function waitKind(code) {
   if (code === "waitingInput") return "input";
   if (code === "waitingPermission" || code === "probablyPermission" || code === "waitingPermissionAny") return "permission";
   return "you";
 }
-var CONTEXT_HIGH, CONTEXT_REARM, LIMIT_HIGH, LIMIT_REARM, NotifyDetector;
+var CONTEXT_HIGH, CONTEXT_REARM, LIMIT_HIGH, LIMIT_REARM, sameWindow, NotifyDetector;
 var init_notify = __esm({
   "shared/notify.ts"() {
     "use strict";
+    init_forecast();
     CONTEXT_HIGH = 0.85;
     CONTEXT_REARM = 0.75;
     LIMIT_HIGH = 80;
     LIMIT_REARM = 75;
+    sameWindow = (a, b) => a != null && Math.abs(a - b) <= 10 * 6e4;
     NotifyDetector = class {
       // dedupe keys → ts
       /** @param includeAutomated read on every decision, so a settings change applies at once. */
@@ -3722,6 +4000,8 @@ var init_notify = __esm({
       sessions = /* @__PURE__ */ new Map();
       baseline = false;
       limitNotified = { "5h": null, "7d": null };
+      /** Reset time of the 5 h window whose early warning was already given. */
+      forecastNotified = null;
       agentTypes = /* @__PURE__ */ new Map();
       seen = /* @__PURE__ */ new Map();
       get ready() {
@@ -3754,6 +4034,8 @@ var init_notify = __esm({
             const { pct: pct2, key } = this.limitOf(snap.limits, w);
             if (pct2 != null && pct2 > LIMIT_HIGH) this.limitNotified[w] = key;
           }
+          const f2 = snap.limitsForecast?.fiveHour;
+          if (f2 && forecastWarns(f2)) this.forecastNotified = f2.resetsAt;
           this.baseline = true;
           return res;
         }
@@ -3787,6 +4069,13 @@ var init_notify = __esm({
             this.limitNotified[w] = key;
             res.events.push({ type: "limit_high", ts: now, sessionId: null, project: null, pct: Math.round(pct2), window: w });
           } else if (pct2 < LIMIT_REARM) this.limitNotified[w] = null;
+        }
+        const f = snap.limitsForecast?.fiveHour;
+        if (f && forecastWarns(f)) {
+          if (!sameWindow(this.forecastNotified, f.resetsAt)) {
+            this.forecastNotified = f.resetsAt;
+            res.events.push({ type: "limit_forecast", ts: now, sessionId: null, project: null, pct: Math.round(f.pct ?? 0), window: "5h", at: f.hitsAt, resetsAt: f.resetsAt });
+          }
         }
         this.gc(now);
         return res;
@@ -3852,7 +4141,7 @@ var init_notify = __esm({
         if (!l) return { pct: null, key: "" };
         const pct2 = w === "5h" ? l.fiveHourPct : l.sevenDayPct;
         const at = w === "5h" ? l.fiveHourResetsAt : l.sevenDayResetsAt;
-        return { pct: pct2, key: at ? String(Math.round(at / 6e4)) : "unknown" };
+        return { pct: pct2, key: resetKey(at) };
       }
       learnAgents(sid, n) {
         if (n.depth > 0) this.agentTypes.set(`${sid}:${n.id}`, n.type);
@@ -3878,7 +4167,7 @@ var NOTIFY_EVENTS, SOUND_THEMES, rule, DEFAULT_SETTINGS;
 var init_api = __esm({
   "shared/api.ts"() {
     "use strict";
-    NOTIFY_EVENTS = ["session_waiting", "session_done", "subagent_finished", "subagent_spawned", "compaction", "context_high", "limit_high"];
+    NOTIFY_EVENTS = ["session_waiting", "session_done", "subagent_finished", "subagent_spawned", "compaction", "context_high", "limit_high", "limit_forecast"];
     SOUND_THEMES = ["orbit", "minimal", "retro"];
     rule = (sound, browser, toast, browserHiddenOnly = false) => ({ sound, browser, browserHiddenOnly, toast, system: false });
     DEFAULT_SETTINGS = {
@@ -3889,7 +4178,8 @@ var init_api = __esm({
         subagent_spawned: rule(false, false, false),
         compaction: rule(false, false, false),
         context_high: rule(false, false, false),
-        limit_high: rule(false, false, false)
+        limit_high: rule(false, false, false),
+        limit_forecast: rule(true, false, true)
       },
       sound: { enabled: true, volume: 0.6, theme: "orbit" },
       dnd: { enabled: false, quietHours: { enabled: false, from: "22:00", to: "08:00" }, mutedUntil: null },
@@ -4047,7 +4337,22 @@ function notificationBody(ev, lang) {
       return notifyText(lang, "contextHigh", { p, pct: ev.pct ?? 85 });
     case "limit_high":
       return notifyText(lang, "limitHigh", { w: notifyText(lang, ev.window === "7d" ? "w7d" : "w5h"), pct: ev.pct ?? 80 });
+    case "limit_forecast":
+      return notifyText(lang, "limitForecast", {
+        w: notifyText(lang, ev.window === "7d" ? "w7d" : "w5h"),
+        time: ev.at ? clockText(ev.at) : "\u2014",
+        left: ev.at && ev.resetsAt ? durationText(ev.resetsAt - ev.at, lang) : "\u2014",
+        pct: ev.pct ?? 0
+      });
   }
+}
+function clockText(ts) {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+function durationText(ms, lang) {
+  const m = Math.max(1, Math.round(ms / 6e4));
+  return m >= 60 ? notifyText(lang, "durHM", { h: Math.floor(m / 60), m: m % 60 }) : notifyText(lang, "durM", { m });
 }
 var MAX_BODY, clean, defaultRunner, SystemNotifier, notifyTestBody, ServerNotifications;
 var init_notifier = __esm({
@@ -4469,7 +4774,7 @@ function readBody(req, limit = 2e6) {
     req.on("error", reject);
   });
 }
-var t0, migratedFrom, db, store, hooks, hookLog, limitsLog, live, settings, systemNotifier, clients, recent, broadcast, MIME, server, PID_FILE, ownsPidFile, shutdown;
+var t0, migratedFrom, db, store, hooks, hookLog, limitsLog, live, forecaster, settings, systemNotifier, clients, recent, broadcast, MIME, server, PID_FILE, ownsPidFile, shutdown;
 var init_index = __esm({
   "server/index.ts"() {
     "use strict";
@@ -4480,6 +4785,7 @@ var init_index = __esm({
     init_hooks();
     init_i18n();
     init_insights();
+    init_limits_forecast();
     init_limits_log();
     init_live();
     init_recent_events();
@@ -4503,6 +4809,8 @@ var init_index = __esm({
     hookLog = new HookLog(db);
     limitsLog = new LimitsLog(db, () => readLimits().limits);
     live = new Live(store, hooks);
+    forecaster = new LimitsForecaster((from, to) => limitsLog.history(from, to), () => store.files.values());
+    live.forecast = (limits, now) => forecaster.get(limits, now);
     settings = new SettingsStore(db);
     systemNotifier = new SystemNotifier();
     new ServerNotifications(() => settings.get(), systemNotifier).attach(live);
@@ -4599,6 +4907,7 @@ var init_index = __esm({
           const r = parseTsRange(url.searchParams);
           return json(res, 200, limitsLog.history(r.from, r.to));
         }
+        if (p === "/api/limits/forecast") return json(res, 200, forecaster.get(readLimits().limits));
         if (p === "/api/debug/scan") return json(res, 200, { ...store.stats, files: store.files.size, archived: store.missing.size, hooksRecent: hooks.recent.slice(-20), uptimeMs: Date.now() - t0, db: dbHealth() });
         if (p === "/api/debug/db") return json(res, 200, dbHealth());
         if (p.startsWith("/api/")) return json(res, 404, { error: err.unknownRoute });

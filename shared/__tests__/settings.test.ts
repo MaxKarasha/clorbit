@@ -17,9 +17,17 @@ describe('normalizeSettings', () => {
     expect(n.session_waiting).toEqual({ sound: true, browser: true, browserHiddenOnly: false, toast: true, system: false });
     expect(n.session_done).toEqual({ sound: true, browser: true, browserHiddenOnly: true, toast: true, system: false });
     expect(n.subagent_finished).toEqual({ sound: true, browser: false, browserHiddenOnly: false, toast: false, system: false });
+    expect(n.limit_forecast).toEqual({ sound: true, browser: false, browserHiddenOnly: false, toast: true, system: false });
     for (const k of ['subagent_spawned', 'compaction', 'context_high', 'limit_high'] as const) {
       expect(Object.values(n[k]).some(Boolean)).toBe(false);
     }
+  });
+
+  it('settings saved before limit_forecast existed get its default', () => {
+    const old = { notifications: { limit_high: { sound: true, browser: false, browserHiddenOnly: false, toast: true, system: true } } };
+    const s = normalizeSettings(old);
+    expect(s.notifications.limit_high.system).toBe(true);
+    expect(s.notifications.limit_forecast).toEqual(DEFAULT_SETTINGS.notifications.limit_forecast);
   });
 
   it('drops unknown keys and keeps types', () => {

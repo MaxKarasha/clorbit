@@ -4,6 +4,7 @@
 import type { AgentNode, ClorbitEvent, LiveSession, LiveSnapshot, Tokens } from '@shared/api';
 import { t } from '../i18n';
 import type enMock from '../i18n/en/mock';
+import { mockLimits } from '../mock/limits';
 import { rng } from '../mock/rng';
 
 type MK = keyof typeof enMock;
@@ -310,7 +311,7 @@ export class MockFeed {
         finishedSubagents24h: sessions.reduce((a, s) => a + s.subagentsTotal - s.subagentsActive, 0),
         cacheHitRate24h: t24.cacheRead / (t24.input + t24.cacheRead + t24.cacheWrite), projects24h: new Set(sessions.map((s) => s.project)).size,
       },
-      limits: { fiveHourPct: 37, fiveHourResetsAt: Date.now() + 2.4 * 3600e3, sevenDayPct: 61, sevenDayResetsAt: Date.now() + 3.2 * 86400e3, updatedAt: Date.now() },
+      limits: mockLimits().limits, limitsForecast: mockLimits().forecast,
       hooksInstalled: false, statuslineCapture: true, scan: { done: true, filesTotal: 1, filesDone: 1 },
     });
   }

@@ -1,6 +1,6 @@
 // Transition detection and deduplication of notification events.
 import { describe, expect, it } from 'vitest';
-import type { AgentNode, Limits, SessionStatus } from '../api';
+import type { AgentNode, ForecastConfidence, Limits, LimitsForecast, SessionStatus, WindowForecast } from '../api';
 import { NotifyDetector, waitKind, type DetectSession, type DetectSnapshot } from '../notify';
 
 const root = (children: AgentNode[] = []): AgentNode => ({
@@ -114,6 +114,39 @@ describe('NotifyDetector', () => {
     const l: Limits = { fiveHourPct: 90, fiveHourResetsAt: 1e12, sevenDayPct: 10, sevenDayResetsAt: null, updatedAt: 0 };
     d.onSnapshot(snap(1000, [], l));
     expect(d.onSnapshot(snap(2000, [], l)).events).toEqual([]);
+  });
+
+  it('the limit forecast warns once per 5 h window', () => {
+    const d = new NotifyDetector();
+    const H = 3_600_000;
+    const wf = (resetsAt: number, hitsAt: number | null, confidence: ForecastConfidence = 'medium', pct = 60): WindowForecast => ({
+      window: '5h', pct, resetsAt, ratePerHour: 20, hitsAt, pctAtReset: hitsAt ? 100 : 80, confidence, basis: 'limits', points: 8,
+    });
+    const fc = (five: WindowForecast): LimitsForecast => ({ source: 'statusline', now: 0, updatedAt: 0, fiveHour: five, sevenDay: { ...five, window: '7d', hitsAt: null } });
+    const at = (now: number, f: WindowForecast) => d.onSnapshot({ ...snap(now, []), limitsForecast: fc(f) });
+    const R = 1e12;
+    at(1000, wf(R, null)); // baseline: lasts until reset
+    // Runs out only 10 min before the reset: not worth a warning.
+    expect(at(2000, wf(R, R - 10 * 60_000)).events).toEqual([]);
+    // Low confidence: no warning.
+    expect(at(3000, wf(R, R - H, 'low')).events).toEqual([]);
+    // 1 h early with medium confidence: one warning, with the times.
+    expect(at(4000, wf(R, R - H)).events).toEqual([{ type: 'limit_forecast', ts: 4000, sessionId: null, project: null, pct: 60, window: '5h', at: R - H, resetsAt: R }]);
+    // The same window (reset time jitters), the forecast wobbles: no repeat.
+    expect(at(5000, wf(R + 3000, null)).events).toEqual([]);
+    expect(at(6000, wf(R + 5000, R - 2 * H)).events).toEqual([]);
+    // The next window warns again.
+    expect(types(at(7000, wf(R + 5 * H, R + 3 * H)))).toEqual(['limit_forecast']);
+    // Without a forecast nothing happens.
+    expect(d.onSnapshot(snap(8000, [], null)).events).toEqual([]);
+  });
+
+  it('a forecast that already warns at load does not fire', () => {
+    const d = new NotifyDetector();
+    const five: WindowForecast = { window: '5h', pct: 70, resetsAt: 1e12, ratePerHour: 30, hitsAt: 1e12 - 3_600_000, pctAtReset: 100, confidence: 'high', basis: 'limits', points: 9 };
+    const s = { ...snap(1000, []), limitsForecast: { source: 'statusline' as const, now: 0, updatedAt: 0, fiveHour: five, sevenDay: { ...five, window: '7d' as const } } };
+    d.onSnapshot(s);
+    expect(d.onSnapshot({ ...s, now: 2000 }).events).toEqual([]);
   });
 
   it('maps reason codes to wait kinds', () => {

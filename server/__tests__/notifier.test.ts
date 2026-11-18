@@ -59,6 +59,10 @@ describe('notification text', () => {
     expect(notificationBody({ type: 'session_done', ts: 0, sessionId: 's', project: 'p' }, 'en')).toBe('p: answer ready');
     expect(notificationBody({ type: 'subagent_finished', ts: 0, sessionId: 's', project: 'p', agentType: 'Explore', count: 3 }, 'en')).toBe('p: 3 subagents finished');
     expect(notificationBody({ type: 'limit_high', ts: 0, sessionId: null, project: null, pct: 83, window: '7d' }, 'uk')).toBe('Ліміт підписки (7 днів): використано 83%');
+    const at = new Date(2026, 10, 18, 14, 20).getTime();
+    const fc = { type: 'limit_forecast' as const, ts: 0, sessionId: null, project: null, pct: 62, window: '5h' as const, at, resetsAt: at + 70 * 60_000 };
+    expect(notificationBody(fc, 'en')).toBe('The 5 h limit will run out around 14:20 — 1 h 10 min before the reset (62% used now)');
+    expect(notificationBody({ ...fc, resetsAt: at + 25 * 60_000 }, 'uk')).toBe('Ліміт 5 год вичерпається близько 14:20 — за 25 хв до скидання (зараз 62%)');
   });
 });
 
@@ -121,6 +125,26 @@ describe('ServerNotifications', () => {
     t.setNow(t.getNow() + 60_000);
     t.snap('working'); t.snap('waiting');
     expect(t.sent).toEqual(['billing-service чекає на тебе: дозвіл на Bash']);
+  });
+
+  it('the limit forecast: a system notification once per window', () => {
+    const t = setup({ notifications: { limit_forecast: { system: true } } });
+    const R = t.getNow() + 3 * 3_600_000;
+    const five = (hitsAt: number | null, resetsAt = R) => ({ window: '5h' as const, pct: 64, resetsAt, ratePerHour: 25, hitsAt, pctAtReset: hitsAt ? 100 : 90, confidence: 'medium' as const, basis: 'limits' as const, points: 7 });
+    const send = (hitsAt: number | null, resetsAt = R) => t.sn.handle(t.sn.detector.onSnapshot({
+      now: t.getNow(), limits: null, sessions: [],
+      limitsForecast: { source: 'statusline', now: t.getNow(), updatedAt: t.getNow(), fiveHour: five(hitsAt, resetsAt), sevenDay: { ...five(null), window: '7d' } },
+    }));
+    send(null); // baseline
+    send(R - 3_600_000);
+    t.setNow(t.getNow() + 60_000);
+    send(R - 2 * 3_600_000);
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0]).toMatch(/^The 5 h limit will run out around \d\d:\d\d — 1 h 0 min before the reset \(64% used now\)$/);
+    // The next window warns again.
+    t.setNow(t.getNow() + 60_000);
+    send(R + 4 * 3_600_000, R + 5 * 3_600_000);
+    expect(t.sent).toHaveLength(2);
   });
 
   it('debounces repeated waits of one session', () => {

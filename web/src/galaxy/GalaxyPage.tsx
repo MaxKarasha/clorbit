@@ -1,13 +1,14 @@
 // Home page: the galaxy of sessions and agents + HUD (status bar, panels, event ticker).
 import { useEffect, useRef, useState } from 'react';
-import type { AgentNode, AnalyticsOverview, ClorbitEvent, LiveSession, LiveSnapshot } from '@shared/api';
+import type { AgentNode, AnalyticsOverview, ClorbitEvent, LiveSession, LiveSnapshot, WindowForecast } from '@shared/api';
 import LangSwitch from '../components/LangSwitch';
 import { ProfileButton } from '../components/SettingsPanel';
 import { DemoStrip, ServerOffline } from '../components/ServerState';
-import { locale, t, tp, useLang, withLang, type MsgKey } from '../i18n';
+import { t, tp, useLang, withLang, type MsgKey } from '../i18n';
 import { enterDemo, isDemo } from '../lib/demo';
 import { href } from '../lib/router';
-import { getSettings, onLayoutReset, resetLayout, updateSettings, useSetting } from '../lib/settings';
+import { getSettings, onLayoutReset, openSettings, resetLayout, updateSettings, useSetting } from '../lib/settings';
+import { forecastView, SEV_COLOR, whenText, type Severity } from '../lib/forecast';
 import { feed, focusSession, onFocusRequest, takePendingFocus, type FocusRequest } from '../notify/feed';
 import { ConsoleDrawer, popOutConsole, Ticker } from '../console/Console';
 import { consoleStore, loadRecent, projectColor, setColorProvider, setColorSource, shareColors } from '../console/store';
@@ -311,26 +312,49 @@ function Spark({ data }: { data: number[] }) {
   );
 }
 
-function Ring({ pct, label, sub }: { pct: number | null; label: string; sub: string }) {
-  const r = 15, c = 2 * Math.PI * r, f = pct == null ? 0 : Math.min(1, pct / 100);
+
+/**
+ * A subscription ring with a "fuel gauge" feel: the arc is the used %, a faint arc runs on to the
+ * projected % at the reset, and a thin tick marks that projection.
+ */
+function Ring({ pct, tick, sev, label, sub, title }: { pct: number | null; tick: number | null; sev: Severity; label: string; sub: string; title?: string }) {
+  const r = 15, c = 2 * Math.PI * r, f = pct == null ? 0 : Math.min(1, Math.max(0, pct / 100));
   const col = pct == null ? '#56607A' : pct > 85 ? '#FF6B8B' : pct > 60 ? '#FFD66B' : '#7FE0C4';
+  const tk = tick == null ? null : Math.min(1, Math.max(0, tick / 100));
+  const tickCol = sev === 'none' ? '#E6EBF5' : SEV_COLOR[sev];
   return (
-    <div className="gx-ring">
-      <svg width="40" height="40" viewBox="0 0 40 40">
+    <div className={`gx-ring gx-ring--${sev}`} title={title}>
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden>
         <circle cx="20" cy="20" r={r} stroke="rgba(150,170,220,.15)" strokeWidth="4" fill="none" />
+        {tk != null && tk > f + 0.004 && (
+          <circle cx="20" cy="20" r={r} stroke={tickCol} strokeOpacity=".3" strokeWidth="4" fill="none" strokeDasharray={`0 ${c * f} ${c * (tk - f)} ${c}`} transform="rotate(-90 20 20)" />
+        )}
         <circle cx="20" cy="20" r={r} stroke={col} strokeWidth="4" fill="none" strokeDasharray={`${c * f} ${c}`} strokeLinecap="round" transform="rotate(-90 20 20)" style={{ filter: `drop-shadow(0 0 4px ${col})` }} />
+        {tk != null && (
+          <line x1="20" y1={20 - r + 4} x2="20" y2={20 - r - 4} stroke={tickCol} strokeWidth="1.6" strokeLinecap="round" transform={`rotate(${tk * 360} 20 20)`} className="gx-ring-tick" style={{ filter: `drop-shadow(0 0 2px ${tickCol})` }} />
+        )}
         <text x="20" y="23.5" textAnchor="middle" className="gx-ring-t">{pct == null ? '—' : Math.round(pct)}</text>
       </svg>
-      <div><b>{label}</b><span>{sub}</span></div>
+      <div><b>{label}</b><span className={`gx-fc gx-fc--${sev}`}>{sub}</span></div>
     </div>
   );
+}
+
+function LimitRing({ f, pct, resetsAt, label, now }: { f: WindowForecast | null | undefined; pct: number | null; resetsAt: number | null; label: string; now: number }) {
+  if (!f) {
+    // A server without the forecast (older than 0.3): the plain ring with the reset time.
+    const sub = resetsAt ? t('gx.bar.resets', { at: whenText(resetsAt, now) }) : '';
+    return <Ring pct={pct} tick={null} sev="none" label={label} sub={sub} />;
+  }
+  const v = forecastView(f, label, now);
+  return <Ring pct={f.pct ?? pct} tick={v.tick} sev={v.sev} label={label} sub={v.sub} title={v.title} />;
 }
 
 /** The metrics of the HUD bar, in priority order; lower-priority ones give way on narrow screens (galaxy.css). */
 function StatusMetrics({ snap }: { snap: LiveSnapshot }) {
   const tt = snap.totals;
   const L = snap.limits;
-  const resets = (ts: number | null) => (ts ? t('gx.bar.resets', { at: new Date(ts).toLocaleString(locale(), { weekday: 'short', hour: '2-digit', minute: '2-digit' }) }) : '');
+  const F = snap.limitsForecast?.source === 'statusline' ? snap.limitsForecast : null;
   return (
     <>
       <div className="gx-metric tokens">
@@ -347,11 +371,14 @@ function StatusMetrics({ snap }: { snap: LiveSnapshot }) {
         <label>{t('gx.bar.plan')}</label>
         {L ? (
           <div className="gx-row">
-            <Ring pct={L.fiveHourPct} label={t('gx.bar.5h')} sub={resets(L.fiveHourResetsAt)} />
-            <Ring pct={L.sevenDayPct} label={t('gx.bar.7d')} sub={resets(L.sevenDayResetsAt)} />
+            <LimitRing f={F?.fiveHour} pct={L.fiveHourPct} resetsAt={L.fiveHourResetsAt} label={t('gx.bar.5h')} now={snap.now} />
+            <LimitRing f={F?.sevenDay} pct={L.sevenDayPct} resetsAt={L.sevenDayResetsAt} label={t('gx.bar.7d')} now={snap.now} />
           </div>
         ) : (
-          <span className="gx-hint" title={t('gx.bar.noSourceTitle')}>{t('gx.bar.noSource')} · <a href="https://github.com/MaxKarasha/clorbit#subscription-limits-optional" target="_blank" rel="noreferrer">{t('gx.bar.howTo')}</a></span>
+          <span className="gx-hint" title={t('gx.bar.noSourceTitle')}>
+            {t('gx.bar.noSource')} ·{' '}
+            <button type="button" className="gx-linkbtn" onClick={(e) => openSettings(e.currentTarget, 'connection')}>{t('gx.bar.howTo')}</button>
+          </span>
         )}
       </div>
       <div className="gx-metric sessions">

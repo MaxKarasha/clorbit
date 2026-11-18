@@ -50,9 +50,9 @@ export class LimitsLog {
 
   history(from: number, to: number): LimitsPoint[] {
     if (!this.db) return [];
-    const rows = this.db.stmt('SELECT ts, five_pct, week_pct FROM limits WHERE ts >= ? AND ts <= ? ORDER BY ts').all(from, to) as
-      { ts: number; five_pct: number | null; week_pct: number | null }[];
-    return rows.map((r) => ({ ts: r.ts, fiveHourPct: r.five_pct, sevenDayPct: r.week_pct }));
+    const rows = this.db.stmt('SELECT ts, five_pct, five_resets_at, week_pct, week_resets_at FROM limits WHERE ts >= ? AND ts <= ? ORDER BY ts').all(from, to) as
+      { ts: number; five_pct: number | null; five_resets_at: number | null; week_pct: number | null; week_resets_at: number | null }[];
+    return rows.map((r) => ({ ts: r.ts, fiveHourPct: r.five_pct, sevenDayPct: r.week_pct, fiveHourResetsAt: r.five_resets_at, sevenDayResetsAt: r.week_resets_at }));
   }
 }
 

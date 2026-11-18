@@ -161,11 +161,21 @@ export async function sendTestNotification(): Promise<'sent' | 'limited' | 'fail
 
 let panelOpen = false;
 let opener: HTMLElement | null = null;
+let panelSection: SettingsSection | null = null;
 const panelListeners = new Set<() => void>();
-export function openSettings(from?: HTMLElement | null): void {
+export type SettingsSection = 'notifications' | 'sounds' | 'dnd' | 'interface' | 'connection';
+/** Opens the settings panel, optionally scrolled to one section (e.g. 'connection' from "how to connect"). */
+export function openSettings(from?: HTMLElement | null, section?: SettingsSection): void {
   opener = from ?? (document.activeElement as HTMLElement | null);
   panelOpen = true;
+  panelSection = section ?? null;
   panelListeners.forEach((l) => l());
+}
+/** The section the panel was asked to show, once (the panel scrolls there when it opens). */
+export function takeSettingsSection(): SettingsSection | null {
+  const s = panelSection;
+  panelSection = null;
+  return s;
 }
 export function closeSettings(): void {
   panelOpen = false;

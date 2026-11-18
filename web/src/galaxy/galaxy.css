@@ -49,7 +49,7 @@
 /*
  * Metrics take the space between the brand and the nav. They never overlap: secondary lines
  * ellipsize, and whole metrics give way by priority as the container narrows (see the
- * container queries below): cache first, then speed, then reset times, then subagents.
+ * container queries below): cache first, then speed, subagents, the tokens line, then the forecast lines.
  */
 .gx-metrics { flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; container: gx-metrics / inline-size; overflow: hidden; }
 .gx-metric { flex: 0 1 auto; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 2px 14px; border-right: 1px solid var(--line); min-width: 0; overflow: hidden; }
@@ -69,6 +69,18 @@
 .gx-ring-t { font-family: var(--mono); font-size: 11.5px; fill: #e6ebf5; font-weight: 600; }
 .gx-hint { font-size: 12px !important; }
 .gx-hint a { color: #9fd4ff !important; text-decoration: underline dotted !important; }
+.gx-linkbtn { appearance: none; border: 0; padding: 0; background: none; font: inherit; color: #9fd4ff; text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
+.gx-linkbtn:hover { color: #cdeaff; }
+.gx-linkbtn:focus-visible { outline: 2px solid #8fd8ff; outline-offset: 2px; border-radius: 3px; }
+/* Forecast line under a subscription ring: calm when it lasts, amber / red when it runs out early. */
+.gx-ring { cursor: default; }
+.gx-ring span.gx-fc--ok { color: #8fcfba; }
+.gx-ring span.gx-fc--warn { color: #FFD66B; }
+.gx-ring span.gx-fc--out { color: #FF8BA3; font-weight: 600; }
+.gx-ring--out svg { animation: gx-ring-pulse 2.4s ease-in-out infinite; }
+@keyframes gx-ring-pulse { 50% { filter: drop-shadow(0 0 6px rgba(255, 107, 139, 0.55)); } }
+@media (prefers-reduced-motion: reduce) { .gx-ring--out svg { animation: none; } }
+:root[data-reduce-motion] .gx-ring--out svg { animation: none; }
 /* "Hooks not installed": the last item of the breadcrumb row, so it never covers the side panel. */
 .gx-pill { margin-left: 10px; font-family: var(--mono); font-size: 11.5px; color: var(--mut); border: 1px dashed var(--line); border-radius: 999px; padding: 3px 9px; white-space: nowrap; background: rgba(8, 12, 24, 0.7); cursor: help; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
@@ -211,13 +223,14 @@
 /*
  * Progressive disclosure by the width left for metrics (the container, not the window).
  * Thresholds come from the natural widths of the metrics in EN and UK (UK is wider), with
- * subscription rings, or with the much narrower "no source" hint (.gx-metrics--hint).
+ * subscription rings, or with the much narrower "no source" hint (.gx-metrics--hint). The forecast line
+ * under each ring ("runs out at 14:20") outranks the subagent count, so it stays visible at 1440 px.
  */
 @container gx-metrics (max-width: 1250px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.cache { display: none; } }
 @container gx-metrics (max-width: 1110px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.speed { display: none; } }
-@container gx-metrics (max-width: 980px) { .gx-ring > div > span { display: none; } }
+@container gx-metrics (max-width: 900px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.subagents { display: none; } }
 @container gx-metrics (max-width: 830px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.tokens > span { display: none; } }
-@container gx-metrics (max-width: 740px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.subagents { display: none; } }
+@container gx-metrics (max-width: 640px) { .gx-ring > div > span { display: none; } }
 @container gx-metrics (max-width: 560px) { .gx-metrics:not(.gx-metrics--hint) .gx-metric.sessions > span { display: none; } }
 @container gx-metrics (max-width: 1130px) { .gx-metrics--hint .gx-metric.cache { display: none; } }
 @container gx-metrics (max-width: 980px) { .gx-metrics--hint .gx-metric.speed { display: none; } }

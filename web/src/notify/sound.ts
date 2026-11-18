@@ -44,6 +44,8 @@ export const THEMES: Record<SoundTheme, Record<NotifyEventType, Voice[]>> = {
     // Low and minor: worth a look.
     context_high: [bell(N.A4, 0, 0.32, 0.8), bell(N.F4, 0.26, 0.3, 1)],
     limit_high: [bell(N.E5, 0, 0.28, 0.7), bell(N.C5, 0.18, 0.26, 0.7), bell(N.A4, 0.36, 0.26, 1)],
+    // A gentle "heads-up": two soft notes, the second lower, like a fuel gauge chime.
+    limit_forecast: [bell(N.G5, 0, 0.24, 0.8, SOFT_BELL), bell(N.D5, 0.22, 0.22, 1.1, SOFT_BELL)],
   },
   minimal: {
     session_waiting: [tick(1760, 0), tick(1760, 0.09), tick(1320, 0.42, 0.3), tick(1760, 0.51, 0.3)],
@@ -53,6 +55,7 @@ export const THEMES: Record<SoundTheme, Record<NotifyEventType, Voice[]>> = {
     compaction: [tick(1600, 0, 0.26), tick(1060, 0.08, 0.24)],
     context_high: [tick(700, 0, 0.36, 0.09), tick(700, 0.13, 0.32, 0.09)],
     limit_high: [tick(940, 0, 0.3), tick(740, 0.1, 0.3), tick(560, 0.2, 0.3, 0.1)],
+    limit_forecast: [tick(1180, 0, 0.26), tick(880, 0.16, 0.26, 0.09)],
   },
   retro: {
     session_waiting: [sq(N.C6, 0), sq(N.G5, 0.09), sq(N.C6, 0.18), sq(N.G5, 0.45, 0.08, 0.13), sq(N.C6, 0.54, 0.08, 0.13), sq(N.E6, 0.63, 0.14, 0.13)],
@@ -62,6 +65,7 @@ export const THEMES: Record<SoundTheme, Record<NotifyEventType, Voice[]>> = {
     compaction: [sq(880, 0, 0.24, 0.12, 220)],
     context_high: [sq(330, 0, 0.1, 0.16), sq(330, 0.14, 0.1, 0.16)],
     limit_high: [sq(N.G5, 0, 0.08), sq(N.E5, 0.09, 0.08), sq(N.C5, 0.18, 0.08), sq(N.G4, 0.27, 0.16)],
+    limit_forecast: [sq(N.E5, 0, 0.1, 0.13), sq(N.C5, 0.14, 0.18, 0.13)],
   },
 };
 

@@ -3,6 +3,7 @@ import type { NotifyEventType, Settings } from '@shared/api';
 import type { NotifyEvent } from '@shared/notify';
 import { isSilenced } from '@shared/settings';
 import { t, type MsgKey } from '../i18n';
+import { fmtDuration, fmtTime } from '../lib/format';
 
 export interface ChannelContext {
   now: number;
@@ -54,6 +55,13 @@ export function notifyBody(ev: NotifyEvent): string {
       return t('nb.contextHigh', { p, pct: ev.pct ?? 85 });
     case 'limit_high':
       return t('nb.limitHigh', { w: t(ev.window === '7d' ? 'nb.w7d' : 'nb.w5h'), pct: ev.pct ?? 80 });
+    case 'limit_forecast':
+      return t('nb.limitForecast', {
+        w: t(ev.window === '7d' ? 'nb.w7d' : 'nb.w5h'),
+        time: ev.at ? fmtTime(ev.at) : '—',
+        left: ev.at && ev.resetsAt ? fmtDuration(ev.resetsAt - ev.at) : '—',
+        pct: ev.pct ?? 0,
+      });
   }
 }
 
@@ -68,6 +76,7 @@ export const EVENT_COLOR: Record<NotifyEventType, string> = {
   compaction: '#6b7cff',
   context_high: '#ff6fb0',
   limit_high: '#e6e36a',
+  limit_forecast: '#ffd36e',
 };
 
 // ---------- toasts ----------

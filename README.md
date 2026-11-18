@@ -49,7 +49,7 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 - **Asteroid belts** hold finished subagents. **Distant stars** on the rim are projects from the last 30 days (click one to open its sessions).
 - **Live events:** a flash for every tool call, a comet when an agent is born, a spiral when a result returns to its parent, orange waves when a session is waiting for you.
 - **Drill-down levels:** fleet → session (agent tree, tokens, context, effort, current status) → agent (the task from its parent, what it is doing now, its latest thought, its subordinates). Click empty space to go back up.
-- **Status bar:** tokens over 24 h with a burn-rate sparkline, tokens per minute, subscription limits (optional, see below), live sessions, working subagents and cache hit rate. On narrower screens the less important metrics (cache, then speed) give way instead of overlapping.
+- **Status bar:** tokens over 24 h with a burn-rate sparkline, tokens per minute, subscription limits with a forecast (optional, see below), live sessions, working subagents and cache hit rate. On narrower screens the less important metrics (cache, then speed) give way instead of overlapping.
 - An automatic **tour** cycles through the most active systems when you are not interacting (opt-in).
 - **Event console** in the bottom-left corner: tool calls, spawns, results, waits, prompts and compactions as they happen. Project names take their star's color and agent names their planet's; click either to fly there. Expand it into a docked drawer (resizable, with the last ~500 events from the server, filters by project and event kind, search, pause and "clear view"), or pop it out into its own window (`#/console`) whose clicks drive the galaxy in your main tab.
 
@@ -57,7 +57,7 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 
 | Page | What it answers |
 | --- | --- |
-| Overview | Tokens per day, by model and project; sessions, subagents, tool calls; activity heatmap. |
+| Overview | Tokens per day, by model and project; sessions, subagents, tool calls; activity heatmap; subscription-limit history with the forecast to the next reset. |
 | Skills & plugins | Which skills and plugins consume tokens (via Claude Code's attribution fields) and how often skills are loaded. |
 | MCP | Calls and result sizes per MCP server and tool, including servers that are connected but never used. |
 | Tools | Call counts and result sizes for every tool; which ones flood the context. |
@@ -85,8 +85,9 @@ The round profile button at the right end of the top bar (on the galaxy and on e
   | Compaction | The context was compacted. |
   | Context almost full | A session's context crossed 85% (again only after it dropped below 75%). |
   | Subscription limit | The 5-hour or 7-day window crossed 80% (once per window; needs the limits source below). |
+  | Limit runs out early | The forecast says the 5-hour window runs out more than 20 min before its reset (once per window, medium confidence or better). On by default: sound + card. |
 
-  Channels: **Sound**, **Browser** notification (asks for permission; can be limited to "only when the Clorbit tab is hidden"), **In-app** card in the corner (click it to fly to the session; "waiting" cards stay until the session moves on; "Mute 1 h" is one click away), and **System** — shown by the Clorbit server itself, so it works even with the tab closed (macOS: `osascript`, Linux: `notify-send` if installed). When System is on for an event, its browser notification is skipped. Defaults: waiting → sound + browser + card; answer ready → sound + card + browser while the tab is hidden; subagent finished → a soft sound; everything else off.
+  Channels: **Sound**, **Browser** notification (asks for permission; can be limited to "only when the Clorbit tab is hidden"), **In-app** card in the corner (click it to fly to the session; "waiting" cards stay until the session moves on; "Mute 1 h" is one click away), and **System** — shown by the Clorbit server itself, so it works even with the tab closed (macOS: `osascript`, Linux: `notify-send` if installed). When System is on for an event, its browser notification is skipped. Defaults: waiting → sound + browser + card; answer ready → sound + card + browser while the tab is hidden; subagent finished → a soft sound; limit runs out early → sound + card; everything else off.
 - **Sounds** — synthesized in the browser with Web Audio (no audio files): three themes, *Orbit* (soft bells), *Minimal* (short ticks) and *Retro* (8-bit blips), a distinct sound per event with a preview button, a volume slider and a master switch. "Waiting for you" is the most noticeable sound of each theme. The same sound plays at most once every 1.2 s. Browsers only allow sound after you have clicked the page once.
 - **Do not disturb** — a switch and optional daily quiet hours (local time; the window may cross midnight). They silence sounds, browser and system notifications; in-app cards still appear, quietly.
 - **Interface** — language, auto tour, **Reduce motion** (slow orbits, no twinkling, instant camera moves), and **Show automated sessions as separate stars** (off by default). While it is off, automated runs stay in their project's cluster, their console events are grouped into one collapsible row per project (`product (automated) · 42 events`), and they never notify — a pipeline that runs `claude -p` a hundred times a day does not ring a hundred times.
@@ -178,7 +179,9 @@ node scripts/install-hooks.mjs                         # dry run: prints the cha
 node scripts/install-hooks.mjs --apply --statusline    # applies it, with a timestamped backup of settings.json
 ```
 
-The script only touches `statusLine.command` in `~/.claude/settings.json`, keeps a backup next to it, and passes the input to your original command unchanged. You need an existing status line of type `command`. Clorbit polls the file every 30 s and records a history of changes (`GET /api/limits/history`).
+The script only touches `statusLine.command` in `~/.claude/settings.json`, keeps a backup next to it, and passes the input to your original command unchanged. You need an existing status line of type `command`. Clorbit never runs it by itself; Settings → Connection shows the same command with a copy button. Clorbit polls the file every 30 s and records a history of changes (`GET /api/limits/history`).
+
+**Forecast.** From that history Clorbit estimates when each window runs out (`GET /api/limits/forecast`): a regression over the current window that weighs recent minutes most (half-life 30 min for 5 h, 2 days for 7 d), started afresh at every reset. While a window has only a couple of points, your transcript token rate (output weighted ×5, cache reads ×0.1) is calibrated against the % those points gained. A reading older than 20 min (5 h) is projected from now, since the status line only writes while Claude Code runs. The ring's tick is the projected % at the reset; the tooltip shows the rate, confidence and basis. Usage outside Claude Code on this machine (claude.ai, other computers) moves the limits but not the token proxy, so the forecast adapts only as new readings arrive.
 
 ## Privacy and safety
 

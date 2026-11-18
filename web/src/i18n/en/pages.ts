@@ -122,6 +122,20 @@ export default {
   'overview.heatmapHint': 'Week × hour, local time. The white outline marks the peak.',
   'overview.models': 'Models',
 
+  // Subscription limits panel (Overview)
+  'limits.title': 'Subscription limits',
+  'limits.hint': 'Used % of the 5-hour and 7-day windows. Dashed lines are the forecast to the next reset.',
+  'limits.w5h': '5 h window',
+  'limits.w7d': '7 d window',
+  'limits.forecast': 'forecast',
+  'limits.reset': 'reset',
+  'limits.limit': '100%',
+  'limits.aria': 'Subscription limit history',
+  'limits.noPoints': 'No limit changes were recorded in this period. The forecast appears once the status line reports new values.',
+  'limits.emptyTitle': 'No subscription-limit data yet',
+  'limits.openSettings': 'Settings → Connection',
+  'limits.atReset': '{pct}% at reset',
+
   // Skills & plugins
   'attr.ownSkill': 'your own skill',
   'attr.title': 'What earns its keep and what just takes up space',

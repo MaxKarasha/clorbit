@@ -876,3 +876,78 @@ th.nmx__ev {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- subscription limits: how to connect ---------- */
+/* Connection is wrapped (for "scroll here"), so it draws its own separator. */
+.set-sec-anchor {
+  margin: 0 -10px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border-soft);
+  border-radius: 12px;
+  scroll-margin-top: 8px;
+  transition: background-color 0.6s, box-shadow 0.6s;
+}
+.set-sec-anchor.set-sec--flash {
+  background-color: rgba(92, 200, 255, 0.06);
+  box-shadow: 0 0 0 1px rgba(92, 200, 255, 0.28);
+}
+.set-dl__wide {
+  grid-column: 1 / -1;
+}
+.limhow {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+  background: rgba(120, 150, 220, 0.05);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.limhow p {
+  margin: 0;
+}
+.limhow__run {
+  color: var(--text);
+  font-weight: 550;
+}
+.limhow__cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px 7px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(92, 200, 255, 0.28);
+  background: rgba(6, 10, 22, 0.75);
+}
+.limhow__cmd code {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: #bfe8ff;
+}
+.limhow__w {
+  white-space: nowrap;
+}
+.limhow__cmd .set-btn {
+  flex: none;
+  margin: 0;
+}
+.limhow__cmd .set-btn.is-done {
+  color: #4fe0b0;
+  border-color: rgba(79, 224, 176, 0.5);
+}
+.limhow__notes {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.limhow__notes li + li {
+  margin-top: 3px;
+}
+.limhow__never {
+  color: var(--text-dim);
+}

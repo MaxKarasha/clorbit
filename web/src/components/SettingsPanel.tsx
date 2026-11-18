@@ -11,6 +11,7 @@ import {
   openSettings,
   resetLayout,
   sendTestNotification,
+  takeSettingsSection,
   updateSettings,
   useAbout,
   useSettings,
@@ -18,6 +19,7 @@ import {
   useSettingsState,
 } from '../lib/settings';
 import { EVENT_COLOR, eventLabel } from '../notify/rules';
+import LimitsHowTo from './LimitsHowTo';
 import { playSound } from '../notify/sound';
 
 /* ---------------- profile button ---------------- */
@@ -445,8 +447,21 @@ function Interface() {
   );
 }
 
-function Connection({ demo, offline }: { demo: boolean; offline: boolean }) {
+function Connection({ demo, offline, focus }: { demo: boolean; offline: boolean; focus: boolean }) {
   const a = useAbout();
+  const ref = useRef<HTMLDivElement>(null);
+  const scrolled = useRef(false);
+  // Opened from "how to connect": bring this section into view once its content is there.
+  useEffect(() => {
+    if (!focus || scrolled.current || (!a && !demo && !offline)) return;
+    scrolled.current = true;
+    const el = ref.current;
+    if (!el) return;
+    el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    el.classList.add('set-sec--flash');
+    const id = window.setTimeout(() => el.classList.remove('set-sec--flash'), 1800);
+    return () => window.clearTimeout(id);
+  }, [focus, a, demo, offline]);
   let body: ReactNode;
   if (demo) body = <p className="set-hint">{t('con.demo')}</p>;
   else if (offline || !a) body = <p className="set-hint">{t('con.offline')}</p>;
@@ -473,8 +488,12 @@ function Connection({ demo, offline }: { demo: boolean; offline: boolean }) {
         <dd>
           <i className={`set-led ${a.limits.capture ? 'on' : ''}`} aria-hidden />
           {a.limits.capture ? t('con.limits.on', { ago: a.limits.updatedAt ? fmtAgo(a.limits.updatedAt) : '—' }) : t('con.limits.off')}
-          {!a.limits.capture && <span className="set-dl__how">{t('con.limits.how')}</span>}
         </dd>
+        {!a.limits.capture && (
+          <dd className="set-dl__wide">
+            <LimitsHowTo />
+          </dd>
+        )}
         <dt>{t('con.store')}</dt>
         <dd>
           {a.store.enabled
@@ -485,9 +504,11 @@ function Connection({ demo, offline }: { demo: boolean; offline: boolean }) {
     );
   }
   return (
-    <Section id="connection" title={t('set.sec.connection')}>
-      {body}
-    </Section>
+    <div ref={ref} className="set-sec-anchor">
+      <Section id="connection" title={t('set.sec.connection')}>
+        {body}
+      </Section>
+    </div>
   );
 }
 
@@ -501,10 +522,11 @@ function Panel() {
   const { status, saveError } = useSettingsState();
   const demo = status === 'demo';
   const offline = status === 'offline';
+  const [section] = useState(takeSettingsSection);
   useLang();
 
   useEffect(() => {
-    closeRef.current?.focus();
+    closeRef.current?.focus({ preventScroll: true });
     if (!demo) void loadAbout();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -556,7 +578,7 @@ function Panel() {
           <Sounds />
           <Dnd />
           <Interface />
-          <Connection demo={demo} offline={offline} />
+          <Connection demo={demo} offline={offline} focus={section === 'connection'} />
         </div>
       </div>
     </div>

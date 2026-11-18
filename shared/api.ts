@@ -77,8 +77,44 @@ export interface Limits {
   updatedAt: number;
 }
 
-/** One recorded change of subscription limits (from the statusline capture). */
-export interface LimitsPoint { ts: number; fiveHourPct: number | null; sevenDayPct: number | null }
+/** One recorded change of subscription limits (from the statusline capture).
+ *  The reset times are additive (absent from servers older than 0.3): they tell windows apart. */
+export interface LimitsPoint {
+  ts: number;
+  fiveHourPct: number | null;
+  sevenDayPct: number | null;
+  fiveHourResetsAt?: number | null;
+  sevenDayResetsAt?: number | null;
+}
+
+export type LimitWindow = '5h' | '7d';
+export type ForecastConfidence = 'low' | 'medium' | 'high';
+/** What a forecast is based on: the limits history itself, transcript tokens calibrated against it, or nothing. */
+export type ForecastBasis = 'limits' | 'tokens' | 'none';
+
+/** Forecast of one subscription window (see shared/forecast.ts). Percentages are 0..100. */
+export interface WindowForecast {
+  window: LimitWindow;
+  pct: number | null;          // latest used % (0 once the reset time has passed)
+  resetsAt: number | null;     // null when unknown or already passed
+  ratePerHour: number;         // estimated burn, % per hour (>= 0)
+  hitsAt: number | null;       // projected time of reaching 100%; null = lasts until the reset (or no forecast)
+  pctAtReset: number | null;   // projected % at the reset (capped at 100); null = no forecast
+  confidence: ForecastConfidence;
+  basis: ForecastBasis;
+  points: number;              // limit points of the current window the forecast used
+  exhausted?: boolean;         // already at 100%
+  reset?: boolean;             // the last known reset time has passed; waiting for fresh data
+}
+
+/** GET /api/limits/forecast (also LiveSnapshot.limitsForecast). */
+export interface LimitsForecast {
+  source: 'statusline' | 'none';
+  now: number;
+  updatedAt: number | null;    // when the status line last wrote the values
+  fiveHour: WindowForecast;
+  sevenDay: WindowForecast;
+}
 
 export interface LiveSnapshot {
   now: number;
@@ -97,6 +133,8 @@ export interface LiveSnapshot {
     projects24h: number;
   };
   limits: Limits | null;        // null when there is no source (the status line does not save its input)
+  /** Additive (0.3+): the forecast of both windows, so the HUD needs no extra request. */
+  limitsForecast?: LimitsForecast | null;
   hooksInstalled: boolean;
   statuslineCapture: boolean;
   scan: { done: boolean; filesTotal: number; filesDone: number };
@@ -234,9 +272,10 @@ export type NotifyEventType =
   | 'subagent_spawned'
   | 'compaction'
   | 'context_high'      // context fill crossed 85%
-  | 'limit_high';       // subscription 5 h or 7 d window crossed 80%
+  | 'limit_high'        // subscription 5 h or 7 d window crossed 80%
+  | 'limit_forecast';   // the forecast says the 5 h window runs out well before its reset
 
-export const NOTIFY_EVENTS: NotifyEventType[] = ['session_waiting', 'session_done', 'subagent_finished', 'subagent_spawned', 'compaction', 'context_high', 'limit_high'];
+export const NOTIFY_EVENTS: NotifyEventType[] = ['session_waiting', 'session_done', 'subagent_finished', 'subagent_spawned', 'compaction', 'context_high', 'limit_high', 'limit_forecast'];
 
 export type NotifyChannel = 'sound' | 'browser' | 'toast' | 'system';
 
@@ -287,6 +326,7 @@ export const DEFAULT_SETTINGS: Settings = {
     compaction: rule(false, false, false),
     context_high: rule(false, false, false),
     limit_high: rule(false, false, false),
+    limit_forecast: rule(true, false, true),
   },
   sound: { enabled: true, volume: 0.6, theme: 'orbit' },
   dnd: { enabled: false, quietHours: { enabled: false, from: '22:00', to: '08:00' }, mutedUntil: null },
@@ -316,6 +356,7 @@ export interface AboutInfo {
 //   /api/session/:id                            → SessionDetail
 //   /api/insights?from&to                       → Insight[]
 //   /api/limits/history?from&to                 → LimitsPoint[] (from/to: 'YYYY-MM-DD' or epoch ms; default last 7 days)
+//   /api/limits/forecast                        → LimitsForecast (source 'none' without the status-line capture)
 //   /api/debug/scan, /api/debug/db              → diagnostics (scan stats; SQLite row counts, size, archived files)
 //   POST /api/hook                              → accepts Claude Code hook JSON (stored in SQLite, 90-day retention)
 //   /api/settings                               → Settings (defaults merged with what was saved)

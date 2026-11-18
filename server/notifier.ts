@@ -109,7 +109,25 @@ export function notificationBody(ev: NotifyEvent, lang: Lang): string {
     case 'compaction': return notifyText(lang, 'compaction', { p });
     case 'context_high': return notifyText(lang, 'contextHigh', { p, pct: ev.pct ?? 85 });
     case 'limit_high': return notifyText(lang, 'limitHigh', { w: notifyText(lang, ev.window === '7d' ? 'w7d' : 'w5h'), pct: ev.pct ?? 80 });
+    case 'limit_forecast': return notifyText(lang, 'limitForecast', {
+      w: notifyText(lang, ev.window === '7d' ? 'w7d' : 'w5h'),
+      time: ev.at ? clockText(ev.at) : '—',
+      left: ev.at && ev.resetsAt ? durationText(ev.resetsAt - ev.at, lang) : '—',
+      pct: ev.pct ?? 0,
+    });
   }
+}
+
+/** Local wall-clock time 'HH:MM' (the server runs on the user's machine, in their time zone). */
+export function clockText(ts: number): string {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** A short duration: '1 h 10 min' / '25 min'. */
+export function durationText(ms: number, lang: Lang): string {
+  const m = Math.max(1, Math.round(ms / 60_000));
+  return m >= 60 ? notifyText(lang, 'durHM', { h: Math.floor(m / 60), m: m % 60 }) : notifyText(lang, 'durM', { m });
 }
 
 export const notifyTestBody = (lang: Lang) => notifyText(lang, 'test');

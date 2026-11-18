@@ -1,7 +1,8 @@
 // Notification detection: turns live snapshots and live events into "notify the user" events.
 // Pure and deterministic (time comes from the inputs), shared by the web app (sound, browser
 // notifications, toasts) and the server (system notifications).
-import type { AgentNode, ClorbitEvent, Limits, NotifyEventType, SessionStatus } from './api';
+import type { AgentNode, ClorbitEvent, Limits, LimitsForecast, NotifyEventType, SessionStatus } from './api';
+import { forecastWarns } from './forecast';
 
 /** The part of a LiveSession the detector needs. */
 export interface DetectSession {
@@ -22,6 +23,8 @@ export interface DetectSnapshot {
   now: number;
   sessions: DetectSession[];
   limits: Limits | null;
+  /** The limits forecast (LiveSnapshot.limitsForecast); drives `limit_forecast`. */
+  limitsForecast?: LimitsForecast | null;
 }
 
 export type WaitKind = 'permission' | 'input' | 'you';
@@ -39,6 +42,9 @@ export interface NotifyEvent {
   /** context_high / limit_high: the fill in percent; limit_high: which window. */
   pct?: number;
   window?: '5h' | '7d';
+  /** limit_forecast: the projected time of reaching 100% and the window's reset time. */
+  at?: number;
+  resetsAt?: number;
   /** How many events were merged into this one (bursts of finished subagents). */
   count?: number;
 }
@@ -53,6 +59,14 @@ export const CONTEXT_HIGH = 0.85;
 export const CONTEXT_REARM = 0.75;
 export const LIMIT_HIGH = 80;
 export const LIMIT_REARM = 75;
+
+/** Identifies a window by its reset time. Reset times jitter by a few seconds between captures: round to the minute. */
+function resetKey(at: number | null | undefined): string {
+  return at ? String(Math.round(at / 60_000)) : 'unknown';
+}
+
+/** Two reset times of the same 5 h window (they jitter between captures). */
+const sameWindow = (a: number | null, b: number) => a != null && Math.abs(a - b) <= 10 * 60_000;
 
 /** Status reason code → what the session waits for. */
 export function waitKind(code: string | null | undefined): WaitKind {
@@ -84,13 +98,17 @@ type StatusEvent = Extract<ClorbitEvent, { kind: 'status' }>;
  * - working → idle: the answer is ready;
  * - spawn / finish / compact events (each deduplicated: hooks and transcripts may report the same thing);
  * - context fill crossing 85% (once until it drops below 75%);
- * - a subscription window crossing 80% (once per window, identified by its reset time).
+ * - a subscription window crossing 80% (once per window, identified by its reset time);
+ * - the forecast saying the 5 h window runs out more than 20 min before its reset with at least medium
+ *   confidence (once per window; no re-arm, so a forecast that wobbles around the threshold rings once).
  * A snapshot older than the latest status event of a session does not override that status.
  */
 export class NotifyDetector {
   private sessions = new Map<string, SessState>();
   private baseline = false;
   private limitNotified: { '5h': string | null; '7d': string | null } = { '5h': null, '7d': null };
+  /** Reset time of the 5 h window whose early warning was already given. */
+  private forecastNotified: number | null = null;
   private agentTypes = new Map<string, string>();
   private seen = new Map<string, number>(); // dedupe keys → ts
 
@@ -120,6 +138,8 @@ export class NotifyDetector {
         const { pct, key } = this.limitOf(snap.limits, w);
         if (pct != null && pct > LIMIT_HIGH) this.limitNotified[w] = key;
       }
+      const f = snap.limitsForecast?.fiveHour;
+      if (f && forecastWarns(f)) this.forecastNotified = f.resetsAt;
       this.baseline = true;
       return res;
     }
@@ -154,6 +174,13 @@ export class NotifyDetector {
         this.limitNotified[w] = key;
         res.events.push({ type: 'limit_high', ts: now, sessionId: null, project: null, pct: Math.round(pct), window: w });
       } else if (pct < LIMIT_REARM) this.limitNotified[w] = null;
+    }
+    const f = snap.limitsForecast?.fiveHour;
+    if (f && forecastWarns(f)) {
+      if (!sameWindow(this.forecastNotified, f.resetsAt!)) {
+        this.forecastNotified = f.resetsAt;
+        res.events.push({ type: 'limit_forecast', ts: now, sessionId: null, project: null, pct: Math.round(f.pct ?? 0), window: '5h', at: f.hitsAt!, resetsAt: f.resetsAt! });
+      }
     }
     this.gc(now);
     return res;
@@ -222,8 +249,7 @@ export class NotifyDetector {
     if (!l) return { pct: null, key: '' };
     const pct = w === '5h' ? l.fiveHourPct : l.sevenDayPct;
     const at = w === '5h' ? l.fiveHourResetsAt : l.sevenDayResetsAt;
-    // Reset times jitter by a few seconds between captures: round to the minute.
-    return { pct, key: at ? String(Math.round(at / 60_000)) : 'unknown' };
+    return { pct, key: resetKey(at) };
   }
 
   private learnAgents(sid: string, n: AgentNode) {

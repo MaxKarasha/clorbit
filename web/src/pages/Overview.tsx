@@ -7,7 +7,9 @@ import StackedDaily from '../components/charts/StackedDaily';
 import { Donut, Heatmap, Legend, Sparkline } from '../components/charts/small';
 import RankList from '../components/RankList';
 import { Empty, PageHeader, Panel } from '../components/ui';
+import type { ActiveRange } from '../lib/router';
 import { Eyebrow, Guard, useRangeApi } from './common';
+import LimitsPanel from './LimitsPanel';
 
 export default function Overview() {
   const q = useRangeApi<AnalyticsOverview>('/api/analytics/overview');
@@ -19,19 +21,22 @@ export default function Overview() {
         lede={t('overview.lede')}
       />
       <Guard state={q} label={t('overview.loading')}>
-        {(d) => <OverviewBody d={d} />}
+        {(d) => <OverviewBody d={d} range={q.range} />}
       </Guard>
     </>
   );
 }
 
-function OverviewBody({ d }: { d: AnalyticsOverview }) {
+function OverviewBody({ d, range }: { d: AnalyticsOverview; range: ActiveRange }) {
   const tot = d.totals;
   if (!tot.total && !tot.sessions) {
     return (
-      <Empty title={t('overview.emptyTitle')}>
-        {t('overview.emptyText')}
-      </Empty>
+      <div className="stack">
+        <Empty title={t('overview.emptyTitle')}>
+          {t('overview.emptyText')}
+        </Empty>
+        <LimitsPanel range={range} />
+      </div>
     );
   }
   const inputSide = tot.input + tot.cacheRead + tot.cacheWrite;
@@ -80,6 +85,8 @@ function OverviewBody({ d }: { d: AnalyticsOverview }) {
           />
         </Panel>
       </div>
+
+      <LimitsPanel range={range} />
 
       <div className="grid grid--7-5">
         <Panel title={t('overview.projects')} hint={t('overview.projectsHint')}>

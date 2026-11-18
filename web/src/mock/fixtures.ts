@@ -14,6 +14,7 @@ import type {
 } from '@shared/api';
 import { locale, t, tp } from '../i18n';
 import type enMock from '../i18n/en/mock';
+import { mockLimits } from './limits';
 import { rng, type Rng } from './rng';
 
 // Demo data for `?mock=1`. Every project, path and task below is invented.
@@ -801,9 +802,10 @@ export function mockLive(simulateScan: boolean): LiveSnapshot {
       cacheHitRate24h: 0.918,
       projects24h: 5,
     },
-    limits: null,
+    limits: mockLimits(now).limits,
+    limitsForecast: mockLimits(now).forecast,
     hooksInstalled: false,
-    statuslineCapture: false,
+    statuslineCapture: true,
     scan: { done: filesDone >= total, filesTotal: total, filesDone },
   };
 }

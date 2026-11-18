@@ -2134,3 +2134,62 @@
     background-position: -200% 0;
   }
 }
+
+/* ---------- Overview: subscription limits ---------- */
+.lim-sums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0 0 10px;
+}
+.lim-sum {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: rgba(120, 150, 220, 0.05);
+  font-size: 13px;
+  cursor: default;
+}
+.lim-sum__dot {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.lim-sum .mono {
+  font-weight: 600;
+}
+.lim-sum__line {
+  color: var(--muted);
+}
+.lim-sum__at {
+  color: var(--faint);
+  font-size: 12px;
+}
+.lim-sum--warn {
+  border-color: rgba(255, 214, 107, 0.35);
+}
+.lim-sum--out {
+  border-color: rgba(255, 107, 139, 0.45);
+}
+.lim-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.lim-empty {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+}
+.lim-empty__title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.lim-empty__btn {
+  justify-self: start;
+}

@@ -16,7 +16,7 @@ Clorbit is two small programs that share one TypeScript contract:
 | --- | --- |
 | `server/` | HTTP server (`index.ts`), scanner, store, SQLite layer, live status, analytics, insights, settings (`settings.ts`), system notifications (`notifier.ts`), recent-events ring (`recent-events.ts`), server-side i18n. Only Node built-ins plus `tsx` to run TypeScript. |
 | `web/` | Single-page app: the canvas galaxy (`web/src/galaxy/`), analytics pages (`web/src/pages/`), notifications and sounds (`web/src/notify/`), the event console (`web/src/console/`), the settings panel (`web/src/components/SettingsPanel.tsx`), the i18n runtime and dictionaries (`web/src/i18n/`), demo data (`web/src/mock/`). |
-| `shared/` | `api.ts` — the API contract: every type the server returns, the list of endpoints, `DEFAULT_SETTINGS`. `settings.ts` — settings validation and quiet-hours math. `notify.ts` — the notification detector. Used by both sides. |
+| `shared/` | `api.ts` — the API contract: every type the server returns, the list of endpoints, `DEFAULT_SETTINGS`. `settings.ts` — settings validation and quiet-hours math. `notify.ts` — the notification detector. `forecast.ts` — the subscription-limit forecast. Used by both sides. |
 | `plugin/` | The `clorbit` Claude Code plugin — the only folder Claude Code copies into its plugin cache, so everything the plugin runs lives here: `hooks/` (async event hooks and the silent autostart), `skills/clorbit/` (the `/clorbit` command), `app/` (build output, committed: `server.mjs`, `web/`, plus the hand-written `cli.mjs`). |
 | `scripts/build.mjs` | `pnpm build`: Vite builds the web app into `plugin/app/web`, esbuild bundles `server/bundle.ts` into `plugin/app/server.mjs`, and the `package.json` version is synced into the plugin manifest. |
 | `scripts/install-hooks.mjs` | Optional, dry-run-by-default helper that adds the status-line capture (and, if forced, raw hooks) to `~/.claude/settings.json`. |
@@ -65,7 +65,7 @@ The cold scan runs on a pool of worker threads (`server/scan-worker.ts`), freshe
 
 - **`file_summaries`** — one row per transcript: path, session/agent ids, size, mtime, byte offset, the summary as JSON, and `missing_since`. On start, all summaries of the current `SUMMARY_VERSION` are loaded into memory (a warm start takes tens of milliseconds); only files whose size or mtime changed are re-read, from their stored offset.
 - **`hook_events`** — trimmed hook payloads (top-level scalars, a shallow `tool_input` with short strings, only the size of `tool_response`; at most 4 KB), pruned after **90 days**.
-- **`limits`** — a row whenever the captured subscription percentages change (polled every 30 s).
+- **`limits`** — a row whenever the captured subscription percentages or reset times change (polled every 30 s).
 - **`settings`** (schema v2) — `key`, `value_json`, `updated_at`; one row (`app`) holds the whole `Settings` document. It is always read through `normalizeSettings` (`shared/settings.ts`), so unknown keys are dropped and values clamped, and a corrupt row falls back to the defaults.
 
 Writes are batched and flushed in the background; `GET /api/debug/db` shows row counts, file sizes and flush stats.
@@ -75,6 +75,12 @@ Writes are batched and flushed in the background; `GET /api/debug/db` shows row 
 Claude Code deletes transcripts older than 30 days by default. When a known transcript disappears from disk, Clorbit keeps its summary and sets `missing_since` instead of deleting it. Analytics, sessions and insights keep counting that history. For an archived session the detail view has the summary, the agent tree, startup context and tools, but no timeline or token series (`SessionDetail.archived = true`), because those are parsed on demand from the transcript itself.
 
 Analytics are computed in memory from the summaries and memoized per store version, range and language.
+
+## Subscription-limit forecast
+
+`shared/forecast.ts` (pure, unit-tested) forecasts each window from the limits history plus the latest reading: the series is split into windows where the reset time moves or the % drops, and only the current window counts. Basis `limits`: a recency-weighted linear regression (half-life 30 min for 5 h, 48 h for 7 d), when the window has ≥ 3 points over ≥ 10 min (5 h) / 2 h (7 d). Basis `tokens`: with ≥ 2 points but too little spread, the % gained between them divided by the weighted transcript tokens spent in the same interval (`TOKEN_WEIGHTS`), times the token rate of the last 30 min / 3 h. Otherwise `none`. The projection starts at the latest reading, or at now when the reading is stale (the status line is silent while Claude Code is idle). Output per window: `pct`, `resetsAt`, `ratePerHour`, `hitsAt` (null = lasts until the reset), `pctAtReset` (capped at 100), `confidence`, `basis`, plus `exhausted` / `reset` flags.
+
+`server/limits-forecast.ts` feeds it: `LimitsForecaster` reads 8 days of history from SQLite and builds non-overlapping usage buckets (hourly aggregates up to an hour ago, per-minute burn after that), cached until the reading changes or 15 s pass. `Live.forecast` puts the result into every snapshot (`limitsForecast`); `GET /api/limits/forecast` returns the same. The notification detector raises `limit_forecast` once per 5 h window (identified by its reset time, ±10 min) when `forecastWarns` holds: it runs out > 20 min before the reset with medium or high confidence.
 
 ## Live status heuristics
 
@@ -132,7 +138,7 @@ One detector, two places it runs. `shared/notify.ts` (`NotifyDetector`) turns li
 - only sessions with a live process notify, and automated runs only when "Show automated sessions as separate stars" is on;
 - **waiting**: a transition to `waiting`, once per wait (re-armed when the session leaves `waiting`); **answer ready**: `working → idle`;
 - **subagent finished / started**, **compaction**: from `finish` / `spawn` / `compact` events, deduplicated (hooks and transcripts report the same thing);
-- **context almost full**: fill crossing 85%, re-armed below 75%; **subscription limit**: a window crossing 80%, once per window (identified by its reset time), re-armed below 75%;
+- **context almost full**: fill crossing 85%, re-armed below 75%; **subscription limit**: a window crossing 80%, once per window (identified by its reset time), re-armed below 75%; **limit runs out early**: the forecast (above), once per 5 h window, no re-arm;
 - a snapshot older than a session's latest status event never overrides that status (no flapping between SSE and polling).
 
 Status reasons travel as language-neutral codes too (`LiveSession.statusCode/statusArg`, `status` events' `code/arg`), so both sides can say "waiting for permission for Bash" in their own words.
@@ -154,7 +160,7 @@ All types are in [`shared/api.ts`](../shared/api.ts). Every GET accepts `lang=en
 
 | Endpoint | Returns |
 | --- | --- |
-| `GET /api/live` | `LiveSnapshot`: live and recent sessions with agent trees, totals, limits, scan progress. |
+| `GET /api/live` | `LiveSnapshot`: live and recent sessions with agent trees, totals, limits and their forecast, scan progress. |
 | `GET /api/events` | Server-sent events, one `ClorbitEvent` per message (tool, spawn, finish, status, text, prompt, compact), with `EventContext` names. |
 | `GET /api/events/recent?limit=` | `RecentEvent[]`: the last ≤ 500 console events, oldest first. |
 | `GET /api/settings`, `PUT /api/settings` | `Settings`. PUT takes a (partial) settings object, validates and clamps it, drops unknown keys and returns the result; JSON only, local origins only. |
@@ -165,7 +171,8 @@ All types are in [`shared/api.ts`](../shared/api.ts). Every GET accepts `lang=en
 | `GET /api/analytics/sessions?from&to&project` | `SessionSummary[]`. |
 | `GET /api/session/:id` | `SessionDetail`: summary, full tree, timeline, startup context, tools, token series. |
 | `GET /api/insights?from&to` | `Insight[]` with severity, evidence, fix and estimated savings. |
-| `GET /api/limits/history?from&to` | `LimitsPoint[]`. |
+| `GET /api/limits/history?from&to` | `LimitsPoint[]` (with the windows' reset times). |
+| `GET /api/limits/forecast` | `LimitsForecast`: per window used %, reset, burn rate, projected run-out time and % at reset, confidence, basis; `source: 'none'` without the capture. |
 | `GET /api/debug/scan`, `GET /api/debug/db` | Diagnostics. |
 | `POST /api/hook` | Accepts a Claude Code hook payload. |
 

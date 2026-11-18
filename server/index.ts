@@ -10,6 +10,7 @@ import { HookLog } from './hook-log';
 import { Hooks } from './hooks';
 import { errorText, localizeEvent, parseLang, type Lang, type ServerEvent } from './i18n';
 import { insights } from './insights';
+import { LimitsForecaster } from './limits-forecast';
 import { LimitsLog, parseTsRange } from './limits-log';
 import { Live, readLimits } from './live';
 import { RecentEvents } from './recent-events';
@@ -33,6 +34,8 @@ const hooks = new Hooks();
 const hookLog = new HookLog(db);
 const limitsLog = new LimitsLog(db, () => readLimits().limits);
 const live = new Live(store, hooks);
+const forecaster = new LimitsForecaster((from, to) => limitsLog.history(from, to), () => store.files.values());
+live.forecast = (limits, now) => forecaster.get(limits, now);
 const settings = new SettingsStore(db);
 const systemNotifier = new SystemNotifier();
 new ServerNotifications(() => settings.get(), systemNotifier).attach(live);
@@ -168,6 +171,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/insights') return json(res, 200, insights(store, parseRange(url.searchParams), hookLog, lang));
     if (p === '/api/limits/history') { const r = parseTsRange(url.searchParams); return json(res, 200, limitsLog.history(r.from, r.to)); }
+    if (p === '/api/limits/forecast') return json(res, 200, forecaster.get(readLimits().limits));
     if (p === '/api/debug/scan') return json(res, 200, { ...store.stats, files: store.files.size, archived: store.missing.size, hooksRecent: hooks.recent.slice(-20), uptimeMs: Date.now() - t0, db: dbHealth() });
     if (p === '/api/debug/db') return json(res, 200, dbHealth());
     if (p.startsWith('/api/')) return json(res, 404, { error: err.unknownRoute });

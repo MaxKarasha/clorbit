@@ -2,7 +2,7 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Limits, LiveSession, LiveSnapshot, SessionKind, SessionStatus, Tokens } from '../shared/api.ts';
+import type { Limits, LimitsForecast, LiveSession, LiveSnapshot, SessionKind, SessionStatus, Tokens } from '../shared/api.ts';
 import { sessionKind } from '../shared/automation';
 import { LEGACY_STATUSLINE_FILE, PROJECTS_DIR, SESSIONS_DIR, STATUSLINE_FILE, hookPluginEnabled } from './config';
 import type { Hooks } from './hooks';
@@ -127,6 +127,8 @@ export class Live extends EventEmitter {
   private baseline = false;
   /** Automation signals read from the head of pre-0.2.1 summaries' transcripts, by path. */
   private heads = new Map<string, { entrypoint: string | null; promptOrigin: string | null }>();
+  /** Subscription-limit forecast for the snapshot (set by the server; see limits-forecast.ts). */
+  forecast: ((limits: Limits | null, now: number) => LimitsForecast) | null = null;
 
   constructor(private store: Store, private hooks: Hooks) {
     super();
@@ -418,6 +420,10 @@ export class Live extends EventEmitter {
     const order: Record<SessionStatus, number> = { waiting: 0, working: 1, idle: 2, stopped: 3 };
     sessions.sort((a, b) => order[a.status] - order[b.status] || b.lastActivity - a.lastActivity);
     const lim = readLimits();
+    let limitsForecast: LimitsForecast | null = null;
+    try { limitsForecast = this.forecast ? this.forecast(lim.limits, now) : null; } catch (e) {
+      console.error('[clorbit] limits forecast failed:', (e as Error).message);
+    }
     const t24tok: Tokens = toTokens(t24);
     const denom = t24[0] + t24[2] + t24[3];
     const v: LiveSnapshot = {
@@ -437,6 +443,7 @@ export class Live extends EventEmitter {
         projects24h: projects.size,
       },
       limits: lim.limits,
+      limitsForecast,
       // Hooks count as installed when the clorbit plugin (or legacy fleet-hooks) is enabled, or events already arrived.
       hooksInstalled: hookPluginEnabled() || this.hooks.installed,
       statuslineCapture: lim.capture,
