@@ -2,6 +2,12 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.4.1
+
+### Fixed
+
+- A session running a long command (tests, a build) is no longer shown as "Probably waiting for permission". Claude Code writes its own status to `~/.claude/sessions/<pid>.json` — `waiting` exactly while a dialog is on screen, including a subagent's permission prompt that the main session shows — and Clorbit now trusts it for the session, the star and every planet. The reason comes from Claude Code's `waitingFor` and the call still pending (`Waiting for permission: Bash`, `Waiting for your reply`, …). Hooks only refine the reason now: a `PermissionRequest` that stays the last hook while an approved command runs no longer keeps the session orange. The old guess (a call without a result for over 10 s) is kept only for Claude Code versions that don't write a status.
+
 ## 0.4.0
 
 ### Added

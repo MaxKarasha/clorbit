@@ -25,14 +25,43 @@ describe('tool labels', () => {
 
 describe('session status without hooks', () => {
   const t0 = Date.parse('2026-11-10T12:00:00Z');
-  it('tool_use without a result for > 10 s: probably waiting for permission', () => {
-    const s = scanText('/m', id, rec(t0, [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'rm -rf build' } }], 'tool_use', 'r1'), { knownPlugins: [] });
+  const longBash = () => scanText('/m', id, rec(t0, [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'pnpm test' } }], 'tool_use', 'r1'), { knownPlugins: [] });
+  it('no status from Claude Code (older versions): a tool_use without a result for > 10 s is probably waiting', () => {
+    const s = longBash();
     const tree = buildTree(s, [], t0 + 30_000, true, false);
-    const st = sessionStatus(s, [], tree, t0 + 30_000, true, 'busy');
+    const st = sessionStatus(s, [], tree, t0 + 30_000, true, null);
     expect(st).toEqual({ status: 'waiting', reason: { k: 'probablyPermission', a: 'Bash' } });
     expect(reasonText(st.reason, 'en')).toBe('Probably waiting for permission: Bash');
     expect(reasonText(st.reason, 'uk')).toBe('Ймовірно, чекає дозволу: Bash');
-    expect(sessionStatus(s, [], tree, t0 + 5_000, true, 'busy').status).toBe('working');
+    expect(sessionStatus(s, [], tree, t0 + 5_000, true, null).status).toBe('working');
+  });
+  it('Claude Code says busy: a long-running tool is working, not waiting (session and agent)', () => {
+    const s = longBash();
+    const tree = buildTree(s, [], t0 + 120_000, true, false, 'busy');
+    expect(sessionStatus(s, [], tree, t0 + 120_000, true, 'busy')).toEqual({ status: 'working', reason: { k: 'running', a: 'Bash: pnpm test' } });
+    expect(tree.root.status).toBe('working');
+  });
+  it('a subagent with a long call is working while Claude Code says busy', () => {
+    const main = scanText('/m', id, rec(t0, [{ type: 'tool_use', id: 'a1', name: 'Agent', input: { subagent_type: 'x' } }], 'tool_use', 'r0'), { knownPlugins: [] });
+    const sub = scanText('/s', { sessionId: 's', agentId: 'x1', projectDir: 'p' }, rec(t0 + 1000, [{ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'pnpm build' } }], 'tool_use', 'r2'), { knownPlugins: [] });
+    const busy = buildTree(main, [sub], t0 + 60_000, true, false, 'busy');
+    expect(busy.root.children[0].status).toBe('working');
+    expect(sessionStatus(main, [sub], busy, t0 + 60_000, true, 'busy').status).toBe('working');
+    // The same picture while Claude Code shows a dialog: the subagent's call is what waits.
+    const waiting = buildTree(main, [sub], t0 + 60_000, true, false, 'waiting');
+    expect(waiting.root.children[0].status).toBe('waiting');
+    expect(sessionStatus(main, [sub], waiting, t0 + 60_000, true, 'waiting', 'dialog open')).toEqual({ status: 'waiting', reason: { k: 'waitingPermission', a: 'Bash' } });
+  });
+  it('Claude Code says waiting: trust it right away, with its reason', () => {
+    const s = longBash();
+    const tree = buildTree(s, [], t0 + 2_000, true, false, 'waiting');
+    expect(sessionStatus(s, [], tree, t0 + 2_000, true, 'waiting', 'dialog open')).toEqual({ status: 'waiting', reason: { k: 'waitingPermission', a: 'Bash' } });
+    expect(tree.root.status).toBe('waiting');
+    const done = scanText('/m', id, rec(t0, [{ type: 'text', text: 'Which one?' }], 'end_turn', 'r1'), { knownPlugins: [] });
+    const t2 = buildTree(done, [], t0 + 2_000, true, false, 'waiting');
+    expect(sessionStatus(done, [], t2, t0 + 2_000, true, 'waiting', 'input needed')).toEqual({ status: 'waiting', reason: { k: 'waitingInput' } });
+    expect(sessionStatus(done, [], t2, t0 + 2_000, true, 'waiting', 'goal proposal')).toEqual({ status: 'waiting', reason: { k: 'waitingFor', a: 'goal proposal' } });
+    expect(reasonText({ k: 'waitingFor', a: 'goal proposal' }, 'uk')).toBe('Чекає на тебе: goal proposal');
   });
   it('end_turn: answer ready; no process: stopped', () => {
     const s = scanText('/m', id, rec(t0, [{ type: 'text', text: 'Done' }], 'end_turn', 'r1'), { knownPlugins: [] });

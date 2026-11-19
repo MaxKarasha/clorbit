@@ -17,6 +17,8 @@ const DAY_MS = 24 * 3_600_000;
 
 export interface PidInfo {
   pid: number; sessionId: string; cwd: string | null; startedAt: number | null; name: string | null; status: string | null; alive: boolean;
+  /** What a 'waiting' session waits for ('dialog open', 'input needed', ...), as Claude Code writes it. */
+  waitingFor?: string | null;
   /** 'interactive' | 'bg' | 'daemon' | 'daemon-worker' (Claude Code's own field), and the process's entrypoint. */
   kind?: string | null; entrypoint?: string | null;
 }
@@ -38,7 +40,8 @@ export function readPidFiles(dir = SESSIONS_DIR): Map<string, PidInfo> {
       if (!j.sessionId) continue;
       const info: PidInfo = {
         pid, sessionId: String(j.sessionId), cwd: j.cwd ?? null, startedAt: typeof j.startedAt === 'number' ? j.startedAt : null,
-        name: j.name ?? null, status: j.status ?? null, alive: isAlive(pid),
+        name: j.name ?? null, status: typeof j.status === 'string' ? j.status : null, alive: isAlive(pid),
+        waitingFor: typeof j.waitingFor === 'string' ? j.waitingFor : null,
         kind: typeof j.kind === 'string' ? j.kind : null, entrypoint: typeof j.entrypoint === 'string' ? j.entrypoint : null,
       };
       const prev = out.get(info.sessionId);
@@ -376,12 +379,19 @@ export class Live extends EventEmitter {
       const subs = files.filter((f) => f.agentId !== null);
       const pid = this.pids.get(sid) ?? null;
       const isAlive = !!pid?.alive;
-      const tree = buildTree(main, subs, now, isAlive, false);
-      let st = sessionStatus(main, subs, tree, now, isAlive, pid?.status ?? null);
+      const pidStatus = pid?.status ?? null;
+      const tree = buildTree(main, subs, now, isAlive, false, pidStatus);
+      let st = sessionStatus(main, subs, tree, now, isAlive, pidStatus, pid?.waitingFor ?? null);
       const lastActivity = Math.max(main?.lastTs ?? 0, ...subs.map((s) => s.lastTs), pid?.startedAt ?? 0);
-      // Hooks (when installed) beat the heuristic as long as the transcript is not newer than them.
       const hs = this.hooks.bySession.get(sid);
-      if (hs && isAlive && hs.ts + 3000 >= lastActivity) st = { status: hs.status, reason: hs.reason };
+      if (hs && isAlive && hs.ts + 3000 >= lastActivity) {
+        if (pidStatus === 'busy' || pidStatus === 'idle' || pidStatus === 'waiting') {
+          // Claude Code's own status decides whether the session waits; hooks only refine the reason.
+          // (A PermissionRequest stays the last hook while an approved long command runs.)
+          if (pidStatus === 'waiting' && hs.status === 'waiting') st = { status: 'waiting', reason: hs.reason };
+          else if (pidStatus === 'idle' && hs.status === 'waiting' && hs.reason?.k === 'waitingInput') st = { status: 'waiting', reason: hs.reason };
+        } else st = { status: hs.status, reason: hs.reason }; // older Claude Code: hooks beat the heuristic
+      }
       const mem = this.statusMem.get(sid);
       const since = mem && mem.status === st.status ? mem.since : (mem ? now : lastActivity || now);
       this.statusMem.set(sid, { status: st.status, since, reason: st.reason });

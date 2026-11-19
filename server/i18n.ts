@@ -53,7 +53,7 @@ export function plural(n: number, lang: Lang, forms: string[]): string {
 /** Language-neutral status reason; rendered per request with reasonText(). */
 export type Reason =
   | { k: 'sessionStarted' | 'gotPrompt' | 'working' | 'waitingInput' | 'waitingYou' | 'waitingPermissionAny' | 'answerReady' | 'sessionEnded' | 'processEnded' | 'justStarted' }
-  | { k: 'running' | 'waitingPermission' | 'probablyPermission'; a: string }
+  | { k: 'running' | 'waitingPermission' | 'probablyPermission' | 'waitingFor'; a: string }
   | { k: 'subagentsWorking'; a: number };
 
 const REASONS: Record<Lang, Record<Reason['k'], string>> = {
@@ -71,6 +71,7 @@ const REASONS: Record<Lang, Record<Reason['k'], string>> = {
     running: 'Running: {a}',
     waitingPermission: 'Waiting for permission: {a}',
     probablyPermission: 'Probably waiting for permission: {a}',
+    waitingFor: 'Waiting for you: {a}',
     subagentsWorking: 'Subagents working: {a}',
   },
   uk: {
@@ -87,6 +88,7 @@ const REASONS: Record<Lang, Record<Reason['k'], string>> = {
     running: 'Виконує: {a}',
     waitingPermission: 'Чекає дозволу: {a}',
     probablyPermission: 'Ймовірно, чекає дозволу: {a}',
+    waitingFor: 'Чекає на тебе: {a}',
     subagentsWorking: 'Працюють субагенти: {a}',
   },
 };

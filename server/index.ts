@@ -185,8 +185,9 @@ const server = http.createServer(async (req, res) => {
     if (p.startsWith('/api/session/')) {
       const id = decodeURIComponent(p.slice('/api/session/'.length));
       if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: err.badSession });
-      const alive = !!live.pids.get(id)?.alive;
-      const d = await sessionDetail(store, id, alive, lang);
+      const pid = live.pids.get(id);
+      const alive = !!pid?.alive;
+      const d = await sessionDetail(store, id, alive, lang, alive ? pid?.status ?? null : null);
       return d ? json(res, 200, d) : json(res, 404, { error: err.notFound });
     }
     if (p === '/api/insights') {

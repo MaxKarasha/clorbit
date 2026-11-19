@@ -2,7 +2,7 @@
 import type { SessionDetail, TimelineItem, UsageRow } from '../shared/api.ts';
 import { readLines, parseLine, type LineSink } from './lines';
 import type { Store } from './store';
-import { buildTree } from './tree';
+import { buildTree, type PidStatus } from './tree';
 import type { FileSummary } from './types';
 import { estTokens, parseTs, sumT4, toolLabel, trimText, toTokens, zeroT4, addT4 } from './util';
 import { summarizeSession, Ctx } from './analytics';
@@ -83,10 +83,10 @@ class DetailSink implements LineSink {
 const lru = new Map<string, { sig: string; v: SessionDetail }>();
 const lruKey = (id: string, lang: Lang) => `${id}:${lang}`;
 
-export async function sessionDetail(store: Store, sessionId: string, alive: boolean, lang: Lang = 'en'): Promise<SessionDetail | null> {
+export async function sessionDetail(store: Store, sessionId: string, alive: boolean, lang: Lang = 'en', pidStatus: PidStatus = null): Promise<SessionDetail | null> {
   const files = store.sessionFiles(sessionId);
   if (!files.length) return null;
-  const sig = files.map((f) => `${f.path}:${f.size}:${store.isMissing(f.path) ? 'gone' : ''}`).sort().join('|') + `:${alive}:${lang}`;
+  const sig = files.map((f) => `${f.path}:${f.size}:${store.isMissing(f.path) ? 'gone' : ''}`).sort().join('|') + `:${alive}:${pidStatus}:${lang}`;
   const key = lruKey(sessionId, lang);
   const hit = lru.get(key);
   if (hit && hit.sig === sig) { lru.delete(key); lru.set(key, hit); return hit.v; }
@@ -95,7 +95,7 @@ export async function sessionDetail(store: Store, sessionId: string, alive: bool
   const main = files.find((f) => f.agentId === null) ?? null;
   const subs = files.filter((f) => f.agentId !== null);
   const now = Date.now();
-  const tree = buildTree(main, subs, now, alive, true);
+  const tree = buildTree(main, subs, now, alive, true, pidStatus);
   let timeline: TimelineItem[] = [];
   let series: SessionDetail['tokensSeries'] = [];
   // Archived transcripts (deleted from disk) only have their stored summary: no timeline/series from them.
