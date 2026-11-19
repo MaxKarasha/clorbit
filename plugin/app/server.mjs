@@ -1,4 +1,4 @@
-// Clorbit 0.4.0 server, bundled from server/ by scripts/build.mjs. Do not edit.
+// Clorbit 0.4.1 server, bundled from server/ by scripts/build.mjs. Do not edit.
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res, err) => function __init() {
   if (err) throw err[0];
@@ -137,6 +137,7 @@ var init_i18n = __esm({
         running: "Running: {a}",
         waitingPermission: "Waiting for permission: {a}",
         probablyPermission: "Probably waiting for permission: {a}",
+        waitingFor: "Waiting for you: {a}",
         subagentsWorking: "Subagents working: {a}"
       },
       uk: {
@@ -153,6 +154,7 @@ var init_i18n = __esm({
         running: "\u0412\u0438\u043A\u043E\u043D\u0443\u0454: {a}",
         waitingPermission: "\u0427\u0435\u043A\u0430\u0454 \u0434\u043E\u0437\u0432\u043E\u043B\u0443: {a}",
         probablyPermission: "\u0419\u043C\u043E\u0432\u0456\u0440\u043D\u043E, \u0447\u0435\u043A\u0430\u0454 \u0434\u043E\u0437\u0432\u043E\u043B\u0443: {a}",
+        waitingFor: "\u0427\u0435\u043A\u0430\u0454 \u043D\u0430 \u0442\u0435\u0431\u0435: {a}",
         subagentsWorking: "\u041F\u0440\u0430\u0446\u044E\u044E\u0442\u044C \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0438: {a}"
       }
     };
@@ -1010,7 +1012,7 @@ var init_config = __esm({
     SERVE_WEB = env("SERVE_WEB") ? env("SERVE_WEB") === "1" : BUNDLED;
     PORT = Number(env("PORT")) || 4980;
     HOST = "127.0.0.1";
-    VERSION = BUNDLED && true ? "0.4.0" : devVersion();
+    VERSION = BUNDLED && true ? "0.4.1" : devVersion();
     LEGACY_DB_FILE = path2.join(PROJECT_ROOT, "data", "fleet.db");
     settingsCache = null;
   }
@@ -6959,16 +6961,18 @@ function subagentDone(s, now, sessionAlive) {
   if (quiet > SUB_QUIET_MS && pend.length === 0) return true;
   return false;
 }
-function agentStatus(s, now) {
+function agentStatus(s, now, gate = null) {
   const pend = pendingList(s).filter((p) => p.name !== "Agent" && p.name !== "Task");
   const quiet = now - s.lastTs;
-  if (pend.length && quiet > WAIT_MS && pend.some((p) => now - p.ts > WAIT_MS)) return "waiting";
+  if (knownPid(gate)) {
+    if (pend.length) return gate === "waiting" ? "waiting" : "working";
+  } else if (pend.length && quiet > WAIT_MS && pend.some((p) => now - p.ts > WAIT_MS)) return "waiting";
   if (quiet < WORKING_MS) return "working";
   if (pendingList(s).length) return "working";
   if (s.carry.lastStop === "tool_use") return "working";
   return "idle";
 }
-function buildTree(main, subs, now, sessionAlive, includeDone) {
+function buildTree(main, subs, now, sessionAlive, includeDone, gate = null) {
   const owner = /* @__PURE__ */ new Map();
   const spawnInfo = /* @__PURE__ */ new Map();
   if (main) for (const [id, sp] of Object.entries(main.spawns)) {
@@ -6996,7 +7000,7 @@ function buildTree(main, subs, now, sessionAlive, includeDone) {
     finishedChildren: 0,
     children: []
   });
-  const rootStatus = !main ? "idle" : !sessionAlive ? "done" : agentStatus(main, now);
+  const rootStatus = !main ? "idle" : !sessionAlive ? "done" : agentStatus(main, now, gate);
   const root = mkNode(main, "main", 0, rootStatus);
   const nodes = /* @__PURE__ */ new Map();
   const finished = [];
@@ -7004,7 +7008,7 @@ function buildTree(main, subs, now, sessionAlive, includeDone) {
   let working = 0;
   for (const s of subs) {
     const done = subagentDone(s, now, sessionAlive);
-    const st = done ? "done" : agentStatus(s, now);
+    const st = done ? "done" : agentStatus(s, now, gate);
     const parent = s.meta?.toolUseId ? owner.get(s.meta.toolUseId) ?? "main" : "main";
     const depth = s.meta?.spawnDepth ?? 1;
     nodes.set(s.agentId, { node: mkNode(s, s.agentId, depth, st), parent, done });
@@ -7038,18 +7042,31 @@ function buildTree(main, subs, now, sessionAlive, includeDone) {
   sortRec(root);
   return { root, total: subs.length, active, working, finished };
 }
-function sessionStatus(main, subs, tree, now, alive, pidStatus) {
+function waitReason(waitingFor, main, subs) {
+  const wf = (waitingFor ?? "").trim();
+  if (/input|question|elicit/i.test(wf)) return { k: "waitingInput" };
+  if (!wf || wf === "dialog open" || /permission|approv/i.test(wf)) {
+    let call = null;
+    for (const f of [main, ...subs]) {
+      for (const p of Object.values(f.carry.pending)) if (p.name !== "Agent" && p.name !== "Task" && (!call || p.ts > call.ts)) call = p;
+    }
+    if (call) return { k: "waitingPermission", a: call.name };
+    return /permission|approv/i.test(wf) ? { k: "waitingPermissionAny" } : { k: "waitingYou" };
+  }
+  return { k: "waitingFor", a: wf };
+}
+function sessionStatus(main, subs, tree, now, alive, pidStatus, waitingFor = null) {
   if (!alive) return { status: "stopped", reason: { k: "processEnded" } };
-  if (!main) return { status: "idle", reason: { k: "justStarted" } };
+  if (!main) return { status: pidStatus === "waiting" ? "waiting" : "idle", reason: pidStatus === "waiting" ? { k: "waitingYou" } : { k: "justStarted" } };
+  if (pidStatus === "waiting") return { status: "waiting", reason: waitReason(waitingFor, main, subs) };
   const lastAct = Math.max(main.lastTs, ...subs.map((s) => s.lastTs));
   const pend = Object.values(main.carry.pending).filter((p) => p.name !== "Agent" && p.name !== "Task");
   const oldest = pend.reduce((m, p) => Math.min(m, p.ts), Infinity);
   const asks = main.permissionMode !== "bypassPermissions";
-  if (asks && pend.length && now - oldest > WAIT_MS && now - lastAct > WAIT_MS) {
+  if (!knownPid(pidStatus) && asks && pend.length && now - oldest > WAIT_MS && now - lastAct > WAIT_MS) {
     const p = pend.find((x) => x.ts === oldest);
     return { status: "waiting", reason: { k: "probablyPermission", a: p.name } };
   }
-  if (pidStatus && /wait|permission|input/i.test(pidStatus)) return { status: "waiting", reason: { k: "waitingYou" } };
   if (now - main.lastTs < WORKING_MS) return { status: "working", reason: main.carry.lastTool && pend.length ? { k: "running", a: main.carry.lastTool } : { k: "working" } };
   if (tree.working > 0) return { status: "working", reason: { k: "subagentsWorking", a: tree.working } };
   if (pend.length) return { status: "working", reason: { k: "running", a: pend[pend.length - 1].label } };
@@ -7057,7 +7074,7 @@ function sessionStatus(main, subs, tree, now, alive, pidStatus) {
   if (main.carry.lastStop === "end_turn") return { status: "idle", reason: { k: "answerReady" } };
   return { status: "idle", reason: null };
 }
-var WORKING_MS, WAIT_MS, SUB_QUIET_MS, SUB_STALE_MS;
+var WORKING_MS, WAIT_MS, SUB_QUIET_MS, SUB_STALE_MS, knownPid;
 var init_tree = __esm({
   "server/tree.ts"() {
     "use strict";
@@ -7066,6 +7083,7 @@ var init_tree = __esm({
     WAIT_MS = 1e4;
     SUB_QUIET_MS = 10 * 6e4;
     SUB_STALE_MS = 30 * 6e4;
+    knownPid = (g) => g === "busy" || g === "idle" || g === "waiting";
   }
 });
 
@@ -7101,8 +7119,9 @@ function readPidFiles(dir = SESSIONS_DIR) {
         cwd: j.cwd ?? null,
         startedAt: typeof j.startedAt === "number" ? j.startedAt : null,
         name: j.name ?? null,
-        status: j.status ?? null,
+        status: typeof j.status === "string" ? j.status : null,
         alive: isAlive(pid),
+        waitingFor: typeof j.waitingFor === "string" ? j.waitingFor : null,
         kind: typeof j.kind === "string" ? j.kind : null,
         entrypoint: typeof j.entrypoint === "string" ? j.entrypoint : null
       };
@@ -7443,11 +7462,17 @@ var init_live = __esm({
           const subs = files.filter((f) => f.agentId !== null);
           const pid = this.pids.get(sid) ?? null;
           const isAlive2 = !!pid?.alive;
-          const tree = buildTree(main, subs, now, isAlive2, false);
-          let st = sessionStatus(main, subs, tree, now, isAlive2, pid?.status ?? null);
+          const pidStatus = pid?.status ?? null;
+          const tree = buildTree(main, subs, now, isAlive2, false, pidStatus);
+          let st = sessionStatus(main, subs, tree, now, isAlive2, pidStatus, pid?.waitingFor ?? null);
           const lastActivity = Math.max(main?.lastTs ?? 0, ...subs.map((s) => s.lastTs), pid?.startedAt ?? 0);
           const hs = this.hooks.bySession.get(sid);
-          if (hs && isAlive2 && hs.ts + 3e3 >= lastActivity) st = { status: hs.status, reason: hs.reason };
+          if (hs && isAlive2 && hs.ts + 3e3 >= lastActivity) {
+            if (pidStatus === "busy" || pidStatus === "idle" || pidStatus === "waiting") {
+              if (pidStatus === "waiting" && hs.status === "waiting") st = { status: "waiting", reason: hs.reason };
+              else if (pidStatus === "idle" && hs.status === "waiting" && hs.reason?.k === "waitingInput") st = { status: "waiting", reason: hs.reason };
+            } else st = { status: hs.status, reason: hs.reason };
+          }
           const mem = this.statusMem.get(sid);
           const since = mem && mem.status === st.status ? mem.since : mem ? now : lastActivity || now;
           this.statusMem.set(sid, { status: st.status, since, reason: st.reason });
@@ -8002,10 +8027,10 @@ var init_settings2 = __esm({
 });
 
 // server/session-detail.ts
-async function sessionDetail(store2, sessionId, alive, lang = "en") {
+async function sessionDetail(store2, sessionId, alive, lang = "en", pidStatus = null) {
   const files = store2.sessionFiles(sessionId);
   if (!files.length) return null;
-  const sig = files.map((f) => `${f.path}:${f.size}:${store2.isMissing(f.path) ? "gone" : ""}`).sort().join("|") + `:${alive}:${lang}`;
+  const sig = files.map((f) => `${f.path}:${f.size}:${store2.isMissing(f.path) ? "gone" : ""}`).sort().join("|") + `:${alive}:${pidStatus}:${lang}`;
   const key = lruKey(sessionId, lang);
   const hit = lru.get(key);
   if (hit && hit.sig === sig) {
@@ -8017,7 +8042,7 @@ async function sessionDetail(store2, sessionId, alive, lang = "en") {
   const main = files.find((f) => f.agentId === null) ?? null;
   const subs = files.filter((f) => f.agentId !== null);
   const now = Date.now();
-  const tree = buildTree(main, subs, now, alive, true);
+  const tree = buildTree(main, subs, now, alive, true, pidStatus);
   let timeline = [];
   let series = [];
   const archived = files.every((f) => store2.isMissing(f.path));
@@ -9262,8 +9287,9 @@ var init_index = __esm({
         if (p.startsWith("/api/session/")) {
           const id = decodeURIComponent(p.slice("/api/session/".length));
           if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: err.badSession });
-          const alive = !!live.pids.get(id)?.alive;
-          const d = await sessionDetail(store, id, alive, lang);
+          const pid = live.pids.get(id);
+          const alive = !!pid?.alive;
+          const d = await sessionDetail(store, id, alive, lang, alive ? pid?.status ?? null : null);
           return d ? json(res, 200, d) : json(res, 404, { error: err.notFound });
         }
         if (p === "/api/insights") {
