@@ -136,4 +136,15 @@ describe('quiet hours', () => {
     delete legacy.recommendations;
     expect(normalizeSettings({}, legacy).recommendations).toEqual(DEFAULT_SETTINGS.recommendations);
   });
+  it('terminal: auto by default, known apps and off accepted, anything else ignored', () => {
+    expect(DEFAULT_SETTINGS.terminal).toEqual({ app: 'auto' });
+    expect(normalizeSettings({ terminal: { app: 'iterm' } }).terminal.app).toBe('iterm');
+    expect(normalizeSettings({ terminal: { app: 'off' } }).terminal.app).toBe('off');
+    const base = normalizeSettings({ terminal: { app: 'warp' } });
+    expect(normalizeSettings({ terminal: { app: 'rm -rf' } }, base).terminal.app).toBe('warp');
+    expect(normalizeSettings({ terminal: 'iterm' }, base).terminal.app).toBe('warp');
+    const legacy = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    delete legacy.terminal;
+    expect(normalizeSettings({}, legacy).terminal).toEqual({ app: 'auto' });
+  });
 });

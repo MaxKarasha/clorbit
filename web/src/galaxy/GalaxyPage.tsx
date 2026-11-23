@@ -5,6 +5,7 @@ import LangSwitch from '../components/LangSwitch';
 import PlanBadge, { planLabel } from '../components/PlanBadge';
 import { dataFiveHour, fiveHourWindow } from '@shared/plan';
 import { ProfileButton } from '../components/SettingsPanel';
+import TerminalButton from '../components/TerminalButton';
 import { DemoStrip, ServerOffline } from '../components/ServerState';
 import { t, tp, useLang, withLang, type MsgKey } from '../i18n';
 import { enterDemo, isDemo } from '../lib/demo';
@@ -529,6 +530,7 @@ export function SessionPanel({ s, eng, onAgent, pin, now, replay = false, change
       </div>
       {pin && <PinRow onUnpin={pin} />}
       {s.statusReason && <div className={`gx-reason ${s.status}`}>{s.statusReason}</div>}
+      {!replay && s.alive && <TerminalButton sessionId={s.sessionId} info={s.terminal} className={s.status === 'waiting' ? 'gx-btn primary' : 'gx-btn'} />}
       {s.root.lastText && <blockquote className="gx-quote">{quote(s.root.lastText, 220)}</blockquote>}
       <div className="gx-grid">
         <div><label>{t('gx.panel.sessionTokens')}</label><b>{fmtTok(tSum(s.tokens))}</b></div>

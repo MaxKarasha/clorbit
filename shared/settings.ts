@@ -1,5 +1,5 @@
 // Settings validation and the "should this be silent now" math, shared by the server and the web app.
-import { DEFAULT_SETTINGS, NOTIFY_EVENTS, SOUND_THEMES, type LayoutPin, type NotifyRule, type Settings, type SoundTheme } from './api';
+import { DEFAULT_SETTINGS, NOTIFY_EVENTS, SOUND_THEMES, TERMINAL_APPS, type LayoutPin, type NotifyRule, type Settings, type SoundTheme, type TerminalApp, type TerminalChoice } from './api';
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d);
@@ -41,6 +41,10 @@ export function normalizePins(v: unknown): Record<string, LayoutPin> | null {
   return Object.fromEntries(ok.slice(-MAX_PINS));
 }
 
+export function isTerminalChoice(v: unknown): v is TerminalChoice {
+  return v === 'auto' || v === 'off' || TERMINAL_APPS.includes(v as TerminalApp);
+}
+
 export function cloneSettings(s: Settings): Settings {
   return JSON.parse(JSON.stringify(s)) as Settings;
 }
@@ -53,6 +57,7 @@ export function normalizeSettings(patch: unknown, base: Settings = DEFAULT_SETTI
   const out = cloneSettings(base);
   // A base saved by an older build has no recommendations block yet.
   if (!isObj(out.recommendations)) out.recommendations = cloneSettings(DEFAULT_SETTINGS).recommendations;
+  if (!isObj(out.terminal)) out.terminal = cloneSettings(DEFAULT_SETTINGS).terminal;
   if (!isObj(patch)) return out;
   const n = patch.notifications;
   if (isObj(n)) {
@@ -110,6 +115,8 @@ export function normalizeSettings(patch: unknown, base: Settings = DEFAULT_SETTI
     const ids = normalizeDismissed(r.dismissed);
     if (ids) out.recommendations.dismissed = ids;
   }
+  const tm = patch.terminal;
+  if (isObj(tm) && isTerminalChoice(tm.app)) out.terminal.app = tm.app;
   return out;
 }
 

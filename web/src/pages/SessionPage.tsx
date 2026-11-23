@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { AgentChanges, AgentNode, SessionDetail, TimelineItem } from '@shared/api';
 import { t, tp, type MsgKey } from '../i18n';
-import { useApi } from '../lib/api';
+import { useApi, useData } from '../lib/api';
+import TerminalButton from '../components/TerminalButton';
 import { alpha, branchColor, modelColor, shade, STATUS } from '../lib/colors';
 import { fmtCompact, fmtDateTime, fmtDuration, fmtInt, fmtModel, fmtPct, fmtTime, fmtTokens, sumTokens } from '../lib/format';
 import { href } from '../lib/router';
@@ -50,6 +51,7 @@ function Body({ d }: { d: SessionDetail }) {
   // SessionDetail has no window limit: derive it from the model ([1m]) or the actual peak.
   const limit = s.model?.includes('[1m]') || peakCtx > 200_000 ? 1_000_000 : 200_000;
   const ctxTotal = d.context.reduce((a, c) => a + c.tokens, 0);
+  const liveSession = useData().live?.sessions.find((x) => x.sessionId === s.sessionId && x.alive);
 
   return (
     <div className="stack">
@@ -70,6 +72,7 @@ function Body({ d }: { d: SessionDetail }) {
           <a className="btn btn--replay" href={href(`/replay/${encodeURIComponent(s.sessionId)}`)} title={t('session.replayTitle')}>
             {t('session.replay')}
           </a>
+          {liveSession && <TerminalButton sessionId={s.sessionId} info={liveSession.terminal} className="btn" />}
           <span className="mono">{fmtDateTime(s.startedAt)}</span>
           <span className="sep">·</span>
           <span>{fmtDuration(s.durationMs)}</span>

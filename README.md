@@ -98,6 +98,19 @@ The round profile button at the right end of the top bar (on the galaxy and on e
 - **Interface** — language, auto tour, **Reduce motion** (slow orbits, no twinkling, instant camera moves), and **Show automated sessions as separate stars** (off by default). While it is off, automated runs stay in their project's cluster, their console events are grouped into one collapsible row per project (`product (automated) · 42 events`), and they never notify — a pipeline that runs `claude -p` a hundred times a day does not ring a hundred times.
 - **Connection** — server version, data folder, hooks plugin state, subscription-limits source and event-store counts.
 
+**Open in terminal.** A waiting card, a session's panel in the galaxy and its Session page have an **Open in Warp** (iTerm2, Terminal, …) button that brings the session's own terminal tab to the front, so answering a prompt is one click away. Clorbit finds the terminal from the session's process (its environment, tty and parent app):
+
+| Terminal | What the button does |
+| --- | --- |
+| Warp | Switches to the session's tab (Warp's own `warp://session/…` link). |
+| iTerm2, Terminal | Switches to the tab by its tty (AppleScript; macOS asks once to allow Clorbit — `node` — to control the app). |
+| WezTerm | Activates the pane (`wezterm cli activate-pane`). |
+| kitty | Focuses the window with `kitten @` when remote control is on (`allow_remote_control` + `listen_on`); otherwise brings kitty to the front. |
+| tmux (inside any of these) | Selects the session's pane, then switches the terminal tmux is attached in. |
+| Ghostty, Alacritty, VS Code, Cursor, Windsurf, any other app | Brings the app to the front (it can't be told which tab). |
+
+If the detection is wrong — say tmux was started from another terminal — pick the app in **Settings → Terminal** (or hide the button there). The same section lists what was detected for the running sessions. Switching terminals works on macOS; on Linux only through tmux, WezTerm and kitty.
+
 The **browser tab** is a status light too: while sessions wait for you, the favicon gets an orange badge with their number and the title becomes `(2) Waiting for you · Clorbit`, so a pinned or background tab tells you at a glance; a small blue dot means agents are working. It counts the same sessions as the notifications (live ones; automated runs only when they are shown as separate stars).
 
 In demo mode sounds and cards work on the invented data; browser and system notifications never fire and nothing is saved. On macOS the first system notification may ask you to allow notifications for "Script Editor" (that is what `osascript` shows up as).
@@ -200,6 +213,7 @@ Both only touch `statusLine.command` in `~/.claude/settings.json` (or add `statu
 ## Privacy and safety
 
 - **Localhost only.** The server binds to `127.0.0.1`; nothing is exposed to your network and nothing is sent to the internet. The only external request the web page makes is for Google Fonts. Settings can only be changed from a local page (other origins get 403).
+- **Open in terminal** runs only when you click it, and only for a live Claude Code session: Clorbit reads a few variables of that process's environment (`TERM_PROGRAM`, `WARP_FOCUS_URL`, `TMUX`, …) and its tty, validates them, and runs `open`, `osascript`, `tmux`, `wezterm` or `kitten` with an argument list (no shell). It never types into a terminal.
 - **System notifications** are shown with `osascript` (macOS) or `notify-send` (Linux), started with an argument list (no shell), rate-limited, and only for the events you switch on.
 - **Read-only over `~/.claude`.** Clorbit never writes to `~/.claude`. The only exception is the status-line capture (`/clorbit statusline`, or `scripts/install-hooks.mjs`), and only when you run it with `--apply` yourself.
 - **Your data stays in `~/.clorbit`.** That folder holds the SQLite database (`clorbit.db`, including your settings), the server's log and pid file when it was started by the plugin or the CLI, and the optional status-line capture. Delete it at any time; it will be rebuilt from your transcripts (except history of transcripts Claude Code has already deleted).

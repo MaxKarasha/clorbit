@@ -1,7 +1,8 @@
 // Notification center: detects events in live data (shared detector) and delivers them as sounds,
 // browser notifications and in-app toasts according to the settings. Mounted once at the app root.
 import { useEffect, useRef, useState } from 'react';
-import type { ClorbitEvent, LiveSnapshot } from '@shared/api';
+import type { ClorbitEvent, LiveSnapshot, TerminalInfo } from '@shared/api';
+import TerminalButton from '../components/TerminalButton';
 import { NotifyDetector, type DetectResult, type NotifyEvent } from '@shared/notify';
 import { locale, t, useLang, withLang } from '../i18n';
 import { useDemo } from '../lib/demo';
@@ -79,6 +80,11 @@ export default function NotificationCenter() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [sources, setSources] = useState(feed.sources);
   const detector = useRef(new NotifyDetector(includeAutomated));
+  // Where each live session's terminal is, for the "Open in …" button on waiting cards.
+  const terminals = useRef(new Map<string, TerminalInfo | null | undefined>());
+  const learn = (s: LiveSnapshot) => {
+    terminals.current = new Map(s.sessions.map((x) => [x.sessionId, x.alive ? x.terminal : null]));
+  };
   const nextId = useRef(0);
 
   useEffect(() => unlockAudioOnGesture(), []);
@@ -133,14 +139,20 @@ export default function NotificationCenter() {
   useEffect(
     () =>
       feed.listen({
-        snapshot: (s) => handleRef.current(detector.current.onSnapshot(s)),
+        snapshot: (s) => {
+          learn(s);
+          handleRef.current(detector.current.onSnapshot(s));
+        },
         event: (e) => handleRef.current(detector.current.onEvent(e)),
       }),
     [],
   );
   useOwnWatcher(
     sources === 0 && !demo,
-    (s) => handleRef.current(detector.current.onSnapshot(s)),
+    (s) => {
+      learn(s);
+      handleRef.current(detector.current.onSnapshot(s));
+    },
     (e) => handleRef.current(detector.current.onEvent(e)),
   );
 
@@ -176,6 +188,7 @@ export default function NotificationCenter() {
             </span>
           </button>
           <div className="toast__actions">
+            {x.type === 'session_waiting' && x.sessionId && <TerminalButton sessionId={x.sessionId} info={terminals.current.get(x.sessionId)} className="toast__act" />}
             {mutedUntil ? (
               <span className="toast__muted">{t('toast.muted', { time: clock(mutedUntil) })}</span>
             ) : (

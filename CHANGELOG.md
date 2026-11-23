@@ -2,6 +2,12 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Open in terminal.** A waiting card, a session's panel in the galaxy and its Session page have an "Open in Warp / iTerm2 / …" button that brings the session's own terminal tab to the front. Warp switches by its `warp://session/…` link, iTerm2 and Terminal by tty (AppleScript), WezTerm and kitty (with remote control) by their CLIs, and a session inside tmux gets its pane selected before the terminal tmux is attached in comes up. Ghostty, Alacritty, VS Code, Cursor, Windsurf and any other macOS app are brought to the front by their bundle id. **Settings → Terminal** picks the app when the detection is wrong (or hides the button) and shows what was detected for the running sessions. Live sessions in `/api/live` carry a `terminal` field (additive).
+
 ## 0.5.0
 
 ### Added

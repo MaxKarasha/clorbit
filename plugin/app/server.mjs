@@ -10,8 +10,8 @@ var __esm = (fn, res, err) => function __init() {
 };
 
 // server/i18n.ts
-function parseLang(q) {
-  const v = typeof q === "string" || q == null ? q : q.get("lang");
+function parseLang(q2) {
+  const v = typeof q2 === "string" || q2 == null ? q2 : q2.get("lang");
   return v === "uk" ? "uk" : "en";
 }
 function fmtNum(n, lang) {
@@ -413,11 +413,11 @@ var init_util = __esm({
 });
 
 // server/analytics.ts
-function parseRange(q) {
+function parseRange(q2) {
   const re = /^\d{4}-\d{2}-\d{2}$/;
   const today = localDate(Date.now());
-  let to = q.get("to") ?? "";
-  let from = q.get("from") ?? "";
+  let to = q2.get("to") ?? "";
+  let from = q2.get("from") ?? "";
   if (!re.test(to)) to = today;
   if (!re.test(from)) from = addDays(to, -13);
   if (from > to) [from, to] = [to, from];
@@ -782,10 +782,23 @@ var init_analytics = __esm({
 });
 
 // shared/api.ts
-var INSIGHT_PAGES, NOTIFY_EVENTS, SOUND_THEMES, rule, DEFAULT_SETTINGS;
+var TERMINAL_APPS, TERMINAL_NAMES, INSIGHT_PAGES, NOTIFY_EVENTS, SOUND_THEMES, rule, DEFAULT_SETTINGS;
 var init_api = __esm({
   "shared/api.ts"() {
     "use strict";
+    TERMINAL_APPS = ["warp", "iterm", "terminal", "ghostty", "wezterm", "kitty", "alacritty", "vscode", "cursor", "windsurf"];
+    TERMINAL_NAMES = {
+      warp: "Warp",
+      iterm: "iTerm2",
+      terminal: "Terminal",
+      ghostty: "Ghostty",
+      wezterm: "WezTerm",
+      kitty: "kitty",
+      alacritty: "Alacritty",
+      vscode: "VS Code",
+      cursor: "Cursor",
+      windsurf: "Windsurf"
+    };
     INSIGHT_PAGES = ["skills", "mcp", "startup", "tools", "subagents", "sessions", "overview", "limits", "session"];
     NOTIFY_EVENTS = ["session_waiting", "session_done", "subagent_finished", "subagent_spawned", "compaction", "context_high", "limit_high", "limit_forecast"];
     SOUND_THEMES = ["orbit", "minimal", "retro"];
@@ -805,7 +818,8 @@ var init_api = __esm({
       dnd: { enabled: false, quietHours: { enabled: false, from: "22:00", to: "08:00" }, mutedUntil: null },
       interface: { lang: "en", autoTour: false, reduceMotion: false, showAutomated: false },
       layout: { gravity: true, pins: {} },
-      recommendations: { unusedDays: 30, dismissed: [] }
+      recommendations: { unusedDays: 30, dismissed: [] },
+      terminal: { app: "auto" }
     };
   }
 });
@@ -830,12 +844,16 @@ function normalizePins(v) {
   }
   return Object.fromEntries(ok.slice(-MAX_PINS));
 }
+function isTerminalChoice(v) {
+  return v === "auto" || v === "off" || TERMINAL_APPS.includes(v);
+}
 function cloneSettings(s) {
   return JSON.parse(JSON.stringify(s));
 }
 function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
   const out = cloneSettings(base);
   if (!isObj(out.recommendations)) out.recommendations = cloneSettings(DEFAULT_SETTINGS).recommendations;
+  if (!isObj(out.terminal)) out.terminal = cloneSettings(DEFAULT_SETTINGS).terminal;
   if (!isObj(patch)) return out;
   const n = patch.notifications;
   if (isObj(n)) {
@@ -861,9 +879,9 @@ function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
   const d = patch.dnd;
   if (isObj(d)) {
     out.dnd.enabled = bool(d.enabled, out.dnd.enabled);
-    const q = d.quietHours;
-    if (isObj(q)) {
-      out.dnd.quietHours = { enabled: bool(q.enabled, out.dnd.quietHours.enabled), from: time(q.from, out.dnd.quietHours.from), to: time(q.to, out.dnd.quietHours.to) };
+    const q2 = d.quietHours;
+    if (isObj(q2)) {
+      out.dnd.quietHours = { enabled: bool(q2.enabled, out.dnd.quietHours.enabled), from: time(q2.from, out.dnd.quietHours.from), to: time(q2.to, out.dnd.quietHours.to) };
     }
     if (d.mutedUntil === null) out.dnd.mutedUntil = null;
     else if (typeof d.mutedUntil === "number" && Number.isFinite(d.mutedUntil)) {
@@ -891,6 +909,8 @@ function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
     const ids = normalizeDismissed(r.dismissed);
     if (ids) out.recommendations.dismissed = ids;
   }
+  const tm = patch.terminal;
+  if (isObj(tm) && isTerminalChoice(tm.app)) out.terminal.app = tm.app;
   return out;
 }
 function parseHHMM(s) {
@@ -907,8 +927,8 @@ function inQuietHours(from, to, date) {
 function isSilenced(s, now = Date.now()) {
   if (s.dnd.enabled) return true;
   if (s.dnd.mutedUntil && s.dnd.mutedUntil > now) return true;
-  const q = s.dnd.quietHours;
-  return q.enabled && inQuietHours(q.from, q.to, new Date(now));
+  const q2 = s.dnd.quietHours;
+  return q2.enabled && inQuietHours(q2.from, q2.to, new Date(now));
 }
 var isObj, bool, HHMM, time, MAX_MUTE_MS, MAX_PINS, PIN_KEY, RECOMMEND_DAYS, MAX_DISMISSED, DISMISS_ID, unit;
 var init_settings = __esm({
@@ -1959,7 +1979,7 @@ function en() {
           why: (facts, sid) => `${facts}; session id ${sid} (its transcript is under ~/.claude/projects/). Find what started them (a skill, a command, a CLAUDE.md line, a loop) and suggest a limit or a cheaper way; do not change anything unless I agree`
         },
         fail: {
-          facts: (known, error, stopped) => `${error} failed and ${stopped} stopped of ${known} runs with a known outcome`,
+          facts: (known2, error, stopped) => `${error} failed and ${stopped} stopped of ${known2} runs with a known outcome`,
           titleOne: (type, share) => `Subagent ${type} fails or gets stopped in ${pct(share)} of runs`,
           titleMany: (n) => `${n} subagent types often fail or get stopped`,
           detail: "A failed or stopped subagent still costs its tokens, and the work is usually redone. The outcome comes from the Agent call's result or, for background agents, from their completion notice; runs without one are not counted.",
@@ -2393,7 +2413,7 @@ function uk() {
           why: (facts, sid) => `${facts}; id \u0441\u0435\u0441\u0456\u0457 ${sid} (\u0457\u0457 \u0442\u0440\u0430\u043D\u0441\u043A\u0440\u0438\u043F\u0442 \u2014 \u0443 ~/.claude/projects/). \u0417\u043D\u0430\u0439\u0434\u0438, \u0449\u043E \u0457\u0445 \u0437\u0430\u043F\u0443\u0441\u043A\u0430\u043B\u043E (\u0441\u043A\u0456\u043B, \u043A\u043E\u043C\u0430\u043D\u0434\u0430, \u0440\u044F\u0434\u043E\u043A \u0443 CLAUDE.md, \u0446\u0438\u043A\u043B), \u0456 \u0437\u0430\u043F\u0440\u043E\u043F\u043E\u043D\u0443\u0439 \u043B\u0456\u043C\u0456\u0442 \u0430\u0431\u043E \u0434\u0435\u0448\u0435\u0432\u0448\u0438\u0439 \u0441\u043F\u043E\u0441\u0456\u0431; \u043D\u0456\u0447\u043E\u0433\u043E \u043D\u0435 \u0437\u043C\u0456\u043D\u044E\u0439 \u0431\u0435\u0437 \u043C\u043E\u0454\u0457 \u0437\u0433\u043E\u0434\u0438`
         },
         fail: {
-          facts: (known, error, stopped) => `${error} \u0437 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E \u0456 ${stopped} \u0437\u0443\u043F\u0438\u043D\u0435\u043D\u043E \u0437 ${known} \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432 \u0437 \u0432\u0456\u0434\u043E\u043C\u0438\u043C \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u043E\u043C`,
+          facts: (known2, error, stopped) => `${error} \u0437 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E \u0456 ${stopped} \u0437\u0443\u043F\u0438\u043D\u0435\u043D\u043E \u0437 ${known2} \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432 \u0437 \u0432\u0456\u0434\u043E\u043C\u0438\u043C \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u043E\u043C`,
           titleOne: (type, share) => `\u0421\u0443\u0431\u0430\u0433\u0435\u043D\u0442 ${type} \u043F\u0430\u0434\u0430\u0454 \u0430\u0431\u043E \u0437\u0443\u043F\u0438\u043D\u044F\u0454\u0442\u044C\u0441\u044F \u0432 ${pct(share)} \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432`,
           titleMany: (n) => `${n} ${plural(n, "uk", ["\u0442\u0438\u043F \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0456\u0432 \u0447\u0430\u0441\u0442\u043E \u043F\u0430\u0434\u0430\u0454", "\u0442\u0438\u043F\u0438 \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0456\u0432 \u0447\u0430\u0441\u0442\u043E \u043F\u0430\u0434\u0430\u044E\u0442\u044C", "\u0442\u0438\u043F\u0456\u0432 \u0441\u0443\u0431\u0430\u0433\u0435\u043D\u0442\u0456\u0432 \u0447\u0430\u0441\u0442\u043E \u043F\u0430\u0434\u0430\u044E\u0442\u044C"])} \u0430\u0431\u043E \u0437\u0443\u043F\u0438\u043D\u044F\u044E\u0442\u044C\u0441\u044F`,
           detail: "\u0421\u0443\u0431\u0430\u0433\u0435\u043D\u0442, \u0449\u043E \u0432\u043F\u0430\u0432 \u0447\u0438 \u0431\u0443\u0432 \u0437\u0443\u043F\u0438\u043D\u0435\u043D\u0438\u0439, \u0443\u0441\u0435 \u043E\u0434\u043D\u043E \u043A\u043E\u0448\u0442\u0443\u0454 \u0441\u0432\u043E\u0457\u0445 \u0442\u043E\u043A\u0435\u043D\u0456\u0432, \u0430 \u0440\u043E\u0431\u043E\u0442\u0443 \u0437\u0430\u0437\u0432\u0438\u0447\u0430\u0439 \u0440\u043E\u0431\u043B\u044F\u0442\u044C \u0437\u0430\u043D\u043E\u0432\u043E. \u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0431\u0435\u0440\u0435\u0442\u044C\u0441\u044F \u0437 \u0432\u0456\u0434\u043F\u043E\u0432\u0456\u0434\u0456 \u0432\u0438\u043A\u043B\u0438\u043A\u0443 Agent \u0430\u0431\u043E, \u0434\u043B\u044F \u0444\u043E\u043D\u043E\u0432\u0438\u0445 \u0430\u0433\u0435\u043D\u0442\u0456\u0432, \u0437 \u043F\u043E\u0432\u0456\u0434\u043E\u043C\u043B\u0435\u043D\u043D\u044F \u043F\u0440\u043E \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043D\u043D\u044F; \u0437\u0430\u043F\u0443\u0441\u043A\u0438 \u0431\u0435\u0437 \u043D\u044C\u043E\u0433\u043E \u043D\u0435 \u0432\u0440\u0430\u0445\u043E\u0432\u0443\u044E\u0442\u044C\u0441\u044F.",
@@ -5263,7 +5283,7 @@ function agg(map, key, t, ts) {
   a.turns++;
   if (ts > a.last) a.last = ts;
 }
-function detectPlugin(texts, known) {
+function detectPlugin(texts, known2) {
   for (const t of texts) {
     if (!t) continue;
     const m = /plugins\/(?:cache|marketplaces)\/[^/\s"]+\/([^/\s"]+)\//.exec(t);
@@ -5271,7 +5291,7 @@ function detectPlugin(texts, known) {
   }
   let best = null;
   let bestN = 0;
-  for (const p of known) {
+  for (const p of known2) {
     let n = 0;
     for (const t of texts) {
       if (!t) continue;
@@ -6819,7 +6839,7 @@ var init_limits_forecast = __esm({
 });
 
 // server/limits-log.ts
-function parseTsRange(q, now = Date.now()) {
+function parseTsRange(q2, now = Date.now()) {
   const parse = (v, end) => {
     if (!v) return null;
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
@@ -6830,8 +6850,8 @@ function parseTsRange(q, now = Date.now()) {
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? n : null;
   };
-  let to = parse(q.get("to"), true) ?? now;
-  let from = parse(q.get("from"), false) ?? to - 7 * 24 * 36e5;
+  let to = parse(q2.get("to"), true) ?? now;
+  let from = parse(q2.get("from"), false) ?? to - 7 * 24 * 36e5;
   if (from > to) [from, to] = [to, from];
   return { from, to };
 }
@@ -7227,6 +7247,8 @@ var init_live = __esm({
       store;
       hooks;
       pids = /* @__PURE__ */ new Map();
+      /** "Open in terminal": where a live session's terminal is (set by the server; tests leave it unset). */
+      terminalOf = null;
       statusMem = /* @__PURE__ */ new Map();
       finishedMem = /* @__PURE__ */ new Map();
       cache = null;
@@ -7351,20 +7373,20 @@ var init_live = __esm({
           }
         }
         for (const ls of snap.sessions) {
-          const known = this.finishedMem.get(ls.sessionId) ?? /* @__PURE__ */ new Set();
+          const known2 = this.finishedMem.get(ls.sessionId) ?? /* @__PURE__ */ new Set();
           const subs = this.store.sessionFiles(ls.sessionId).filter((s) => s.agentId);
           const alive = ls.alive;
           for (const s of subs) {
-            if (known.has(s.agentId)) continue;
+            if (known2.has(s.agentId)) continue;
             if (subagentDone(s, snap.now, alive)) {
-              known.add(s.agentId);
+              known2.add(s.agentId);
               if (emit && snap.now - s.lastTs < 15 * 6e4) {
                 const parent = s.meta?.toolUseId ? this.parentOf(ls.sessionId, s.meta.toolUseId) : "main";
                 this.emit("event", { kind: "finish", ts: snap.now, sessionId: ls.sessionId, agentId: s.agentId, parentId: parent, tokens: sumT4(s.total) });
               }
             }
           }
-          this.finishedMem.set(ls.sessionId, known);
+          this.finishedMem.set(ls.sessionId, known2);
         }
         if (this.store.scanDone) {
           this.baseline = true;
@@ -7518,6 +7540,7 @@ var init_live = __esm({
             compactions: main?.compactions ?? 0,
             root: tree.root,
             kind: k.kind,
+            terminal: isAlive2 && pid && this.terminalOf ? this.terminalOf(pid) : null,
             entrypoint: k.entrypoint
           });
         }
@@ -8394,11 +8417,11 @@ async function buildReplay(files, meta, opts) {
     const id = f.agentId ?? "main";
     if (f.agentId) {
       const sp = f.meta?.toolUseId ? spawnTs.get(f.meta.toolUseId) : void 0;
-      const known = [sp, f.firstTs].filter((x) => !!x && x > 0);
+      const known2 = [sp, f.firstTs].filter((x) => !!x && x > 0);
       const node = findNode(tree.root, f.agentId);
       events.push({
         kind: "spawn",
-        ts: known.length ? Math.min(...known) : f.lastTs,
+        ts: known2.length ? Math.min(...known2) : f.lastTs,
         agentId: f.agentId,
         parentId: parentOf.get(f.agentId) ?? "main",
         agentType: node?.type ?? f.meta?.agentType ?? "general-purpose",
@@ -9083,11 +9106,361 @@ var init_changes = __esm({
   }
 });
 
+// server/terminal.ts
+import { execFile as execFile2, execFileSync } from "node:child_process";
+import fs12 from "node:fs";
+import path13 from "node:path";
+function parsePsEnv(out) {
+  const env2 = {};
+  for (const tok of out.split(/\s+/)) {
+    const eq = tok.indexOf("=");
+    if (eq <= 0) continue;
+    const k = tok.slice(0, eq);
+    if (ENV_KEYS.includes(k)) env2[k] = tok.slice(eq + 1);
+  }
+  return env2;
+}
+function parseProcEnviron(buf) {
+  const env2 = {};
+  for (const kv of buf.split("\0")) {
+    const eq = kv.indexOf("=");
+    if (eq <= 0) continue;
+    const k = kv.slice(0, eq);
+    if (ENV_KEYS.includes(k)) env2[k] = kv.slice(eq + 1);
+  }
+  return env2;
+}
+function appBundlePath(command) {
+  const i = command.indexOf(".app/");
+  if (i < 0) return command.endsWith(".app") && RE.path.test(command) ? command : null;
+  const p = command.slice(0, i + 4);
+  return RE.path.test(p) ? p : null;
+}
+function known(id, bundle, appPath) {
+  const def = APPS[id];
+  return { app: id, name: def.name, bundle: bundle && def.bundles.test(bundle) ? bundle : def.bundle, appPath };
+}
+function detectApp(env2, appPath = null) {
+  const tp = env2.TERM_PROGRAM ?? "";
+  const bundle = env2.__CFBundleIdentifier && RE.bundle.test(env2.__CFBundleIdentifier) ? env2.__CFBundleIdentifier : null;
+  if (tp === "vscode") {
+    const fork = VSCODE_FAMILY.find((id) => bundle && APPS[id].bundles.test(bundle));
+    return known(fork ?? "vscode", bundle, appPath);
+  }
+  for (const id of TERMINAL_APPS) if (APPS[id].term?.includes(tp)) return known(id, bundle, appPath);
+  if (env2.KITTY_WINDOW_ID) return known("kitty", bundle, appPath);
+  if (env2.ALACRITTY_WINDOW_ID || env2.ALACRITTY_SOCKET) return known("alacritty", bundle, appPath);
+  if (env2.GHOSTTY_RESOURCES_DIR) return known("ghostty", bundle, appPath);
+  if (bundle) {
+    for (const id of TERMINAL_APPS) if (APPS[id].bundles.test(bundle)) return known(id, bundle, appPath);
+    return { app: "other", name: appName(appPath) ?? bundle.split(".").pop() ?? bundle, bundle, appPath };
+  }
+  if (appPath) return { app: "other", name: appName(appPath), bundle: null, appPath };
+  return { app: null, name: null, bundle: null, appPath: null };
+}
+function tabScript(app, dev) {
+  if (app === "iterm") {
+    return [
+      `tell application id "${APPS.iterm.bundle}"`,
+      "  repeat with w in windows",
+      "    repeat with t in tabs of w",
+      "      repeat with s in sessions of t",
+      `        if tty of s is "${q(dev)}" then`,
+      "          select w",
+      "          select t",
+      "          select s",
+      "          activate",
+      '          return "ok"',
+      "        end if",
+      "      end repeat",
+      "    end repeat",
+      "  end repeat",
+      "end tell",
+      'return "missing"'
+    ].join("\n");
+  }
+  return [
+    `tell application id "${APPS.terminal.bundle}"`,
+    "  repeat with w in windows",
+    "    repeat with t in tabs of w",
+    `      if tty of t is "${q(dev)}" then`,
+    "        set selected of t to true",
+    "        set index of w to 1",
+    "        activate",
+    '        return "ok"',
+    "      end if",
+    "    end repeat",
+    "  end repeat",
+    "end tell",
+    'return "missing"'
+  ].join("\n");
+}
+function planFor(d, choice, tools, platform) {
+  const app = choice === "auto" || choice === "off" ? d.app : choice;
+  const def = app && app !== "other" ? APPS[app] : null;
+  const mac = platform === "darwin";
+  const bundle = def ? d.bundle && def.bundles.test(d.bundle) ? d.bundle : def.bundle : d.bundle;
+  const activate = !mac || !tools.open ? null : bundle ? { file: "open", args: ["-b", bundle] } : d.appPath && RE.path.test(d.appPath) ? { file: "open", args: ["-a", d.appPath] } : null;
+  const steps = [];
+  let activateAfter = true;
+  const env2 = d.env;
+  if (app === "warp" && mac && tools.open && env2.WARP_FOCUS_URL && RE.warpUrl.test(env2.WARP_FOCUS_URL)) {
+    steps.push({ file: "open", args: [env2.WARP_FOCUS_URL] });
+    activateAfter = false;
+  } else if ((app === "iterm" || app === "terminal") && mac && tools.osascript && d.tty && RE.tty.test(d.tty)) {
+    steps.push({ file: "osascript", args: ["-e", tabScript(app, `/dev/${d.tty}`)], expect: "ok" });
+    activateAfter = false;
+  } else if (app === "wezterm" && tools.wezterm && env2.WEZTERM_PANE && RE.num.test(env2.WEZTERM_PANE)) {
+    const sock = env2.WEZTERM_UNIX_SOCKET && RE.path.test(env2.WEZTERM_UNIX_SOCKET) ? { WEZTERM_UNIX_SOCKET: env2.WEZTERM_UNIX_SOCKET } : void 0;
+    steps.push({ file: tools.wezterm, args: ["cli", "activate-pane", "--pane-id", env2.WEZTERM_PANE], env: sock });
+  } else if (app === "kitty" && tools.kitten && env2.KITTY_WINDOW_ID && RE.num.test(env2.KITTY_WINDOW_ID) && env2.KITTY_LISTEN_ON && RE.kittyTo.test(env2.KITTY_LISTEN_ON)) {
+    steps.push({ file: tools.kitten, args: ["@", "--to", env2.KITTY_LISTEN_ON, "focus-window", "--match", `id:${env2.KITTY_WINDOW_ID}`] });
+  }
+  return {
+    name: def?.name ?? d.name,
+    precision: steps.length ? "tab" : activate ? "app" : "none",
+    steps,
+    activate,
+    activateAfter
+  };
+}
+function tmuxSocket(env2) {
+  const s = env2.TMUX?.split(",")[0] ?? "";
+  return RE.tmuxSocket.test(s) ? s : null;
+}
+function planTmux(inner, outer, choice, tools, platform) {
+  const socket = tmuxSocket(inner.env);
+  const pane = inner.env.TMUX_PANE && RE.tmuxPane.test(inner.env.TMUX_PANE) ? inner.env.TMUX_PANE : null;
+  const none2 = { app: null, name: null, bundle: null, appPath: null, env: {}, tty: null };
+  const o = planFor(outer ?? none2, choice, tools, platform);
+  const steps = [];
+  if (tools.tmux && socket && pane) {
+    steps.push({ file: tools.tmux, args: ["-S", socket, "switch-client", "-t", pane], optional: true });
+    steps.push({ file: tools.tmux, args: ["-S", socket, "select-window", "-t", pane] });
+    steps.push({ file: tools.tmux, args: ["-S", socket, "select-pane", "-t", pane] });
+  }
+  return {
+    name: o.name ? `${o.name} \xB7 tmux` : "tmux",
+    precision: steps.length ? o.precision === "none" ? "app" : "tab" : o.precision,
+    steps: [...steps, ...o.steps],
+    activate: o.activate,
+    activateAfter: o.activateAfter,
+    tmux: true
+  };
+}
+async function runPlan(p, run = defaultRunner2) {
+  if (p.precision === "none") return { ok: false, name: p.name, precision: "none", error: "unsupported" };
+  let warning;
+  for (const c of p.steps) {
+    const r = await run(c);
+    const ok = r.ok && (!c.expect || r.stdout.trim() === c.expect);
+    if (ok || c.optional) continue;
+    warning = /-1743|not authori[sz]ed/i.test(r.stderr) ? "permission" : "tab-not-found";
+    break;
+  }
+  if (!warning) {
+    if (p.activateAfter && p.activate) await run(p.activate);
+    return { ok: true, name: p.name, precision: p.precision };
+  }
+  if (p.activate && (await run(p.activate)).ok) return { ok: true, name: p.name, precision: "app", warning };
+  return { ok: false, name: p.name, precision: "none", error: "failed", warning };
+}
+function sh(file, args) {
+  try {
+    return execFileSync(file, args, { encoding: "utf8", timeout: 1500, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+  } catch {
+    return null;
+  }
+}
+function findBin(name, extra = []) {
+  const dirs = [...(process.env.PATH ?? "").split(path13.delimiter), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+  for (const f of [...extra, ...dirs.filter(Boolean).map((d) => path13.join(d, name))]) {
+    try {
+      fs12.accessSync(f, fs12.constants.X_OK);
+      return f;
+    } catch {
+    }
+  }
+  return null;
+}
+function systemReader(platform = process.platform) {
+  return {
+    env(pid) {
+      if (platform === "linux") {
+        try {
+          return parseProcEnviron(fs12.readFileSync(`/proc/${pid}/environ`, "utf8"));
+        } catch {
+          return {};
+        }
+      }
+      const out = sh("ps", ["-E", "-ww", "-o", "command=", "-p", String(pid)]);
+      return out ? parsePsEnv(out) : {};
+    },
+    tty(pid) {
+      const t = (sh("ps", ["-o", "tty=", "-p", String(pid)]) ?? "").trim();
+      return RE.tty.test(t) ? t : null;
+    },
+    appPath(pid) {
+      if (platform !== "darwin") return null;
+      let p = pid;
+      for (let i = 0; i < 16 && p > 1; i++) {
+        const out = (sh("ps", ["-o", "ppid=,comm=", "-p", String(p)]) ?? "").trim();
+        const m = /^(\d+)\s+(.+)$/.exec(out);
+        if (!m) return null;
+        const app = appBundlePath(m[2]);
+        if (app) return app;
+        p = Number(m[1]);
+      }
+      return null;
+    },
+    tmuxClient(tmux, socket) {
+      const out = sh(tmux, ["-S", socket, "list-clients", "-F", "#{client_activity} #{client_pid}"]) ?? "";
+      let best = null;
+      for (const line of out.split("\n")) {
+        const m = /^(\d+) (\d+)$/.exec(line.trim());
+        if (m && (!best || Number(m[1]) > best[0])) best = [Number(m[1]), Number(m[2])];
+      }
+      return best ? best[1] : null;
+    }
+  };
+}
+var ENV_KEYS, APPS, VSCODE_FAMILY, RE, appName, q, defaultRunner2, TMUX_TTL, TerminalLocator;
+var init_terminal = __esm({
+  "server/terminal.ts"() {
+    "use strict";
+    init_api();
+    ENV_KEYS = [
+      "TERM_PROGRAM",
+      "WARP_FOCUS_URL",
+      "__CFBundleIdentifier",
+      "KITTY_WINDOW_ID",
+      "KITTY_LISTEN_ON",
+      "WEZTERM_PANE",
+      "WEZTERM_UNIX_SOCKET",
+      "TMUX",
+      "TMUX_PANE",
+      "ALACRITTY_WINDOW_ID",
+      "ALACRITTY_SOCKET",
+      "GHOSTTY_RESOURCES_DIR"
+    ];
+    APPS = {
+      warp: { name: TERMINAL_NAMES.warp, bundle: "dev.warp.Warp-Stable", bundles: /^dev\.warp\./, term: ["WarpTerminal"] },
+      iterm: { name: TERMINAL_NAMES.iterm, bundle: "com.googlecode.iterm2", bundles: /^com\.googlecode\.iterm2/, term: ["iTerm.app"] },
+      terminal: { name: TERMINAL_NAMES.terminal, bundle: "com.apple.Terminal", bundles: /^com\.apple\.Terminal$/, term: ["Apple_Terminal"] },
+      ghostty: { name: TERMINAL_NAMES.ghostty, bundle: "com.mitchellh.ghostty", bundles: /^com\.mitchellh\.ghostty/, term: ["ghostty"] },
+      wezterm: { name: TERMINAL_NAMES.wezterm, bundle: "com.github.wez.wezterm", bundles: /^com\.github\.wez\.wezterm/, term: ["WezTerm"] },
+      kitty: { name: TERMINAL_NAMES.kitty, bundle: "net.kovidgoyal.kitty", bundles: /^net\.kovidgoyal\.kitty/ },
+      alacritty: { name: TERMINAL_NAMES.alacritty, bundle: "org.alacritty", bundles: /^org\.alacritty/ },
+      vscode: { name: TERMINAL_NAMES.vscode, bundle: "com.microsoft.VSCode", bundles: /^com\.microsoft\.VSCode/ },
+      cursor: { name: TERMINAL_NAMES.cursor, bundle: "com.todesktop.230313mzl4w4u92", bundles: /^com\.todesktop\.230313mzl4w4u92$/ },
+      windsurf: { name: TERMINAL_NAMES.windsurf, bundle: "com.exafunction.windsurf", bundles: /^com\.exafunction\.windsurf/ }
+    };
+    VSCODE_FAMILY = ["cursor", "windsurf", "vscode"];
+    RE = {
+      warpUrl: /^warp:\/\/session\/[A-Za-z0-9-]{8,64}$/,
+      bundle: /^[A-Za-z0-9][A-Za-z0-9.-]{2,120}$/,
+      tty: /^(ttys?\d{1,4}|pts\/\d{1,5})$/,
+      num: /^\d{1,9}$/,
+      tmuxPane: /^%\d{1,9}$/,
+      tmuxSocket: /^\/[^\0\n\r,]{1,500}$/,
+      kittyTo: /^(unix:[@/][^\0\s]{1,300}|tcp:(localhost|127\.0\.0\.1):\d{1,5})$/,
+      path: /^\/[^\0\n\r]{1,1000}$/
+    };
+    appName = (p) => p ? path13.basename(p).replace(/\.app$/, "") : null;
+    q = (s) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    defaultRunner2 = (c) => new Promise((resolve) => {
+      execFile2(c.file, c.args, { timeout: 5e3, windowsHide: true, env: c.env ? { ...process.env, ...c.env } : process.env }, (err, stdout, stderr) => {
+        resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") + (err ? ` ${err.message}` : "") });
+      });
+    });
+    TMUX_TTL = 3e4;
+    TerminalLocator = class {
+      constructor(platform = process.platform, reader = systemReader(platform), run = defaultRunner2, toolsOverride = null) {
+        this.platform = platform;
+        this.reader = reader;
+        this.run = run;
+        this.toolsOverride = toolsOverride;
+      }
+      platform;
+      reader;
+      run;
+      toolsOverride;
+      cache = /* @__PURE__ */ new Map();
+      outerCache = /* @__PURE__ */ new Map();
+      toolsCache = null;
+      /** Only macOS and Linux have ways to switch terminals. */
+      get supported() {
+        return this.platform === "darwin" || this.platform === "linux";
+      }
+      tools() {
+        if (this.toolsOverride) return this.toolsOverride;
+        const mac = this.platform === "darwin";
+        this.toolsCache ??= {
+          open: mac && findBin("open", ["/usr/bin/open"]) !== null,
+          osascript: mac && findBin("osascript", ["/usr/bin/osascript"]) !== null,
+          tmux: findBin("tmux"),
+          wezterm: findBin("wezterm", mac ? ["/Applications/WezTerm.app/Contents/MacOS/wezterm"] : []),
+          kitten: findBin("kitten", mac ? ["/Applications/kitty.app/Contents/MacOS/kitten"] : [])
+        };
+        return this.toolsCache;
+      }
+      detectPid(pid) {
+        const env2 = this.reader.env(pid);
+        const tty = this.reader.tty(pid);
+        const quick = detectApp(env2);
+        const app = quick.app ? quick : detectApp(env2, this.reader.appPath(pid));
+        return { ...app, env: env2, tty };
+      }
+      /** The process's terminal; `key` changes when the pid is reused by another session. */
+      detect(pid, key = String(pid)) {
+        let d = this.cache.get(key);
+        if (!d) {
+          if (this.cache.size > 300) this.cache.clear();
+          d = this.detectPid(pid);
+          this.cache.set(key, d);
+        }
+        return d;
+      }
+      outerOf(inner) {
+        const tools = this.tools();
+        const socket = tmuxSocket(inner.env);
+        if (!tools.tmux || !socket) return null;
+        const hit = this.outerCache.get(socket);
+        if (hit && Date.now() - hit.at < TMUX_TTL) return hit.d;
+        const client = this.reader.tmuxClient(tools.tmux, socket);
+        const d = client ? this.detectPid(client) : null;
+        this.outerCache.set(socket, { d, at: Date.now() });
+        return d;
+      }
+      plan(pid, choice, key, fresh = false) {
+        const d = this.detect(pid, key);
+        const tools = this.tools();
+        if (d.env.TMUX) {
+          if (fresh) this.outerCache.clear();
+          return planTmux(d, this.outerOf(d), choice, tools, this.platform);
+        }
+        return planFor(d, choice, tools, this.platform);
+      }
+      /** What the UI shows for a live session (null when the button is off or switching is not supported here). */
+      describe(pid, choice, key) {
+        if (!this.supported || choice === "off") return null;
+        const p = this.plan(pid, choice, key);
+        return { app: choice === "auto" ? this.detect(pid, key).app : choice, name: p.name, precision: p.precision, ...p.tmux ? { tmux: true } : {} };
+      }
+      async focus(pid, choice, key) {
+        if (choice === "off") return { ok: false, name: null, precision: "none", error: "off" };
+        if (!this.supported) return { ok: false, name: null, precision: "none", error: "unsupported" };
+        return runPlan(this.plan(pid, choice, key, true), this.run);
+      }
+    };
+  }
+});
+
 // server/index.ts
 var index_exports = {};
-import fs12 from "node:fs";
+import fs13 from "node:fs";
 import http from "node:http";
-import path13 from "node:path";
+import path14 from "node:path";
 function about() {
   const st = db ? (hookLog.flush(), db.stats()) : null;
   const lim = readLimits();
@@ -9129,16 +9502,16 @@ function json(res, code, body) {
   res.end(s);
 }
 function serveStatic(res, urlPath) {
-  const safe = path13.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
-  let file = path13.join(DIST_DIR, safe);
-  if (!file.startsWith(DIST_DIR) || !fs12.existsSync(file) || fs12.statSync(file).isDirectory()) file = path13.join(DIST_DIR, "index.html");
-  if (!fs12.existsSync(file)) {
+  const safe = path14.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
+  let file = path14.join(DIST_DIR, safe);
+  if (!file.startsWith(DIST_DIR) || !fs13.existsSync(file) || fs13.statSync(file).isDirectory()) file = path14.join(DIST_DIR, "index.html");
+  if (!fs13.existsSync(file)) {
     res.writeHead(404);
     res.end("dist is not built: run pnpm build");
     return;
   }
-  res.writeHead(200, { "content-type": MIME[path13.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
-  fs12.createReadStream(file).pipe(res);
+  res.writeHead(200, { "content-type": MIME[path14.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
+  fs13.createReadStream(file).pipe(res);
 }
 function readBody(req, limit = 2e6) {
   return new Promise((resolve, reject) => {
@@ -9155,7 +9528,7 @@ function readBody(req, limit = 2e6) {
     req.on("error", reject);
   });
 }
-var t0, migratedFrom, db, store, hooks, hookLog, limitsLog, live, forecaster, settings, systemNotifier, clients, recent, broadcast, MIME, server, PID_FILE, ownsPidFile, shutdown;
+var t0, migratedFrom, db, store, hooks, hookLog, limitsLog, live, forecaster, settings, terminals, termKey, systemNotifier, clients, recent, broadcast, MIME, server, PID_FILE, ownsPidFile, shutdown;
 var init_index = __esm({
   "server/index.ts"() {
     "use strict";
@@ -9179,6 +9552,7 @@ var init_index = __esm({
     init_replay2();
     init_changes();
     init_store();
+    init_terminal();
     t0 = Date.now();
     migratedFrom = migrateLegacyDb();
     if (migratedFrom) console.log(`[clorbit] copied the database from ${migratedFrom} to ${DB_FILE} (one-time migration; the old file is left untouched)`);
@@ -9198,6 +9572,9 @@ var init_index = __esm({
     forecaster = new LimitsForecaster((from, to) => limitsLog.history(from, to), () => store.files.values());
     live.forecast = (limits, now) => forecaster.get(limits, now);
     settings = new SettingsStore(db);
+    terminals = new TerminalLocator();
+    termKey = (pid) => `${pid.pid}:${pid.startedAt ?? ""}`;
+    live.terminalOf = (pid) => terminals.describe(pid.pid, settings.get().terminal.app, termKey(pid));
     systemNotifier = new SystemNotifier();
     new ServerNotifications(() => settings.get(), systemNotifier).attach(live);
     clients = /* @__PURE__ */ new Map();
@@ -9260,6 +9637,16 @@ var init_index = __esm({
           if (!systemNotifier.available) return json(res, 200, { ok: false, error: "unavailable" });
           const ok = systemNotifier.send("Clorbit", notifyTestBody(lang));
           return json(res, 200, ok ? { ok } : { ok, error: "rate-limited" });
+        }
+        const term = req.method === "POST" ? /^\/api\/session\/([^/]+)\/terminal$/.exec(p) : null;
+        if (term) {
+          if (!localOrigin(req)) return json(res, 403, { error: err.forbidden });
+          if (!String(req.headers["content-type"] ?? "").includes("application/json")) return json(res, 415, { error: err.jsonOnly });
+          const id = decodeURIComponent(term[1]);
+          if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: err.badSession });
+          const pid = live.pids.get(id);
+          if (!pid?.alive) return json(res, 200, { ok: false, name: null, precision: "none", error: "not-live" });
+          return json(res, 200, await terminals.focus(pid.pid, settings.get().terminal.app, termKey(pid)));
         }
         if (req.method !== "GET" && req.method !== "HEAD") return json(res, 405, { error: err.getOnly });
         if (p === "/api/health") return json(res, 200, { app: "clorbit", version: VERSION, pid: process.pid, port: PORT, dataDir: DATA_DIR, uptimeMs: Date.now() - t0 });
@@ -9338,7 +9725,7 @@ var init_index = __esm({
     PID_FILE = env("PID_FILE");
     ownsPidFile = () => {
       try {
-        return PID_FILE && JSON.parse(fs12.readFileSync(PID_FILE, "utf8")).pid === process.pid;
+        return PID_FILE && JSON.parse(fs13.readFileSync(PID_FILE, "utf8")).pid === process.pid;
       } catch {
         return false;
       }
@@ -9351,14 +9738,14 @@ var init_index = __esm({
     server.listen(PORT, HOST, () => {
       if (PID_FILE) {
         try {
-          fs12.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
+          fs13.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
         } catch (e) {
           console.error(`[clorbit] could not write ${PID_FILE}:`, e.message);
         }
       }
       const lock = env("START_LOCK");
       if (lock) try {
-        fs12.rmSync(lock, { force: true });
+        fs13.rmSync(lock, { force: true });
       } catch {
       }
       console.log(`[clorbit] v${VERSION} http://${HOST}:${PORT} ready in ${Date.now() - t0} ms; ${store.files.size} files in the database, ${store.missing.size} archived (loaded in ${store.stats.loadMs} ms)`);
@@ -9381,7 +9768,7 @@ var init_index = __esm({
       }
       for (const c of clients.keys()) c.end();
       if (ownsPidFile()) try {
-        fs12.unlinkSync(PID_FILE);
+        fs13.unlinkSync(PID_FILE);
       } catch {
       }
       server.close();

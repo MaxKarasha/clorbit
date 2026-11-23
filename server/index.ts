@@ -22,6 +22,7 @@ import { sessionDetail } from './session-detail';
 import { sessionReplay } from './replay';
 import { sessionAgentChanges } from './changes';
 import { Store } from './store';
+import { TerminalLocator } from './terminal';
 
 const t0 = Date.now();
 const migratedFrom = migrateLegacyDb();
@@ -41,6 +42,10 @@ const live = new Live(store, hooks);
 const forecaster = new LimitsForecaster((from, to) => limitsLog.history(from, to), () => store.files.values());
 live.forecast = (limits, now) => forecaster.get(limits, now);
 const settings = new SettingsStore(db);
+const terminals = new TerminalLocator();
+// A pid can be reused by a later session: the cache key includes when the session started.
+const termKey = (pid: { pid: number; startedAt: number | null }) => `${pid.pid}:${pid.startedAt ?? ''}`;
+live.terminalOf = (pid) => terminals.describe(pid.pid, settings.get().terminal.app, termKey(pid));
 const systemNotifier = new SystemNotifier();
 new ServerNotifications(() => settings.get(), systemNotifier).attach(live);
 
@@ -149,6 +154,17 @@ const server = http.createServer(async (req, res) => {
       if (!systemNotifier.available) return json(res, 200, { ok: false, error: 'unavailable' });
       const ok = systemNotifier.send('Clorbit', notifyTestBody(lang));
       return json(res, 200, ok ? { ok } : { ok, error: 'rate-limited' });
+    }
+    const term = req.method === 'POST' ? /^\/api\/session\/([^/]+)\/terminal$/.exec(p) : null;
+    if (term) {
+      // Brings the session's terminal to the front. A local page only, JSON only (a cross-site form cannot send it).
+      if (!localOrigin(req)) return json(res, 403, { error: err.forbidden });
+      if (!String(req.headers['content-type'] ?? '').includes('application/json')) return json(res, 415, { error: err.jsonOnly });
+      const id = decodeURIComponent(term[1]);
+      if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: err.badSession });
+      const pid = live.pids.get(id);
+      if (!pid?.alive) return json(res, 200, { ok: false, name: null, precision: 'none', error: 'not-live' });
+      return json(res, 200, await terminals.focus(pid.pid, settings.get().terminal.app, termKey(pid)));
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: err.getOnly });
     if (p === '/api/health') return json(res, 200, { app: 'clorbit', version: VERSION, pid: process.pid, port: PORT, dataDir: DATA_DIR, uptimeMs: Date.now() - t0 });

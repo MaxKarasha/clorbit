@@ -2,7 +2,7 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Limits, LimitsForecast, LiveSession, LiveSnapshot, SessionKind, SessionStatus, Tokens } from '../shared/api.ts';
+import type { Limits, LimitsForecast, LiveSession, LiveSnapshot, SessionKind, SessionStatus, TerminalInfo, Tokens } from '../shared/api.ts';
 import { sessionKind } from '../shared/automation';
 import { LEGACY_STATUSLINE_FILE, PROJECTS_DIR, SESSIONS_DIR, STATUSLINE_FILE, hookPluginEnabled } from './config';
 import type { Hooks } from './hooks';
@@ -131,6 +131,8 @@ export function readLimits(): { limits: Limits | null; capture: boolean } {
 
 export class Live extends EventEmitter {
   pids = new Map<string, PidInfo>();
+  /** "Open in terminal": where a live session's terminal is (set by the server; tests leave it unset). */
+  terminalOf: ((pid: PidInfo) => TerminalInfo | null) | null = null;
   private statusMem = new Map<string, { status: SessionStatus; since: number; reason: Reason | null }>();
   private finishedMem = new Map<string, Set<string>>();
   private cache: { at: number; v: LiveSnapshot; reasons: Map<string, Reason | null> } | null = null;
@@ -434,6 +436,7 @@ export class Live extends EventEmitter {
         compactions: main?.compactions ?? 0,
         root: tree.root,
         kind: k.kind,
+        terminal: isAlive && pid && this.terminalOf ? this.terminalOf(pid) : null,
         entrypoint: k.entrypoint,
       });
     }

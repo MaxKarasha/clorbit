@@ -1,9 +1,10 @@
 // Profile button and the settings slide-over: notifications matrix, sounds, do not disturb, recommendations,
 // interface and a read-only connection summary. One instance at the app root.
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { NOTIFY_EVENTS, SOUND_THEMES, type NotifyChannel, type NotifyEventType, type NotifyRule, type Plan, type SoundTheme } from '@shared/api';
-import { isSilenced, RECOMMEND_DAYS } from '@shared/settings';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { NOTIFY_EVENTS, SOUND_THEMES, TERMINAL_APPS, TERMINAL_NAMES, type NotifyChannel, type NotifyEventType, type NotifyRule, type Plan, type SoundTheme, type TerminalChoice } from '@shared/api';
+import { isSilenced, isTerminalChoice, RECOMMEND_DAYS } from '@shared/settings';
 import { LANGS, locale, setLang, t, tp, useLang, type MsgKey } from '../i18n';
+import { useData } from '../lib/api';
 import { fmtAgo, fmtInt } from '../lib/format';
 import {
   closeSettings,
@@ -449,6 +450,62 @@ function Interface() {
   );
 }
 
+/** "Open in terminal": which app, and what is detected for the live sessions right now. */
+function Terminal({ demo }: { demo: boolean }) {
+  const choice = useSettings().terminal.app;
+  const { live } = useData();
+  const groups = useMemo(() => {
+    const m = new Map<string, { name: string; precision: 'tab' | 'app' | 'none'; n: number }>();
+    for (const s of live?.sessions ?? []) {
+      if (!s.alive || !s.terminal) continue;
+      const name = s.terminal.name ?? '?';
+      const key = `${name}|${s.terminal.precision}`;
+      const g = m.get(key) ?? { name, precision: s.terminal.precision, n: 0 };
+      g.n++;
+      m.set(key, g);
+    }
+    return [...m.values()].sort((a, b) => b.n - a.n);
+  }, [live]);
+  const precision = (p: 'tab' | 'app' | 'none') => t(p === 'tab' ? 'term.set.precision.tab' : p === 'app' ? 'term.set.precision.app' : 'term.set.unreachable');
+  return (
+    <Section id="terminal" title={t('set.sec.terminal')}>
+      <Row title={t('term.set.app')} desc={t('term.set.app.d')} id="term-app">
+        <select
+          className="set-select"
+          value={choice}
+          aria-labelledby="term-app"
+          onChange={(e) => isTerminalChoice(e.target.value) && updateSettings({ terminal: { app: e.target.value as TerminalChoice } })}
+        >
+          <option value="auto">{t('term.set.auto')}</option>
+          {TERMINAL_APPS.map((a) => (
+            <option key={a} value={a}>
+              {TERMINAL_NAMES[a]}
+            </option>
+          ))}
+          <option value="off">{t('term.set.off')}</option>
+        </select>
+      </Row>
+      <Row title={t('term.set.now')} desc={t('term.set.now.d')}>
+        {demo ? (
+          <span className="set-row__desc">{t('term.set.demo')}</span>
+        ) : choice === 'off' ? (
+          <span className="set-row__desc">{t('term.set.off')}</span>
+        ) : groups.length ? (
+          <ul className="term-list">
+            {groups.map((g) => (
+              <li key={`${g.name}|${g.precision}`} className={`term-list__item term-list__item--${g.precision}`}>
+                <b>{g.name}</b> · {precision(g.precision)} · <span className="mono">{tp('term.set.sessions', g.n)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <span className="set-row__desc">{t('term.set.none')}</span>
+        )}
+      </Row>
+    </Section>
+  );
+}
+
 /** "Consider unused after N days" and the hidden recommendations. */
 function Recommendations() {
   const r = useSettings().recommendations;
@@ -650,6 +707,7 @@ function Panel() {
           <Sounds />
           <Dnd />
           <Interface />
+          <Terminal demo={demo} />
           <Recommendations />
           <Connection demo={demo} offline={offline} focus={section === 'connection'} />
         </div>

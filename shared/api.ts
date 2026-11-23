@@ -65,6 +65,42 @@ export interface LiveSession {
   kind?: SessionKind;
   /** Claude Code's entrypoint of the session ('cli', 'sdk-cli', 'sdk-ts', 'claude-vscode', ...), when known. */
   entrypoint?: string | null;
+  /** Additive (0.6+): where the session's terminal is and how precisely "Open in terminal" can reach it;
+   *  only for live sessions on a server that can switch terminals (null otherwise, or when the button is off). */
+  terminal?: TerminalInfo | null;
+}
+
+// ---------- Terminals ("Open in terminal") ----------
+
+/** Terminal apps Clorbit knows by name. Any other macOS app is still brought to the front by its bundle id. */
+export type TerminalApp = 'warp' | 'iterm' | 'terminal' | 'ghostty' | 'wezterm' | 'kitty' | 'alacritty' | 'vscode' | 'cursor' | 'windsurf';
+export const TERMINAL_APPS: TerminalApp[] = ['warp', 'iterm', 'terminal', 'ghostty', 'wezterm', 'kitty', 'alacritty', 'vscode', 'cursor', 'windsurf'];
+export const TERMINAL_NAMES: Record<TerminalApp, string> = {
+  warp: 'Warp', iterm: 'iTerm2', terminal: 'Terminal', ghostty: 'Ghostty', wezterm: 'WezTerm', kitty: 'kitty',
+  alacritty: 'Alacritty', vscode: 'VS Code', cursor: 'Cursor', windsurf: 'Windsurf',
+};
+/** Settings → Terminal: detect the app per session, always use one app, or hide the button. */
+export type TerminalChoice = 'auto' | 'off' | TerminalApp;
+/** tab: the session's own tab or pane is selected; app: only the app comes to the front; none: not reachable. */
+export type TerminalPrecision = 'tab' | 'app' | 'none';
+
+export interface TerminalInfo {
+  /** A known app, 'other' (an unknown app found by its bundle or path), or null when nothing was found. */
+  app: TerminalApp | 'other' | null;
+  /** Display name: 'Warp', 'iTerm2', 'Hyper', ... (null when unknown). */
+  name: string | null;
+  precision: TerminalPrecision;
+  /** The session runs inside tmux (its pane is selected first). */
+  tmux?: boolean;
+}
+
+/** POST /api/session/:id/terminal. `warning` explains a fallback: the app came up, but not the exact tab. */
+export interface TerminalFocusResult {
+  ok: boolean;
+  name: string | null;
+  precision: TerminalPrecision;
+  error?: 'not-live' | 'off' | 'unsupported' | 'failed';
+  warning?: 'permission' | 'tab-not-found';
 }
 
 export type SessionKind = 'interactive' | 'automated';
@@ -519,6 +555,8 @@ export interface Settings {
   /** Recommendations. unusedDays: "consider unused after N days" (RECOMMEND_DAYS in shared/settings.ts);
    *  dismissed: ids of hidden recommendations (a PUT replaces the whole list; at most MAX_DISMISSED). Additive (0.4+). */
   recommendations: { unusedDays: number; dismissed: string[] };
+  /** "Open in terminal": which app hosts the sessions ('auto' detects it per session; 'off' hides the button). Additive (0.6+). */
+  terminal: { app: TerminalChoice };
 }
 
 /** A pinned body's position: fractions of the galaxy's width and height. */
@@ -544,6 +582,7 @@ export const DEFAULT_SETTINGS: Settings = {
   interface: { lang: 'en', autoTour: false, reduceMotion: false, showAutomated: false },
   layout: { gravity: true, pins: {} },
   recommendations: { unusedDays: 30, dismissed: [] },
+  terminal: { app: 'auto' },
 };
 
 /** GET /api/about — read-only facts for the Connection section of the settings panel. */
