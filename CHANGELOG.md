@@ -2,6 +2,12 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- A favicon: the Clorbit star with its orbit and a violet planet, as an SVG for modern browsers, a `favicon.ico` (16/32/48 px, with a thicker orbit that stays readable in a tab) and a 180 px `apple-touch-icon.png`.
+
 ## 0.4.1
 
 ### Fixed
