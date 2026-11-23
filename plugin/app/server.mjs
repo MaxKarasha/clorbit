@@ -7634,6 +7634,18 @@ var init_notify = __esm({
       get ready() {
         return this.baseline;
       }
+      /** Sessions that wait for you or work right now, counted like notifications (live process; automated
+       *  runs only when included). Drives the tab badge; follows status events between snapshots. */
+      counts() {
+        let waiting = 0;
+        let working = 0;
+        for (const st of this.sessions.values()) {
+          if (!this.notifies(st)) continue;
+          if (st.status === "waiting") waiting++;
+          else if (st.status === "working") working++;
+        }
+        return { waiting, working };
+      }
       /** A session that may notify right now. */
       notifies(st) {
         return st.alive && (!st.automated || this.includeAutomated());

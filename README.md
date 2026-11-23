@@ -98,6 +98,8 @@ The round profile button at the right end of the top bar (on the galaxy and on e
 - **Interface** — language, auto tour, **Reduce motion** (slow orbits, no twinkling, instant camera moves), and **Show automated sessions as separate stars** (off by default). While it is off, automated runs stay in their project's cluster, their console events are grouped into one collapsible row per project (`product (automated) · 42 events`), and they never notify — a pipeline that runs `claude -p` a hundred times a day does not ring a hundred times.
 - **Connection** — server version, data folder, hooks plugin state, subscription-limits source and event-store counts.
 
+The **browser tab** is a status light too: while sessions wait for you, the favicon gets an orange badge with their number and the title becomes `(2) Waiting for you · Clorbit`, so a pinned or background tab tells you at a glance; a small blue dot means agents are working. It counts the same sessions as the notifications (live ones; automated runs only when they are shown as separate stars).
+
 In demo mode sounds and cards work on the invented data; browser and system notifications never fire and nothing is saved. On macOS the first system notification may ask you to allow notifications for "Script Editor" (that is what `osascript` shows up as).
 
 ## Install

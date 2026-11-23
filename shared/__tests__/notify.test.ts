@@ -46,6 +46,27 @@ describe('NotifyDetector', () => {
     expect(r.resolved).toEqual(['b']);
   });
 
+  it('counts waiting and working sessions like notifications, following status events', () => {
+    let automated = false;
+    const d = new NotifyDetector(() => automated);
+    expect(d.counts()).toEqual({ waiting: 0, working: 0 });
+    d.onSnapshot(snap(1000, [
+      sess('a', 'waiting'),
+      sess('b', 'working'),
+      sess('c', 'waiting', { alive: false }),
+      sess('d', 'waiting', { kind: 'automated' }),
+      sess('e', 'idle'),
+    ]));
+    // The baseline counts too: a session already waiting when the tab opens shows in the badge.
+    expect(d.counts()).toEqual({ waiting: 1, working: 1 });
+    d.onEvent({ kind: 'status', ts: 1500, sessionId: 'b', status: 'waiting', reason: null, code: 'waitingInput' });
+    expect(d.counts()).toEqual({ waiting: 2, working: 0 });
+    automated = true;
+    expect(d.counts()).toEqual({ waiting: 3, working: 0 });
+    d.onSnapshot(snap(2000, [sess('b', 'working')]));
+    expect(d.counts()).toEqual({ waiting: 0, working: 1 });
+  });
+
   it('ignores sessions without a live process', () => {
     const d = new NotifyDetector();
     d.onSnapshot(snap(1000, [sess('a', 'working', { alive: false })]));

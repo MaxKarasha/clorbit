@@ -148,6 +148,9 @@ export default {
   'toast.open': 'Show in the galaxy',
   'toast.region': 'Notifications',
 
+  // Browser tab: title while sessions wait for you
+  'tab.waiting': 'Waiting for you|Waiting for you',
+
   // Notification bodies (browser notifications and toasts)
   'nb.waitPermissionTool': '{p} is waiting for you: permission for {tool}',
   'nb.waitPermission': '{p} is waiting for you: permission',

@@ -6,6 +6,7 @@ import { normalizeSettings } from '@shared/settings';
 import { setLang } from '../i18n';
 import { channelsFor, notifyBody, pruneToasts, pushToast, TOAST_MS, type ChannelContext } from './rules';
 import { shouldPlay, THEMES } from './sound';
+import { tabBadge, tabTitle } from './tabBadge';
 
 const ctx: ChannelContext = { now: new Date(2026, 10, 17, 12).getTime(), demo: false, hidden: false, permission: 'granted', systemAvailable: true };
 const ev = (type: NotifyEvent['type'], extra: Partial<NotifyEvent> = {}): NotifyEvent => ({ type, ts: 0, sessionId: 's1', project: 'billing-service', ...extra });
@@ -97,6 +98,26 @@ describe('texts', () => {
     setLang('uk');
     expect(notifyBody(e)).toBe('billing-service чекає на тебе: дозвіл на Bash');
     expect(notifyBody(ev('subagent_finished', { count: 3 }))).toBe('billing-service: завершено субагентів — 3');
+    setLang('en');
+  });
+});
+
+describe('tab badge', () => {
+  it('waiting wins over working; more than nine shows as 9+', () => {
+    expect(tabBadge({ waiting: 0, working: 0 })).toBeNull();
+    expect(tabBadge({ waiting: 0, working: 3 })).toEqual({ kind: 'working' });
+    expect(tabBadge({ waiting: 2, working: 3 })).toEqual({ kind: 'waiting', label: '2' });
+    expect(tabBadge({ waiting: 12, working: 0 })).toEqual({ kind: 'waiting', label: '9+' });
+  });
+
+  it('the title puts the waiting count first, in the UI language', () => {
+    setLang('en');
+    expect(tabTitle({ waiting: 0, working: 4 })).toBe('Clorbit');
+    expect(tabTitle({ waiting: 1, working: 0 })).toBe('(1) Waiting for you · Clorbit');
+    setLang('uk');
+    expect(tabTitle({ waiting: 1, working: 0 })).toBe('(1) Чекає на тебе · Clorbit');
+    expect(tabTitle({ waiting: 3, working: 0 })).toBe('(3) Чекають на тебе · Clorbit');
+    expect(tabTitle({ waiting: 5, working: 0 })).toBe('(5) Чекають на тебе · Clorbit');
     setLang('en');
   });
 });

@@ -141,6 +141,8 @@ export default {
   'toast.open': 'Показати в галактиці',
   'toast.region': 'Сповіщення',
 
+  'tab.waiting': 'Чекає на тебе|Чекають на тебе|Чекають на тебе',
+
   'nb.waitPermissionTool': '{p} чекає на тебе: дозвіл на {tool}',
   'nb.waitPermission': '{p} чекає на тебе: дозвіл',
   'nb.waitInput': '{p} чекає на твою відповідь',

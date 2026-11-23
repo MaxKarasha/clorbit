@@ -6,6 +6,7 @@ All notable changes to Clorbit are listed here. The format follows [Keep a Chang
 
 ### Added
 
+- The browser tab shows what needs you: an orange badge with the number of sessions waiting for you on the favicon (9+ above nine) and `(2) Waiting for you · Clorbit` in the title; a small blue dot while agents work. It follows status events at once and counts the same sessions as notifications: live ones, automated runs only when they are shown as separate stars.
 - A favicon: the Clorbit star with its orbit and a violet planet, as an SVG for modern browsers, a `favicon.ico` (16/32/48 px, with a thicker orbit that stays readable in a tab) and a 180 px `apple-touch-icon.png`.
 
 ## 0.4.1

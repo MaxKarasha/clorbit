@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ClorbitEvent, LiveSnapshot } from '@shared/api';
 import { NotifyDetector, type DetectResult, type NotifyEvent } from '@shared/notify';
-import { locale, t, withLang } from '../i18n';
+import { locale, t, useLang, withLang } from '../i18n';
 import { useDemo } from '../lib/demo';
 import { getAbout, getSettings, loadAbout, updateSettings, useSettings } from '../lib/settings';
 import { feed, focusSession } from './feed';
 import { channelsFor, EVENT_COLOR, eventLabel, notifyBody, pruneToasts, pushToast, type Toast } from './rules';
 import { playSound, unlockAudioOnGesture } from './sound';
+import { resetTab, updateTab } from './tabBadge';
 
 function permission(): NotificationPermission | 'unsupported' {
   return typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
@@ -73,6 +74,7 @@ const includeAutomated = () => getSettings().interface.showAutomated;
 
 export default function NotificationCenter() {
   const demo = useDemo();
+  const lang = useLang();
   const settings = useSettings();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [sources, setSources] = useState(feed.sources);
@@ -91,7 +93,15 @@ export default function NotificationCenter() {
     setToasts([]);
   }, [demo]);
 
+  // The tab title and favicon badge: on every update below, and when the language or the data source changes.
+  useEffect(() => {
+    updateTab(detector.current.counts());
+  }, [lang, demo, settings.interface.showAutomated]);
+  useEffect(() => resetTab, []);
+
   const handle = (res: DetectResult) => {
+    // Any status change (also idle → working, which notifies nothing) may change the tab badge.
+    updateTab(detector.current.counts());
     const now = Date.now();
     const s = getSettings();
     let next: Toast[] | null = null;
