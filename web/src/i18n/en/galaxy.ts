@@ -112,6 +112,8 @@ export default {
   'gx.panel.finishedChildren': 'Finished',
   'gx.panel.timeline': 'Session timeline →',
   'gx.panel.subagentAnalytics': 'Subagent analytics',
+  'gx.panel.close': 'Close',
+  'gx.panel.closeTitle': 'Close (also: Esc, or click it on the map again)',
   'gx.panel.pinned': 'Pinned here',
   'gx.panel.unpin': 'Unpin',
   'gx.panel.unpinTitle': 'Let it move with the galaxy again (also: double-click, right-click or Alt-click it)',

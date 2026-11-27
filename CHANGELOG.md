@@ -2,6 +2,12 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Close a panel with ×.** The galaxy's side panels (a session, a subagent, a cluster; also in the time machine) have a small × in the top right corner that stays in view while the panel scrolls. It does what clicking the focused body again does: a session or cluster panel closes and the camera goes back to the whole galaxy, a subagent's panel goes up to its parent. Esc still works too.
+
 ## 0.7.0
 
 ### Added

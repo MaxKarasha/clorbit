@@ -160,6 +160,7 @@ export default function ReplayPage({ id }: { id: string }) {
   const s = player && view.version ? player.snapshot().sessions[0] : null;
   const fAgent = focus.t === 'agent' && s ? findAgent(s.root, focus.agentId) : null;
   const go = (f: Focus) => engineRef.current?.setFocus(f, true);
+  const close = () => engineRef.current?.up(true);
   const onConsoleFocus = (_sid: string, aid?: string) => {
     const e = engineRef.current;
     if (!e || !r) return;
@@ -238,8 +239,8 @@ export default function ReplayPage({ id }: { id: string }) {
       )}
       {player && r && r.events.length === 0 && <div className="rp-state rp-state--soft"><p>{t('gx.replay.empty')}</p></div>}
 
-      {s && focus.t === 'sys' && <SessionPanel s={s} eng={eng} onAgent={(aid) => go({ t: 'agent', sessionId: s.sessionId, agentId: aid })} pin={null} now={view.t} replay />}
-      {s && fAgent && <AgentPanel s={s} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(aid) => go({ t: 'agent', sessionId: s.sessionId, agentId: aid })} now={view.t} />}
+      {s && focus.t === 'sys' && <SessionPanel s={s} eng={eng} onAgent={(aid) => go({ t: 'agent', sessionId: s.sessionId, agentId: aid })} pin={null} onClose={close} now={view.t} replay />}
+      {s && fAgent && <AgentPanel s={s} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(aid) => go({ t: 'agent', sessionId: s.sessionId, agentId: aid })} onClose={close} now={view.t} />}
 
       {player && (
         <div className={`gx-zoom rp-zoom${focus.t !== 'none' ? ' gx-zoom--panel' : ''}`}>

@@ -114,6 +114,8 @@ export default {
   'gx.panel.finishedChildren': 'Відпрацювало',
   'gx.panel.timeline': 'Хронологія сесії →',
   'gx.panel.subagentAnalytics': 'Аналітика субагентів',
+  'gx.panel.close': 'Закрити',
+  'gx.panel.closeTitle': 'Закрити (також: Esc або повторний клік на карті)',
   'gx.panel.pinned': 'Закріплено тут',
   'gx.panel.unpin': 'Відкріпити',
   'gx.panel.unpinTitle': 'Нехай знову рухається разом із галактикою (також: подвійний клік, правий клік або Alt-клік)',

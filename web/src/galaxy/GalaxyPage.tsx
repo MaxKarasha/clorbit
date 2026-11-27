@@ -226,6 +226,8 @@ export default function GalaxyPage() {
   const fCluster: ClusterInfo | null = focus.t === 'cluster' ? eng?.cluster(focus.project) ?? null : null;
   const fAgent = focus.t === 'agent' && fSession ? findAgent(fSession.root, focus.agentId) : null;
   const go = (f: Focus) => engineRef.current?.setFocus(f, true);
+  /** The panel's ×: the same as clicking the focused body again (an agent goes up to its parent, the rest closes). */
+  const close = () => engineRef.current?.up(true);
   /** The panel's "Pinned here · Unpin" row, when the focused body is pinned. */
   const pinOf = (key: string) => (key in pins ? () => updateSettings({ layout: { pins: withoutPin(getSettings().layout.pins, key) } }) : null);
 
@@ -287,14 +289,14 @@ export default function GalaxyPage() {
 
       {!offline && fSession && focus.t === 'sys' && (
         <SessionPanel
-          s={fSession} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} pin={pinOf(starPinKey(fSession.project, fSession.sessionId))}
+          s={fSession} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} pin={pinOf(starPinKey(fSession.project, fSession.sessionId))} onClose={close}
           changes={<ChangesSection sessionId={fSession.sessionId} agentId="main" rev={`${fSession.root.lastActivity}:${fSession.root.toolCalls}:${fSession.status}`} live={fSession.alive && fSession.status === 'working'} />}
         />
       )}
-      {!offline && fCluster && <ClusterPanel c={fCluster} onReveal={(id) => engineRef.current?.reveal(id)} pin={pinOf(clusterPinKey(fCluster.project))} />}
+      {!offline && fCluster && <ClusterPanel c={fCluster} onReveal={(id) => engineRef.current?.reveal(id)} pin={pinOf(clusterPinKey(fCluster.project))} onClose={close} />}
       {!offline && fSession && fAgent && (
         <AgentPanel
-          s={fSession} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })}
+          s={fSession} a={fAgent.node} parent={fAgent.chain[fAgent.chain.length - 2] ?? null} eng={eng} onAgent={(id) => go({ t: 'agent', sessionId: fSession.sessionId, agentId: id })} onClose={close}
           changes={<ChangesSection sessionId={fSession.sessionId} agentId={fAgent.node.id} rev={`${fAgent.node.lastActivity}:${fAgent.node.toolCalls}:${fAgent.node.status}`} live={fSession.alive && (fAgent.node.status === 'working' || fAgent.node.status === 'waiting')} />}
         />
       )}
@@ -526,6 +528,15 @@ function Tree({ s, node, eng, onAgent, depth = 0 }: { s: LiveSession; node: Agen
   );
 }
 
+/** The panel's close button (top right, stays visible while the panel scrolls). */
+function PanelClose({ onClose }: { onClose: () => void }) {
+  return (
+    <button type="button" className="gx-close" onClick={onClose} title={t('gx.panel.closeTitle')} aria-label={t('gx.panel.close')}>
+      <svg viewBox="0 0 16 16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg>
+    </button>
+  );
+}
+
 /** "Pinned here · Unpin" under a pinned body's panel header. */
 function PinRow({ onUnpin }: { onUnpin: () => void }) {
   return (
@@ -538,12 +549,13 @@ function PinRow({ onUnpin }: { onUnpin: () => void }) {
 
 /** `now`: the clock the panel measures against (a replay's current moment); `replay`: inside the time machine;
  *  `changes`: the live "Changes / Steps" section (not in replays). */
-export function SessionPanel({ s, eng, onAgent, pin, now, replay = false, changes }: { s: LiveSession; eng: GalaxyEngine | null; onAgent: (id: string) => void; pin: (() => void) | null; now?: number; replay?: boolean; changes?: ReactNode }) {
+export function SessionPanel({ s, eng, onAgent, pin, onClose, now, replay = false, changes }: { s: LiveSession; eng: GalaxyEngine | null; onAgent: (id: string) => void; pin: (() => void) | null; onClose?: () => void; now?: number; replay?: boolean; changes?: ReactNode }) {
   const at = now ?? Date.now();
   const ctx = s.contextTokens && s.contextLimit ? s.contextTokens / s.contextLimit : null;
   const col = eng?.colorOf(s.sessionId, 'main');
   return (
     <aside className="gx-panel" style={{ ['--acc' as string]: col }}>
+      {onClose && <PanelClose onClose={onClose} />}
       <div className="gx-panel-head">
         <span className={`gx-status-chip ${s.status}`}>{statusWord(s.status)}</span>
         <h3>{s.project}</h3>
@@ -582,11 +594,12 @@ export function SessionPanel({ s, eng, onAgent, pin, now, replay = false, change
   );
 }
 
-export function AgentPanel({ s, a, parent, eng, onAgent, now, changes }: { s: LiveSession; a: AgentNode; parent: AgentNode | null; eng: GalaxyEngine | null; onAgent: (id: string) => void; now?: number; changes?: ReactNode }) {
+export function AgentPanel({ s, a, parent, eng, onAgent, onClose, now, changes }: { s: LiveSession; a: AgentNode; parent: AgentNode | null; eng: GalaxyEngine | null; onAgent: (id: string) => void; onClose?: () => void; now?: number; changes?: ReactNode }) {
   const at = now ?? Date.now();
   const col = eng?.colorOf(s.sessionId, a.id);
   return (
     <aside className="gx-panel" style={{ ['--acc' as string]: col }}>
+      {onClose && <PanelClose onClose={onClose} />}
       <div className="gx-panel-head">
         <span className={`gx-status-chip ${a.status}`}>{statusWord(a.status)}</span>
         <h3 style={{ color: col }}>{a.type}</h3>
@@ -623,13 +636,14 @@ const LEGEND_ITEMS: MsgKey[] = ['gx.legend.star', 'gx.legend.planets', 'gx.legen
 /** Rows shown in a cluster's list; the rest is one click away on the sessions page. */
 const CLUSTER_ROWS = 150;
 
-function ClusterPanel({ c, onReveal, pin }: { c: ClusterInfo; onReveal: (sessionId: string) => void; pin: (() => void) | null }) {
+function ClusterPanel({ c, onReveal, pin, onClose }: { c: ClusterInfo; onReveal: (sessionId: string) => void; pin: (() => void) | null; onClose: () => void }) {
   const col = projectColor(c.project);
   const rows = c.sessions.slice(0, CLUSTER_ROWS);
   const more = c.sessions.length - rows.length;
   const status = (s: LiveSession) => (s.alive ? statusWord(s.status) : t('gx.status.stopped'));
   return (
     <aside className="gx-panel gx-panel--cluster" style={{ ['--acc' as string]: col }}>
+      <PanelClose onClose={onClose} />
       <div className="gx-panel-head">
         <span className="gx-status-chip cluster">{t('gx.cluster.chip')}</span>
         <h3>{c.project}</h3>
