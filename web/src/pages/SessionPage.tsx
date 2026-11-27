@@ -3,6 +3,7 @@ import type { AgentChanges, AgentNode, SessionDetail, TimelineItem } from '@shar
 import { t, tp, type MsgKey } from '../i18n';
 import { useApi, useData } from '../lib/api';
 import TerminalButton from '../components/TerminalButton';
+import RenameTitle from '../components/RenameTitle';
 import { alpha, branchColor, modelColor, shade, STATUS } from '../lib/colors';
 import { fmtCompact, fmtDateTime, fmtDuration, fmtInt, fmtModel, fmtPct, fmtTime, fmtTokens, sumTokens } from '../lib/format';
 import { href } from '../lib/router';
@@ -60,7 +61,7 @@ function Body({ d }: { d: SessionDetail }) {
           ← {t('session.projectSessions')} <span className="mono">{s.project}</span>
         </a>
         <h1 className="page-title">
-          {s.title ?? t('session.untitled')}
+          <RenameTitle sessionId={s.sessionId} title={s.title} autoTitle={s.autoTitle} fallback={t('session.untitled')} variant="page" />
           {d.archived && (
             <>
               {' '}

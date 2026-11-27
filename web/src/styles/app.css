@@ -2656,3 +2656,32 @@
   font-weight: 600;
   text-shadow: 0 0 8px rgba(181, 140, 255, 0.55);
 }
+
+/* ---------- Renaming a session (RenameTitle) ---------- */
+.rn { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 6px; max-width: 100%; }
+.rn__text { overflow-wrap: anywhere; }
+.rn__btn {
+  display: inline-grid; place-items: center; flex: none; width: 22px; height: 22px; padding: 0; align-self: center;
+  border: 1px solid transparent; border-radius: 6px; background: none; color: var(--faint); cursor: pointer;
+  opacity: 0.55; transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.rn__btn svg { width: 14px; height: 14px; }
+.rn:hover .rn__btn, .rn__btn:focus-visible { opacity: 1; }
+.rn__btn:hover, .rn__btn:focus-visible { color: var(--text); border-color: var(--border-strong); outline: none; }
+.rn__reset {
+  padding: 0; border: 0; background: none; color: var(--faint); font: inherit; font-size: 11.5px; cursor: pointer;
+  -webkit-text-fill-color: currentColor; letter-spacing: 0;
+}
+.rn__reset:hover, .rn__reset:focus-visible { color: var(--text); text-decoration: underline; outline: none; }
+.rn--editing { display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 100%; }
+.rn__input {
+  width: 100%; min-width: 0; padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: rgba(10, 14, 26, 0.85); color: var(--text); font: inherit; letter-spacing: inherit;
+  -webkit-text-fill-color: var(--text); outline: none;
+}
+.rn__input:focus { border-color: var(--c-working); box-shadow: 0 0 0 3px rgba(92, 200, 255, 0.18); }
+.rn__hint { color: var(--faint); font-size: 11.5px; font-weight: 400; letter-spacing: 0; -webkit-text-fill-color: currentColor; }
+.rn--page .rn__btn { width: 30px; height: 30px; }
+.rn--page .rn__btn svg { width: 18px; height: 18px; }
+.rn--page .rn__reset, .rn--page .rn__hint { font-size: 13px; }
+.rn--page .rn__input { font-size: 28px; padding: 4px 10px; }

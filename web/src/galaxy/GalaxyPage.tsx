@@ -6,6 +6,7 @@ import PlanBadge, { planLabel } from '../components/PlanBadge';
 import { dataFiveHour, fiveHourWindow } from '@shared/plan';
 import { ProfileButton } from '../components/SettingsPanel';
 import TerminalButton from '../components/TerminalButton';
+import RenameTitle from '../components/RenameTitle';
 import { DemoStrip, ServerOffline } from '../components/ServerState';
 import { t, tp, useLang, withLang, type MsgKey } from '../i18n';
 import { enterDemo, isDemo } from '../lib/demo';
@@ -54,6 +55,7 @@ export default function GalaxyPage() {
   const reduceMotion = useSetting((s) => s.interface.reduceMotion);
   const showAutomated = useSetting((s) => s.interface.showAutomated);
   const showCowork = useSetting((s) => s.interface.showCowork);
+  const names = useSetting((s) => s.sessionNames);
   const gravity = useSetting((s) => s.layout.gravity);
   const pins = useSetting((s) => s.layout.pins);
   const lang = useLang();
@@ -113,8 +115,8 @@ export default function GalaxyPage() {
     // Hiding Cowork while one of its sessions is focused goes back to the whole galaxy.
     const f = eng?.getFocus();
     if (!showCowork && f && (f.t === 'sys' || f.t === 'agent') && raw.sessions.some((x) => x.sessionId === f.sessionId && isCowork(x))) eng!.setFocus({ t: 'none' }, true);
-    eng?.sync(galaxyView(raw, showCowork));
-  }, [showCowork]);
+    eng?.sync(galaxyView(raw, showCowork, names));
+  }, [showCowork, names]);
   useEffect(() => { engineRef.current?.setGravity(gravity); }, [gravity]);
   useEffect(() => { engineRef.current?.setPins(pins); }, [pins]);
   useEffect(() => onLayoutReset(() => engineRef.current?.resetLayout()), []);
@@ -139,7 +141,7 @@ export default function GalaxyPage() {
     // The notification center listens to what this page receives (no second connection).
     const detach = feed.attachSource();
     const onSnap = (s: LiveSnapshot) => {
-      snapRef.current = s; setSnap(s); engineRef.current?.sync(galaxyView(s, getSettings().interface.showCowork));
+      snapRef.current = s; setSnap(s); engineRef.current?.sync(galaxyView(s, getSettings().interface.showCowork, getSettings().sessionNames));
       // Pins of sessions that are gone are dropped lazily (never while the history scan may still be incomplete).
       if (s.scan.done) {
         const pruned = prunePins(getSettings().layout.pins, s.sessions);
@@ -217,8 +219,9 @@ export default function GalaxyPage() {
     if (!demo) void loadRecent();
   };
   const eng = engineRef.current;
+  const view = snap ? galaxyView(snap, showCowork, names) : null;
   const fSession: LiveSession | undefined = focus.t === 'sys' || focus.t === 'agent'
-    ? snap?.sessions.find((s) => s.sessionId === focus.sessionId && (showCowork || !isCowork(s))) : undefined;
+    ? view?.sessions.find((s) => s.sessionId === focus.sessionId) : undefined;
   // Read on every render (snapshots re-render the page), so the list follows the cluster.
   const fCluster: ClusterInfo | null = focus.t === 'cluster' ? eng?.cluster(focus.project) ?? null : null;
   const fAgent = focus.t === 'agent' && fSession ? findAgent(fSession.root, focus.agentId) : null;
@@ -544,7 +547,7 @@ export function SessionPanel({ s, eng, onAgent, pin, now, replay = false, change
       <div className="gx-panel-head">
         <span className={`gx-status-chip ${s.status}`}>{statusWord(s.status)}</span>
         <h3>{s.project}</h3>
-        <p>{s.title ?? s.name ?? s.sessionId.slice(0, 8)}</p>
+        <p>{replay ? (s.title ?? s.name ?? s.sessionId.slice(0, 8)) : <RenameTitle sessionId={s.sessionId} title={s.title} autoTitle={s.autoTitle} fallback={s.name ?? s.sessionId.slice(0, 8)} variant="gx" />}</p>
         <div className="gx-meta">{prettyModel(s.model)}{s.effort && <> · {t('gx.panel.effort')} <b>{s.effort}</b></>}{s.gitBranch && <> · {s.gitBranch}</>}{s.kind === 'automated' && <> · <span className="gx-kind">{t('gx.panel.automatedRun')}</span></>}{isCowork(s) && <> · <span className="gx-kind" title={t('gx.panel.coworkTitle')}>Cowork</span></>}</div>
       </div>
       {pin && <PinRow onUnpin={pin} />}

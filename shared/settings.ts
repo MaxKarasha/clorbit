@@ -18,6 +18,36 @@ export const RECOMMEND_DAYS = { min: 7, max: 365 } as const;
 /** How many hidden recommendation ids are kept (the oldest go first). */
 export const MAX_DISMISSED = 500;
 const DISMISS_ID = /^[\w:.@~+\-/]{1,200}$/;
+/** How many session names are kept (the newest win), and how long one can be. */
+export const MAX_SESSION_NAMES = 2000;
+export const MAX_SESSION_NAME = 120;
+const SESSION_ID = /^[\w-]{1,100}$/;
+
+/** A session name as stored: control characters dropped, whitespace collapsed, at most MAX_SESSION_NAME; '' = none. */
+export function cleanSessionName(v: unknown): string {
+  if (typeof v !== 'string') return '';
+  return [...v.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim()].slice(0, MAX_SESSION_NAME).join('').trim();
+}
+
+/** Validates a session-names map: session-id keys, cleaned non-empty names, at most MAX_SESSION_NAMES (the newest win). */
+export function normalizeSessionNames(v: unknown): Record<string, string> | null {
+  if (!isObj(v)) return null;
+  const ok: [string, string][] = [];
+  for (const [k, n] of Object.entries(v)) {
+    const name = cleanSessionName(n);
+    if (SESSION_ID.test(k) && name) ok.push([k, name]);
+  }
+  return Object.fromEntries(ok.slice(-MAX_SESSION_NAMES));
+}
+
+/** `names` with one session renamed ('' or null removes its name). */
+export function withSessionName(names: Record<string, string>, sessionId: string, name: string | null): Record<string, string> {
+  const out = { ...names };
+  delete out[sessionId];
+  const n = cleanSessionName(name);
+  if (n) out[sessionId] = n;
+  return out;
+}
 
 /** Validates a list of hidden recommendation ids: known shape only, no duplicates, at most MAX_DISMISSED (the newest win). */
 export function normalizeDismissed(v: unknown): string[] | null {
@@ -59,6 +89,7 @@ export function normalizeSettings(patch: unknown, base: Settings = DEFAULT_SETTI
   if (!isObj(out.recommendations)) out.recommendations = cloneSettings(DEFAULT_SETTINGS).recommendations;
   if (!isObj(out.terminal)) out.terminal = cloneSettings(DEFAULT_SETTINGS).terminal;
   if (typeof out.interface.showCowork !== 'boolean') out.interface.showCowork = DEFAULT_SETTINGS.interface.showCowork;
+  if (!isObj(out.sessionNames)) out.sessionNames = {};
   if (!isObj(patch)) return out;
   const n = patch.notifications;
   if (isObj(n)) {
@@ -117,6 +148,9 @@ export function normalizeSettings(patch: unknown, base: Settings = DEFAULT_SETTI
     const ids = normalizeDismissed(r.dismissed);
     if (ids) out.recommendations.dismissed = ids;
   }
+  // Like pins, the map is replaced as a whole: removing a name is sending the map without it.
+  const names = normalizeSessionNames(patch.sessionNames);
+  if (names) out.sessionNames = names;
   const tm = patch.terminal;
   if (isObj(tm) && isTerminalChoice(tm.app)) out.terminal.app = tm.app;
   return out;

@@ -328,19 +328,19 @@ function hookPluginEnabled(settings2 = readSettings()) {
   return Object.entries(settings2.enabledPlugins).some(([k, on]) => on && (k.startsWith("clorbit@") || k.startsWith("fleet-hooks@")));
 }
 function knownPlugins() {
-  const names2 = /* @__PURE__ */ new Set();
-  for (const k of Object.keys(readSettings().enabledPlugins)) names2.add(k.split("@")[0]);
+  const names3 = /* @__PURE__ */ new Set();
+  for (const k of Object.keys(readSettings().enabledPlugins)) names3.add(k.split("@")[0]);
   try {
     const cache5 = path.join(CLAUDE_DIR, "plugins", "cache");
     for (const mkt of fs.readdirSync(cache5)) {
       try {
-        for (const p of fs.readdirSync(path.join(cache5, mkt))) names2.add(p);
+        for (const p of fs.readdirSync(path.join(cache5, mkt))) names3.add(p);
       } catch {
       }
     }
   } catch {
   }
-  return [...names2].filter((n) => n.length >= 4).sort((a, b) => b.length - a.length);
+  return [...names3].filter((n) => n.length >= 4).sort((a, b) => b.length - a.length);
 }
 var BUNDLED, HERE, PROJECT_ROOT, CLAUDE_DIR, PROJECTS_DIR, SESSIONS_DIR, SETTINGS_FILE, CLAUDE_JSON_FILES, COWORK_DIR, HOME_DATA_DIR, STATUSLINE_FILE, LEGACY_STATUSLINE_FILE, DATA_DIR, DATA_DIR_EXPLICIT, DB_FILE, CACHE_DIR, DIST_DIR, SERVE_WEB, PORT, HOST, VERSION, LEGACY_DB_FILE, settingsCache;
 var init_config = __esm({
@@ -600,15 +600,32 @@ var init_util = __esm({
 });
 
 // server/titles.ts
+function setSessionNames(m) {
+  names = m;
+}
+function clorbitName(sessionId) {
+  return Object.prototype.hasOwnProperty.call(names, sessionId) ? names[sessionId] : null;
+}
+function autoTitle(main, coworkDir2 = COWORK_DIR) {
+  if (!main) return null;
+  return main.customTitle || coworkMetaOf(main.path, coworkDir2)?.title || main.title || null;
+}
 function sessionTitle(main, coworkDir2 = COWORK_DIR) {
   if (!main) return null;
-  return coworkMetaOf(main.path, coworkDir2)?.title ?? main.title ?? null;
+  return clorbitName(main.sessionId) ?? autoTitle(main, coworkDir2);
 }
+function titleFields(sessionId, main, coworkDir2 = COWORK_DIR) {
+  const name = clorbitName(sessionId);
+  const auto = autoTitle(main, coworkDir2);
+  return name ? { title: name, autoTitle: auto } : { title: auto };
+}
+var names;
 var init_titles = __esm({
   "server/titles.ts"() {
     "use strict";
     init_config();
     init_cowork();
+    names = {};
   }
 });
 
@@ -884,7 +901,7 @@ function summarizeSession(store2, sessionId, ctx) {
     sessionId,
     project: ctx ? ctx.project(any) : projectOf(any.cwd, any.projectDir),
     cwd: main?.cwd ?? any.cwd ?? "",
-    title: sessionTitle(main),
+    ...titleFields(sessionId, main),
     startedAt: start,
     endedAt: end,
     model: main?.model ?? null,
@@ -1020,12 +1037,26 @@ var init_api = __esm({
       interface: { lang: "en", autoTour: false, reduceMotion: false, showAutomated: false, showCowork: true },
       layout: { gravity: true, pins: {} },
       recommendations: { unusedDays: 30, dismissed: [] },
-      terminal: { app: "auto" }
+      terminal: { app: "auto" },
+      sessionNames: {}
     };
   }
 });
 
 // shared/settings.ts
+function cleanSessionName(v) {
+  if (typeof v !== "string") return "";
+  return [...v.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim()].slice(0, MAX_SESSION_NAME).join("").trim();
+}
+function normalizeSessionNames(v) {
+  if (!isObj(v)) return null;
+  const ok = [];
+  for (const [k, n] of Object.entries(v)) {
+    const name = cleanSessionName(n);
+    if (SESSION_ID.test(k) && name) ok.push([k, name]);
+  }
+  return Object.fromEntries(ok.slice(-MAX_SESSION_NAMES));
+}
 function normalizeDismissed(v) {
   if (!Array.isArray(v)) return null;
   const seen = /* @__PURE__ */ new Set();
@@ -1056,6 +1087,7 @@ function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
   if (!isObj(out.recommendations)) out.recommendations = cloneSettings(DEFAULT_SETTINGS).recommendations;
   if (!isObj(out.terminal)) out.terminal = cloneSettings(DEFAULT_SETTINGS).terminal;
   if (typeof out.interface.showCowork !== "boolean") out.interface.showCowork = DEFAULT_SETTINGS.interface.showCowork;
+  if (!isObj(out.sessionNames)) out.sessionNames = {};
   if (!isObj(patch)) return out;
   const n = patch.notifications;
   if (isObj(n)) {
@@ -1112,6 +1144,8 @@ function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
     const ids = normalizeDismissed(r.dismissed);
     if (ids) out.recommendations.dismissed = ids;
   }
+  const names3 = normalizeSessionNames(patch.sessionNames);
+  if (names3) out.sessionNames = names3;
   const tm = patch.terminal;
   if (isObj(tm) && isTerminalChoice(tm.app)) out.terminal.app = tm.app;
   return out;
@@ -1133,7 +1167,7 @@ function isSilenced(s, now = Date.now()) {
   const q2 = s.dnd.quietHours;
   return q2.enabled && inQuietHours(q2.from, q2.to, new Date(now));
 }
-var isObj, bool, HHMM, time, MAX_MUTE_MS, MAX_PINS, PIN_KEY, RECOMMEND_DAYS, MAX_DISMISSED, DISMISS_ID, unit;
+var isObj, bool, HHMM, time, MAX_MUTE_MS, MAX_PINS, PIN_KEY, RECOMMEND_DAYS, MAX_DISMISSED, DISMISS_ID, MAX_SESSION_NAMES, MAX_SESSION_NAME, SESSION_ID, unit;
 var init_settings = __esm({
   "shared/settings.ts"() {
     "use strict";
@@ -1148,6 +1182,9 @@ var init_settings = __esm({
     RECOMMEND_DAYS = { min: 7, max: 365 };
     MAX_DISMISSED = 500;
     DISMISS_ID = /^[\w:.@~+\-/]{1,200}$/;
+    MAX_SESSION_NAMES = 2e3;
+    MAX_SESSION_NAME = 120;
+    SESSION_ID = /^[\w-]{1,100}$/;
     unit = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(Math.min(1, Math.max(0, v)) * 1e4) / 1e4 : null;
   }
 });
@@ -1352,14 +1389,14 @@ var init_db = __esm({
       importJsonCache(cacheDir) {
         if (this.getMeta("json_import")) return null;
         const n = this.stmt("SELECT COUNT(*) AS n FROM file_summaries").get().n;
-        let names2 = [];
+        let names3 = [];
         try {
-          names2 = fs3.readdirSync(cacheDir).filter((f) => /^summaries-v\d+\.json$/.test(f));
+          names3 = fs3.readdirSync(cacheDir).filter((f) => /^summaries-v\d+\.json$/.test(f));
         } catch {
         }
         const want = `summaries-v${SUMMARY_VERSION}.json`;
-        const skipped = names2.filter((f) => f !== want);
-        if (n > 0 || !names2.includes(want)) {
+        const skipped = names3.filter((f) => f !== want);
+        if (n > 0 || !names3.includes(want)) {
           this.setMeta("json_import", JSON.stringify({ at: Date.now(), file: null, count: 0, skipped, reason: n > 0 ? "db-not-empty" : "no-current-cache" }));
           return null;
         }
@@ -1817,7 +1854,7 @@ function en() {
     },
     hooks: {
       title: (plugin, n, min, err) => `Hooks ${plugin ? `of plugin ${plugin}` : "without a plugin"}: ${N(n)} runs, ${min} min of execution${err !== null ? `, ${pct(err)} with an error or stderr` : ""}`,
-      detail: (names2, min, err) => `Hooks (${names2}) run as a separate process on every such event; their total execution time is \u2248 ${min} min.${err !== null ? ` ${pct(err)} of runs ended with an error or wrote to stderr.` : ""}`,
+      detail: (names3, min, err) => `Hooks (${names3}) run as a separate process on every such event; their total execution time is \u2248 ${min} min.${err !== null ? ` ${pct(err)} of runs ended with an error or wrote to stderr.` : ""}`,
       runs: (n) => `Runs: ${N(n)}`,
       time: (sec) => `Total time: ${sec}s`,
       errors: (n) => `With error/stderr: ${N(n)}`,
@@ -2254,7 +2291,7 @@ function uk() {
     },
     hooks: {
       title: (plugin, n, min, err) => `\u0425\u0443\u043A\u0438 ${plugin ? `\u043F\u043B\u0430\u0433\u0456\u043D\u0430 ${plugin}` : "\u0431\u0435\u0437 \u043F\u043B\u0430\u0433\u0456\u043D\u0430"}: ${N(n)} \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432, ${min} \u0445\u0432 \u0432\u0438\u043A\u043E\u043D\u0430\u043D\u043D\u044F${err !== null ? `, ${pct(err)} \u0437 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E \u0447\u0438 stderr` : ""}`,
-      detail: (names2, min, err) => `\u0425\u0443\u043A\u0438 (${names2}) \u0437\u0430\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u044C\u0441\u044F \u043E\u043A\u0440\u0435\u043C\u0438\u043C \u043F\u0440\u043E\u0446\u0435\u0441\u043E\u043C \u043D\u0430 \u043A\u043E\u0436\u043D\u0443 \u0442\u0430\u043A\u0443 \u043F\u043E\u0434\u0456\u044E; \u0441\u0443\u043C\u0430\u0440\u043D\u0438\u0439 \u0447\u0430\u0441 \u0457\u0445 \u0432\u0438\u043A\u043E\u043D\u0430\u043D\u043D\u044F \u2248 ${min} \u0445\u0432.${err !== null ? ` ${pct(err)} \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432 \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u043B\u0438\u0441\u044C \u0437 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E \u0430\u0431\u043E \u043F\u0438\u0441\u0430\u043B\u0438 \u0432 stderr.` : ""}`,
+      detail: (names3, min, err) => `\u0425\u0443\u043A\u0438 (${names3}) \u0437\u0430\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u044C\u0441\u044F \u043E\u043A\u0440\u0435\u043C\u0438\u043C \u043F\u0440\u043E\u0446\u0435\u0441\u043E\u043C \u043D\u0430 \u043A\u043E\u0436\u043D\u0443 \u0442\u0430\u043A\u0443 \u043F\u043E\u0434\u0456\u044E; \u0441\u0443\u043C\u0430\u0440\u043D\u0438\u0439 \u0447\u0430\u0441 \u0457\u0445 \u0432\u0438\u043A\u043E\u043D\u0430\u043D\u043D\u044F \u2248 ${min} \u0445\u0432.${err !== null ? ` ${pct(err)} \u0437\u0430\u043F\u0443\u0441\u043A\u0456\u0432 \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u043B\u0438\u0441\u044C \u0437 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E \u0430\u0431\u043E \u043F\u0438\u0441\u0430\u043B\u0438 \u0432 stderr.` : ""}`,
       runs: (n) => `\u0417\u0430\u043F\u0443\u0441\u043A\u0456\u0432: ${N(n)}`,
       time: (sec) => `\u0421\u0443\u043C\u0430\u0440\u043D\u0438\u0439 \u0447\u0430\u0441: ${sec} \u0441`,
       errors: (n) => `\u0417 \u043F\u043E\u043C\u0438\u043B\u043A\u043E\u044E/stderr: ${N(n)}`,
@@ -2655,10 +2692,10 @@ function mcpNamesFrom(j) {
   const local = {};
   const projects = o.projects && typeof o.projects === "object" ? o.projects : {};
   for (const [dir, p] of Object.entries(projects)) {
-    const n = names(p?.mcpServers);
+    const n = names2(p?.mcpServers);
     if (n.length && path5.isAbsolute(dir)) local[dir] = n;
   }
-  return { user: names(o.mcpServers), local };
+  return { user: names2(o.mcpServers), local };
 }
 function readClaudeJson(files) {
   for (const file of files) {
@@ -2692,7 +2729,7 @@ function mcpJsonServers(dir) {
   if (hit && hit.mtime === st.mtimeMs) return hit.v;
   let v = [];
   try {
-    v = names(JSON.parse(fs4.readFileSync(file, "utf8"))?.mcpServers);
+    v = names2(JSON.parse(fs4.readFileSync(file, "utf8"))?.mcpServers);
   } catch {
   }
   projectCache.set(file, { mtime: st.mtimeMs, v });
@@ -2702,12 +2739,12 @@ function mcpJsonServers(dir) {
 function readMcpConfig(files = CLAUDE_JSON_FILES) {
   return { ...readClaudeJson(files), projectFile: mcpJsonServers };
 }
-var names, cache2, projectCache;
+var names2, cache2, projectCache;
 var init_mcp_config = __esm({
   "server/mcp-config.ts"() {
     "use strict";
     init_config();
-    names = (v) => v && typeof v === "object" && !Array.isArray(v) ? Object.keys(v).filter((k) => k.length > 0 && k.length <= 120) : [];
+    names2 = (v) => v && typeof v === "object" && !Array.isArray(v) ? Object.keys(v).filter((k) => k.length > 0 && k.length <= 120) : [];
     cache2 = null;
     projectCache = /* @__PURE__ */ new Map();
   }
@@ -3973,8 +4010,8 @@ function upwards(dir) {
 function mcpSource(key, display, env2, cwds) {
   if (display?.startsWith("plugin:")) return { kind: "plugin", plugin: display.split(":")[1] };
   if (key.startsWith("plugin_")) {
-    const names2 = Object.keys(env2.enabledPlugins).map((k) => k.split("@")[0]).sort((a, b) => b.length - a.length);
-    const p = names2.find((n) => key.startsWith(`plugin_${mcpKey(n)}_`));
+    const names3 = Object.keys(env2.enabledPlugins).map((k) => k.split("@")[0]).sort((a, b) => b.length - a.length);
+    const p = names3.find((n) => key.startsWith(`plugin_${mcpKey(n)}_`));
     return { kind: "plugin", plugin: p ?? key.slice("plugin_".length).split("_")[0] };
   }
   if (display?.startsWith("claude.ai ") || key.startsWith("claude_ai_")) return { kind: "claudeai" };
@@ -5586,6 +5623,9 @@ var init_scanner = __esm({
           case "ai-title":
             if (d.aiTitle) s.title = String(d.aiTitle);
             return;
+          case "custom-title":
+            s.customTitle = typeof d.customTitle === "string" && d.customTitle.trim() ? d.customTitle.trim().slice(0, 200) : null;
+            return;
           case "permission-mode":
             if (d.permissionMode) s.permissionMode = String(d.permissionMode);
             return;
@@ -5903,9 +5943,9 @@ var init_scanner = __esm({
           }
           case "mcp_instructions_delta": {
             this.addStartup(LABELS.mcp, size);
-            const names2 = Array.isArray(a.addedNames) ? a.addedNames : [];
+            const names3 = Array.isArray(a.addedNames) ? a.addedNames : [];
             const blocks = Array.isArray(a.addedBlocks) ? a.addedBlocks : [];
-            names2.forEach((n, i) => {
+            names3.forEach((n, i) => {
               const k = mcpKey(String(n));
               if (!s.mcpSeen.includes(k)) s.mcpSeen.push(k);
               if (!c.startupDone) s.mcpBlocks[String(n)] = (s.mcpBlocks[String(n)] ?? 0) + (typeof blocks[i] === "string" ? blocks[i].length : 0);
@@ -5915,9 +5955,9 @@ var init_scanner = __esm({
           case "deferred_tools_record":
           case "deferred_tools_delta": {
             this.addStartup(LABELS.deferred, size);
-            const names2 = Array.isArray(a.addedNames) ? a.addedNames : Array.isArray(a.entries) ? a.entries.map((e) => e?.name).filter(Boolean) : [];
+            const names3 = Array.isArray(a.addedNames) ? a.addedNames : Array.isArray(a.entries) ? a.entries.map((e) => e?.name).filter(Boolean) : [];
             const lines = Array.isArray(a.addedLines) ? a.addedLines.filter((x) => typeof x === "string") : [];
-            for (const n of names2) {
+            for (const n of names3) {
               const m = mcpSplit(String(n));
               if (!m) continue;
               if (!s.mcpSeen.includes(m.server)) s.mcpSeen.push(m.server);
@@ -7266,13 +7306,13 @@ function isAlive(pid) {
 }
 function readPidFiles(dir = SESSIONS_DIR) {
   const out = /* @__PURE__ */ new Map();
-  let names2 = [];
+  let names3 = [];
   try {
-    names2 = fs10.readdirSync(dir);
+    names3 = fs10.readdirSync(dir);
   } catch {
     return out;
   }
-  for (const n of names2) {
+  for (const n of names3) {
     if (!/^\d+\.json$/.test(n)) continue;
     try {
       const j = JSON.parse(fs10.readFileSync(path11.join(dir, n), "utf8"));
@@ -7699,7 +7739,7 @@ var init_live = __esm({
             sessionId: sid,
             pid: pid?.pid ?? null,
             alive: isAlive2,
-            title: sessionTitle(main, this.store.coworkDir),
+            ...titleFields(sid, main, this.store.coworkDir),
             name: pid?.name ?? null,
             cwd,
             project,
@@ -9738,6 +9778,7 @@ var init_index = __esm({
     init_changes();
     init_store();
     init_terminal();
+    init_titles();
     t0 = Date.now();
     migratedFrom = migrateLegacyDb();
     if (migratedFrom) console.log(`[clorbit] copied the database from ${migratedFrom} to ${DB_FILE} (one-time migration; the old file is left untouched)`);
@@ -9757,6 +9798,8 @@ var init_index = __esm({
     forecaster = new LimitsForecaster((from, to) => limitsLog.history(from, to), () => store.files.values());
     live.forecast = (limits, now) => forecaster.get(limits, now);
     settings = new SettingsStore(db);
+    setSessionNames(settings.get().sessionNames);
+    settings.on("change", (s) => setSessionNames(s.sessionNames));
     terminals = new TerminalLocator();
     termKey = (pid) => `${pid.pid}:${pid.startedAt ?? ""}`;
     live.terminalOf = (pid) => terminals.describe(pid.pid, settings.get().terminal.app, termKey(pid));

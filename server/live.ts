@@ -9,7 +9,7 @@ import type { Hooks } from './hooks';
 import { readPlan } from './plan';
 import { reasonCode, reasonText, type Lang, type Reason, type ServerEvent } from './i18n';
 import { COWORK_LIVE_MS, coworkMetaOf, coworkProject } from './cowork';
-import { sessionTitle } from './titles';
+import { titleFields } from './titles';
 import type { Store } from './store';
 import { buildTree, sessionStatus, subagentDone } from './tree';
 import type { FileSummary, ScanEvent } from './types';
@@ -448,7 +448,7 @@ export class Live extends EventEmitter {
         sessionId: sid,
         pid: pid?.pid ?? null,
         alive: isAlive,
-        title: sessionTitle(main, this.store.coworkDir),
+        ...titleFields(sid, main, this.store.coworkDir),
         name: pid?.name ?? null,
         cwd,
         project,

@@ -54,7 +54,7 @@ function Body({ list }: { list: SessionSummary[] }) {
   const lang = useLang();
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    const f = list.filter((s) => (!project || s.project === project) && (!needle || `${s.title ?? ''} ${s.project} ${s.sessionId} ${s.model ?? ''}`.toLowerCase().includes(needle)));
+    const f = list.filter((s) => (!project || s.project === project) && (!needle || `${s.title ?? ''} ${s.autoTitle ?? ''} ${s.project} ${s.sessionId} ${s.model ?? ''}`.toLowerCase().includes(needle)));
     const { key, dir } = sort;
     return f.sort((a, b) => {
       const va = a[key] ?? '';

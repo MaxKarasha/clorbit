@@ -236,6 +236,7 @@ export class FileScanner {
       case 'attachment': return this.attachment(d, ts, lineLen);
       case 'system': return this.system(d, ts);
       case 'ai-title': if (d.aiTitle) s.title = String(d.aiTitle); return;
+      case 'custom-title': s.customTitle = typeof d.customTitle === 'string' && d.customTitle.trim() ? d.customTitle.trim().slice(0, 200) : null; return;
       case 'permission-mode': if (d.permissionMode) s.permissionMode = String(d.permissionMode); return;
       default: return;
     }

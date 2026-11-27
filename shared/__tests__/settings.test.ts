@@ -1,7 +1,7 @@
 // Settings validation/clamping and quiet-hours math.
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../api';
-import { inQuietHours, isSilenced, MAX_DISMISSED, normalizeSettings, parseHHMM } from '../settings';
+import { cleanSessionName, inQuietHours, isSilenced, MAX_DISMISSED, MAX_SESSION_NAME, MAX_SESSION_NAMES, normalizeSettings, parseHHMM, withSessionName } from '../settings';
 
 const at = (h: number, m = 0) => new Date(2026, 10, 17, h, m);
 
@@ -157,5 +157,36 @@ describe('quiet hours', () => {
     const legacy = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     delete legacy.terminal;
     expect(normalizeSettings({}, legacy).terminal).toEqual({ app: 'auto' });
+  });
+});
+
+describe('session names', () => {
+  it('cleans names: control characters, extra whitespace, length', () => {
+    expect(cleanSessionName('  Auth\n\trewrite  ')).toBe('Auth rewrite');
+    expect(cleanSessionName('x'.repeat(500))).toHaveLength(MAX_SESSION_NAME);
+    expect(cleanSessionName(42)).toBe('');
+    expect(cleanSessionName('   ')).toBe('');
+  });
+
+  it('keeps valid entries only, replaces the map as a whole, caps the count', () => {
+    const s = normalizeSettings({ sessionNames: { 'a1b2-c3': ' Login ', 'bad id!': 'x', empty: '  ', num: 5 } });
+    expect(s.sessionNames).toEqual({ 'a1b2-c3': 'Login' });
+    expect(normalizeSettings({ sessionNames: {} }, s).sessionNames).toEqual({});
+    expect(normalizeSettings({ interface: { lang: 'uk' } }, s).sessionNames).toEqual({ 'a1b2-c3': 'Login' });
+    const many = Object.fromEntries(Array.from({ length: MAX_SESSION_NAMES + 5 }, (_, i) => [`s${i}`, `n${i}`]));
+    const kept = normalizeSettings({ sessionNames: many }).sessionNames;
+    expect(Object.keys(kept)).toHaveLength(MAX_SESSION_NAMES);
+    expect(kept[`s${MAX_SESSION_NAMES + 4}`]).toBe(`n${MAX_SESSION_NAMES + 4}`);
+    // Settings saved before 0.7 have no map.
+    const { sessionNames: _, ...old } = DEFAULT_SETTINGS;
+    expect(normalizeSettings({}, old as typeof DEFAULT_SETTINGS).sessionNames).toEqual({});
+  });
+
+  it('withSessionName sets, renames and removes', () => {
+    const a = withSessionName({}, 's1', 'One');
+    expect(a).toEqual({ s1: 'One' });
+    expect(withSessionName(a, 's1', '  ')).toEqual({});
+    expect(withSessionName(a, 's1', null)).toEqual({});
+    expect(Object.keys(withSessionName({ s1: 'One', s2: 'Two' }, 's1', 'Uno'))).toEqual(['s2', 's1']);
   });
 });

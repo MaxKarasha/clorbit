@@ -6,7 +6,7 @@ import type { Store } from './store';
 import type { DayBucket, FileSummary, UsageAgg } from './types';
 import { startupKind, startupLabel, type Lang } from './i18n';
 import { addDays, addT4, dateRange, estTokens, localDate, mcpKey, mcpSplit, projectOf, sumT4, toTokens, weekdayOf, zeroT4, type T4 } from './util';
-import { sessionTitle } from './titles';
+import { titleFields } from './titles';
 
 export function parseRange(q: URLSearchParams): Range {
   const re = /^\d{4}-\d{2}-\d{2}$/;
@@ -314,7 +314,7 @@ export function summarizeSession(store: Store, sessionId: string, ctx?: Ctx): Se
     sessionId,
     project: ctx ? ctx.project(any) : projectOf(any.cwd, any.projectDir),
     cwd: main?.cwd ?? any.cwd ?? '',
-    title: sessionTitle(main),
+    ...titleFields(sessionId, main),
     startedAt: start,
     endedAt: end,
     model: main?.model ?? null,

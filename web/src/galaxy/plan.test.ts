@@ -1,7 +1,7 @@
 // Galaxy planning: what becomes a star, what folds into a project's cluster, the global cap, ring sizes.
 import { describe, expect, it } from 'vitest';
 import type { LiveSession, LiveSnapshot, SessionStatus } from '@shared/api';
-import { MAX_BODIES, galaxyView, labelWanted, planGalaxy, primaryOf, relaxGroups, ringRadius } from './plan';
+import { MAX_BODIES, galaxyView, labelWanted, withNames, planGalaxy, primaryOf, relaxGroups, ringRadius } from './plan';
 
 let n = 0;
 function sess(project: string, o: { alive?: boolean; status?: SessionStatus; auto?: boolean; tokens?: number; last?: number; id?: string } = {}): LiveSession {
@@ -163,5 +163,25 @@ describe('galaxyView (the Cowork switch)', () => {
     expect(galaxyView(snap, false).sessions.map((s) => s.sessionId)).toEqual(['cli']);
     const plain = { sessions: [cli] } as unknown as LiveSnapshot;
     expect(galaxyView(plain, false)).toBe(plain);
+  });
+});
+
+describe('withNames (renamed sessions)', () => {
+  const a = { ...sess('api', { id: 'a' }), title: 'Fix login' };
+  const b = { ...sess('api', { id: 'b' }), title: 'Docs' };
+  const snap = { sessions: [a, b] } as unknown as LiveSnapshot;
+  it('applies a name at once and keeps the replaced title; nothing to do returns the same snapshot', () => {
+    expect(withNames(snap, {})).toBe(snap);
+    const named = withNames(snap, { a: 'Login' });
+    expect(named.sessions[0]).toMatchObject({ title: 'Login', autoTitle: 'Fix login' });
+    expect(named.sessions[1]).toBe(b);
+    expect(withNames(named, { a: 'Login' })).toBe(named);
+  });
+  it('a name removed locally brings the original back before the server catches up', () => {
+    const fromServer = { sessions: [{ ...a, title: 'Login', autoTitle: 'Fix login' }] } as unknown as LiveSnapshot;
+    const s = withNames(fromServer, {}).sessions[0];
+    expect(s.title).toBe('Fix login');
+    expect('autoTitle' in s).toBe(false);
+    expect(galaxyView(snap, true, { b: 'Handbook' }).sessions[1].title).toBe('Handbook');
   });
 });

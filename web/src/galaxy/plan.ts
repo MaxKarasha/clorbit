@@ -44,9 +44,33 @@ export const clusterKey = (project: string) => `cluster:${project}`;
 export const isAutomated = (s: Pick<LiveSession, 'kind'>) => s.kind === 'automated';
 export const isCowork = (s: Pick<LiveSession, 'source'>) => s.source === 'cowork';
 
-/** What the galaxy draws: the Claude desktop app's Cowork sessions can be switched off (the HUD's Cowork button). */
-export function galaxyView(snap: LiveSnapshot, showCowork: boolean): LiveSnapshot {
-  return showCowork || !snap.sessions.some(isCowork) ? snap : { ...snap, sessions: snap.sessions.filter((s) => !isCowork(s)) };
+/**
+ * Names given to sessions in Clorbit, applied at once (the server applies them too, from the next snapshot on):
+ * `title` becomes the name and `autoTitle` keeps the title it replaced; a name just removed brings that title back.
+ */
+export function withNames(snap: LiveSnapshot, names: Readonly<Record<string, string>>): LiveSnapshot {
+  let changed = false;
+  const sessions = snap.sessions.map((s) => {
+    const name = names[s.sessionId];
+    const orig = s.autoTitle !== undefined ? s.autoTitle : s.title;
+    if (name) {
+      if (s.title === name && s.autoTitle !== undefined) return s;
+      changed = true;
+      return { ...s, title: name, autoTitle: orig };
+    }
+    if (s.autoTitle === undefined) return s;
+    changed = true;
+    const { autoTitle: _, ...rest } = s;
+    return { ...rest, title: orig };
+  });
+  return changed ? { ...snap, sessions } : snap;
+}
+
+/** What the galaxy draws: sessions under their Clorbit names; the Claude desktop app's Cowork sessions can be
+ *  switched off (the HUD's Cowork button). */
+export function galaxyView(snap: LiveSnapshot, showCowork: boolean, names: Readonly<Record<string, string>> = {}): LiveSnapshot {
+  const named = withNames(snap, names);
+  return showCowork || !named.sessions.some(isCowork) ? named : { ...named, sessions: named.sessions.filter((s) => !isCowork(s)) };
 }
 
 /** Where a session goes by default (before the cap): into its project's cluster or not. */

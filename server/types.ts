@@ -114,6 +114,8 @@ export interface FileSummary {
   cwd: string | null;
   gitBranch: string | null;
   title: string | null;
+  /** The latest title set with Claude Code's /rename (`custom-title` records); absent in summaries before 0.7. */
+  customTitle?: string | null;
   permissionMode: string | null;
   model: string | null;
   requestedModel: string | null;

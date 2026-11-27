@@ -23,6 +23,7 @@ import { sessionReplay } from './replay';
 import { sessionAgentChanges } from './changes';
 import { Store } from './store';
 import { TerminalLocator } from './terminal';
+import { setSessionNames } from './titles';
 
 const t0 = Date.now();
 const migratedFrom = migrateLegacyDb();
@@ -42,6 +43,9 @@ const live = new Live(store, hooks);
 const forecaster = new LimitsForecaster((from, to) => limitsLog.history(from, to), () => store.files.values());
 live.forecast = (limits, now) => forecaster.get(limits, now);
 const settings = new SettingsStore(db);
+// Names given to sessions in Clorbit replace their titles everywhere on the server.
+setSessionNames(settings.get().sessionNames);
+settings.on('change', (s: { sessionNames: Record<string, string> }) => setSessionNames(s.sessionNames));
 const terminals = new TerminalLocator();
 // A pid can be reused by a later session: the cache key includes when the session started.
 const termKey = (pid: { pid: number; startedAt: number | null }) => `${pid.pid}:${pid.startedAt ?? ''}`;

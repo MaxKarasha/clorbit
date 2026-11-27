@@ -36,7 +36,9 @@ export interface LiveSession {
   sessionId: string;
   pid: number | null;
   alive: boolean;               // the process is alive (sessions/<pid>.json + pid check)
-  title: string | null;         // latest ai-title
+  title: string | null;         // the name you gave it in Clorbit, else Claude Code's /rename title, the Cowork title, the latest ai-title
+  /** Additive (0.7+): only for a session you renamed in Clorbit — the title it would have otherwise (null if none). */
+  autoTitle?: string | null;
   name: string | null;          // name from sessions/<pid>.json
   cwd: string;
   project: string;              // basename(cwd)
@@ -282,6 +284,8 @@ export interface SessionSummary {
   project: string;
   cwd: string;
   title: string | null;
+  /** Additive (0.7+): only for a session renamed in Clorbit — the title it would have otherwise. */
+  autoTitle?: string | null;
   startedAt: number;
   endedAt: number;
   model: string | null;
@@ -566,6 +570,9 @@ export interface Settings {
   recommendations: { unusedDays: number; dismissed: string[] };
   /** "Open in terminal": which app hosts the sessions ('auto' detects it per session; 'off' hides the button). Additive (0.6+). */
   terminal: { app: TerminalChoice };
+  /** Names you gave sessions in Clorbit, by session id (Additive, 0.7+). Kept in Clorbit's own database — never written to
+   *  ~/.claude; a PUT replaces the whole map (at most MAX_SESSION_NAMES, see shared/settings.ts). */
+  sessionNames: Record<string, string>;
 }
 
 /** A pinned body's position: fractions of the galaxy's width and height. */
@@ -592,6 +599,7 @@ export const DEFAULT_SETTINGS: Settings = {
   layout: { gravity: true, pins: {} },
   recommendations: { unusedDays: 30, dismissed: [] },
   terminal: { app: 'auto' },
+  sessionNames: {},
 };
 
 /** GET /api/about — read-only facts for the Connection section of the settings panel. */
