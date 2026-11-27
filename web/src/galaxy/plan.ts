@@ -10,7 +10,7 @@
 // - a global cap: when stars + clusters exceed `maxBodies`, the least active projects fold their idle
 //   stars into their clusters (automated runs first, least recently active first, only as many as
 //   needed). Working or waiting sessions are never folded.
-import type { LiveSession } from '@shared/api';
+import type { LiveSession, LiveSnapshot } from '@shared/api';
 
 export const MAX_BODIES = 24;
 
@@ -42,6 +42,12 @@ export interface PlanOptions {
 
 export const clusterKey = (project: string) => `cluster:${project}`;
 export const isAutomated = (s: Pick<LiveSession, 'kind'>) => s.kind === 'automated';
+export const isCowork = (s: Pick<LiveSession, 'source'>) => s.source === 'cowork';
+
+/** What the galaxy draws: the Claude desktop app's Cowork sessions can be switched off (the HUD's Cowork button). */
+export function galaxyView(snap: LiveSnapshot, showCowork: boolean): LiveSnapshot {
+  return showCowork || !snap.sessions.some(isCowork) ? snap : { ...snap, sessions: snap.sessions.filter((s) => !isCowork(s)) };
+}
 
 /** Where a session goes by default (before the cap): into its project's cluster or not. */
 export function foldsByDefault(s: LiveSession, showAutomated: boolean): boolean {

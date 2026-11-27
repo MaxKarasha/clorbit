@@ -99,6 +99,8 @@ export default {
   'ui.motion.d': 'Slows orbits, stops twinkling and drifting, and cuts camera flights.',
   'ui.automated': 'Show automated sessions as separate stars',
   'ui.automated.d': 'Runs nobody types into: claude -p from scripts and CI, the Agent SDK, scheduled routines. Off: they join their project’s star cluster, are grouped in the console and never notify.',
+  'ui.cowork': 'Show Cowork sessions in the galaxy',
+  'ui.cowork.d': 'Cowork sessions of the Claude desktop app (read from its local data, macOS and Linux). Off: they are not drawn in the galaxy; analytics still counts their tokens. The Cowork button in the galaxy’s top bar does the same.',
   'ui.gravity': 'Gravity: pull active sessions to the centre',
   'ui.gravity.d': 'Working and waiting sessions slowly drift to the middle of the galaxy, waiting ones closest; finished ones stay where they are. Off: projects keep a fixed order by name.',
   'ui.layout': 'Reset layout',

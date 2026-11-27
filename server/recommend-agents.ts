@@ -17,6 +17,7 @@ import { isReadOnlyMcpTool } from './recommend-tools';
 import type { Store } from './store';
 import type { FileSummary } from './types';
 import { estTokens, localDate, mcpSplit, sumT4 } from './util';
+import { sessionTitle } from './titles';
 
 /** Input price per million tokens (output, cache reads and writes scale the same way within a model), from the
  *  Anthropic API price list. Only ratios are used. null: unknown model. */
@@ -239,7 +240,7 @@ export function agentRecommendations(store: Store, range: Range, lang: Lang, env
     if (flagged.length) {
       flagged.sort((a, b) => b.burst - a.burst || b.depth - a.depth || a.sid.localeCompare(b.sid));
       const top = flagged.slice(0, NEST_MAX);
-      const name = (sid: string) => { const m = store.mainOf(sid); return m?.title ? TT.quote(m.title) : sid.slice(0, 8); };
+      const name = (sid: string) => { const t = sessionTitle(store.mainOf(sid)); return t ? TT.quote(t) : sid.slice(0, 8); };
       const facts = (f: (typeof flagged)[number]) => T.nest.facts(f.total, f.burst, f.depth, ctx.projectOfSession.get(f.sid) ?? '', localDate(f.at));
       out.push({
         id: stableId('agent-nesting', top.map((f) => f.sid)),
@@ -249,7 +250,7 @@ export function agentRecommendations(store: Store, range: Range, lang: Lang, env
         evidence: top.map((f) => `${name(f.sid)}: ${facts(f)}`),
         pages: ['subagents'],
         scope: 'range',
-        targets: top.map((f): InsightTarget => ({ key: f.sid, label: store.mainOf(f.sid)?.title ?? f.sid.slice(0, 8), kind: 'session', note: facts(f) })),
+        targets: top.map((f): InsightTarget => ({ key: f.sid, label: sessionTitle(store.mainOf(f.sid)) ?? f.sid.slice(0, 8), kind: 'session', note: facts(f) })),
         prompts: buildPrompts({
           lang,
           summary: T.nest.summary(flagged.length),

@@ -17,6 +17,7 @@ import { startupRecommendations } from './recommend-startup';
 import { permissionRecommendation, toolRecommendations } from './recommend-tools';
 import { limitRecommendations } from './recommend-limits';
 import { sessionRange, sessionRecommendations, sessionView } from './recommend-sessions';
+import { sessionTitle } from './titles';
 
 const sevRank = { high: 0, warn: 1, info: 2 } as const;
 
@@ -125,7 +126,8 @@ export function waitInsights(store: Store, hookLog: HookLog, range: Range, lang:
     const where = (sid: string) => {
       const main = store.mainOf(sid);
       const project = ctx.projectOfSession.get(sid);
-      return main?.title ? `${T.quote(main.title)}${project ? ` (${project})` : ''}` : project ?? sid.slice(0, 8);
+      const title = sessionTitle(main);
+      return title ? `${T.quote(title)}${project ? ` (${project})` : ''}` : project ?? sid.slice(0, 8);
     };
     const UNKNOWN = '\u0000unknown';
     const byTool = new Map<string, { n: number; ms: number }>();

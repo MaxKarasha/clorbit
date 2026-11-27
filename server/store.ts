@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { BUNDLED } from './config';
+import { coworkProjectRoots, isCoworkPath } from './cowork';
 import { scanFile, identify } from './scanner';
 import type { ClorbitDb, StoredSummary } from './db';
 import { SUMMARY_VERSION, type FileSummary, type ScanEvent, type ScanOptions } from './types';
@@ -105,7 +106,21 @@ export class Store extends EventEmitter {
   private dirtyPaths = new Set<string>();
   private flushing: Promise<void> | null = null;
 
-  constructor(public projectsDir: string, public db: ClorbitDb | null, public opts: ScanOptions) { super(); }
+  /**
+   * @param coworkDir the Claude desktop's Cowork sessions folder whose transcripts are scanned too
+   *   (see cowork.ts); '' (the default) scans only `projectsDir`.
+   */
+  constructor(public projectsDir: string, public db: ClorbitDb | null, public opts: ScanOptions, public coworkDir = '') { super(); }
+
+  /** Every transcript: the main projects dir and, when enabled, each Cowork session's own one. */
+  listAll(): string[] {
+    const out = listTranscripts(this.projectsDir);
+    if (this.coworkDir) for (const root of coworkProjectRoots(this.coworkDir)) out.push(...listTranscripts(root));
+    return out;
+  }
+
+  /** Is this transcript one of a Cowork session? */
+  isCowork(file: string): boolean { return isCoworkPath(file, this.coworkDir); }
 
   /**
    * Warm start: optionally imports the legacy JSON cache once, then loads all
@@ -173,7 +188,7 @@ export class Store extends EventEmitter {
   async coldScan(threads = Math.max(2, Math.min(8, os.cpus().length - 2))): Promise<void> {
     const st = this.stats;
     st.startedAt = Date.now();
-    const list = listTranscripts(this.projectsDir);
+    const list = this.listAll();
     const withM = list.map((f) => { try { const s = fs.statSync(f); return { f, m: s.mtimeMs, size: s.size }; } catch { return null; } })
       .filter((x): x is { f: string; m: number; size: number } => !!x)
       .sort((a, b) => b.m - a.m); // fresh files first so live sessions show up sooner

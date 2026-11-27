@@ -68,7 +68,13 @@ export interface LiveSession {
   /** Additive (0.6+): where the session's terminal is and how precisely "Open in terminal" can reach it;
    *  only for live sessions on a server that can switch terminals (null otherwise, or when the button is off). */
   terminal?: TerminalInfo | null;
+  /** Additive (0.7+): 'cowork' for a Cowork session of the Claude desktop app (its title is the desktop's, its
+   *  project the folder it was given or 'Cowork'; it has no process, so it is live while recently active).
+   *  Absent for Claude Code's own sessions. */
+  source?: SessionSource;
 }
+
+export type SessionSource = 'cowork';
 
 // ---------- Terminals ("Open in terminal") ----------
 
@@ -191,6 +197,8 @@ export interface LiveSnapshot {
   plan?: Plan | null;
   hooksInstalled: boolean;
   statuslineCapture: boolean;
+  /** Additive (0.7+): the Claude desktop app's Cowork sessions were found (the galaxy then offers its Cowork switch). */
+  cowork?: boolean;
   scan: { done: boolean; filesTotal: number; filesDone: number };
 }
 
@@ -545,8 +553,9 @@ export interface Settings {
     mutedUntil: number | null;                                // "mute for 1 h" from a toast (epoch ms)
   };
   /** showAutomated: automated sessions (claude -p, SDK, CI) are separate stars and may notify;
-   *  off (default) — they join their project's cluster, are grouped in the console and never notify. */
-  interface: { lang: 'en' | 'uk'; autoTour: boolean; reduceMotion: boolean; showAutomated: boolean };
+   *  off (default) — they join their project's cluster, are grouped in the console and never notify.
+   *  showCowork (0.7+, default on): the Claude desktop app's Cowork sessions are drawn in the galaxy. */
+  interface: { lang: 'en' | 'uk'; autoTour: boolean; reduceMotion: boolean; showAutomated: boolean; showCowork: boolean };
   /** Galaxy layout. gravity: working and waiting sessions drift to the centre (default on).
    *  pins: bodies the user dragged into place, keyed 'star:<project>:<sessionId>' or 'cluster:<project>';
    *  positions are fractions (0..1) of the galaxy's width and height, so they do not depend on the screen.
@@ -579,7 +588,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   sound: { enabled: true, volume: 0.6, theme: 'orbit' },
   dnd: { enabled: false, quietHours: { enabled: false, from: '22:00', to: '08:00' }, mutedUntil: null },
-  interface: { lang: 'en', autoTour: false, reduceMotion: false, showAutomated: false },
+  interface: { lang: 'en', autoTour: false, reduceMotion: false, showAutomated: false, showCowork: true },
   layout: { gravity: true, pins: {} },
   recommendations: { unusedDays: 30, dismissed: [] },
   terminal: { app: 'auto' },

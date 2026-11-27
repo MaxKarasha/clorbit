@@ -52,8 +52,17 @@ export function emptyDay(): DayBucket {
 }
 
 /** Derives sessionId / agentId / project folder from a .jsonl path. */
+/** `…/.claude/projects/` inside a path: the projects dir of a Claude Code config dir (Cowork sessions have their own). */
+const PROJECTS_MARK = `${path.sep}.claude${path.sep}projects${path.sep}`;
+
 export function identify(projectsDir: string, file: string): { sessionId: string; agentId: string | null; projectDir: string } | null {
-  const rel = path.relative(projectsDir, file).split(path.sep);
+  let rel = path.relative(projectsDir, file).split(path.sep);
+  if (rel[0] === '..') {
+    // Outside the main projects dir: a transcript of another config dir (a Cowork session, see cowork.ts).
+    const i = file.lastIndexOf(PROJECTS_MARK);
+    if (i < 0) return null;
+    rel = file.slice(i + PROJECTS_MARK.length).split(path.sep);
+  }
   if (rel.length < 2 || rel[0] === '..' || !file.endsWith('.jsonl')) return null;
   const projectDir = rel[0];
   if (rel.length === 2) return { sessionId: path.basename(rel[1], '.jsonl'), agentId: null, projectDir };

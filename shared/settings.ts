@@ -58,6 +58,7 @@ export function normalizeSettings(patch: unknown, base: Settings = DEFAULT_SETTI
   // A base saved by an older build has no recommendations block yet.
   if (!isObj(out.recommendations)) out.recommendations = cloneSettings(DEFAULT_SETTINGS).recommendations;
   if (!isObj(out.terminal)) out.terminal = cloneSettings(DEFAULT_SETTINGS).terminal;
+  if (typeof out.interface.showCowork !== 'boolean') out.interface.showCowork = DEFAULT_SETTINGS.interface.showCowork;
   if (!isObj(patch)) return out;
   const n = patch.notifications;
   if (isObj(n)) {
@@ -98,6 +99,7 @@ export function normalizeSettings(patch: unknown, base: Settings = DEFAULT_SETTI
     out.interface.autoTour = bool(i.autoTour, out.interface.autoTour);
     out.interface.reduceMotion = bool(i.reduceMotion, out.interface.reduceMotion);
     out.interface.showAutomated = bool(i.showAutomated, out.interface.showAutomated);
+    out.interface.showCowork = bool(i.showCowork, out.interface.showCowork ?? true);
   }
   const l = patch.layout;
   if (isObj(l)) {

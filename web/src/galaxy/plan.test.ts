@@ -1,7 +1,7 @@
 // Galaxy planning: what becomes a star, what folds into a project's cluster, the global cap, ring sizes.
 import { describe, expect, it } from 'vitest';
-import type { LiveSession, SessionStatus } from '@shared/api';
-import { MAX_BODIES, labelWanted, planGalaxy, primaryOf, relaxGroups, ringRadius } from './plan';
+import type { LiveSession, LiveSnapshot, SessionStatus } from '@shared/api';
+import { MAX_BODIES, galaxyView, labelWanted, planGalaxy, primaryOf, relaxGroups, ringRadius } from './plan';
 
 let n = 0;
 function sess(project: string, o: { alive?: boolean; status?: SessionStatus; auto?: boolean; tokens?: number; last?: number; id?: string } = {}): LiveSession {
@@ -151,5 +151,17 @@ describe('relaxGroups', () => {
     // Input is not mutated; groups that already fit do not move.
     expect(discs[0]).toEqual({ x: 300, y: 250, r: 220 });
     expect(relaxGroups([{ x: 500, y: 500, r: 50 }], box)).toEqual([{ x: 500, y: 500, r: 50 }]);
+  });
+});
+
+describe('galaxyView (the Cowork switch)', () => {
+  const cw = { ...sess('Cowork', { id: 'cw' }), source: 'cowork' as const };
+  const cli = sess('api', { id: 'cli' });
+  const snap = { sessions: [cw, cli] } as unknown as LiveSnapshot;
+  it('on: everything; off: Cowork sessions are left out; without Cowork the snapshot is returned as is', () => {
+    expect(galaxyView(snap, true)).toBe(snap);
+    expect(galaxyView(snap, false).sessions.map((s) => s.sessionId)).toEqual(['cli']);
+    const plain = { sessions: [cli] } as unknown as LiveSnapshot;
+    expect(galaxyView(plain, false)).toBe(plain);
   });
 });

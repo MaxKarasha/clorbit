@@ -31,6 +31,18 @@ export const CLAUDE_JSON_FILES: string[] = env('CLAUDE_JSON')
   : env('CLAUDE_DIR')
     ? [path.join(CLAUDE_DIR, '.claude.json'), path.join(path.dirname(CLAUDE_DIR), '.claude.json')]
     : [path.join(os.homedir(), '.claude.json')];
+/**
+ * Cowork sessions of the Claude desktop app (read-only, see cowork.ts). CLORBIT_COWORK_DIR points elsewhere;
+ * CLORBIT_COWORK_DIR=off turns them off. Empty on platforms where the desktop app keeps them somewhere unknown.
+ */
+export const COWORK_DIR: string = coworkDir(env('COWORK_DIR'));
+
+export function coworkDir(v: string | undefined, platform = process.platform, home = os.homedir()): string {
+  if (v) return v === 'off' || v === '0' ? '' : path.resolve(v);
+  if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Claude', 'local-agent-mode-sessions');
+  if (platform === 'linux') return path.join(home, '.config', 'Claude', 'local-agent-mode-sessions');
+  return '';
+}
 export const HOME_DATA_DIR = path.join(os.homedir(), '.clorbit');
 /** Status-line capture file (written by the user's status-line command, see README). */
 export const STATUSLINE_FILE = env('STATUSLINE_FILE') || path.join(HOME_DATA_DIR, 'statusline.json');

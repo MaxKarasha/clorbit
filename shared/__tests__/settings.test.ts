@@ -42,7 +42,7 @@ describe('normalizeSettings', () => {
     expect(s.notifications.session_waiting).toEqual({ ...DEFAULT_SETTINGS.notifications.session_waiting, sound: false });
     expect(s.notifications.session_waiting).not.toHaveProperty('hack');
     expect(s.sound).toEqual({ enabled: true, volume: 0.33, theme: 'orbit' });
-    expect(s.interface).toEqual({ lang: 'en', autoTour: true, reduceMotion: false, showAutomated: false });
+    expect(s.interface).toEqual({ lang: 'en', autoTour: true, reduceMotion: false, showAutomated: false, showCowork: true });
   });
 
   it('showAutomated: off by default, boolean only, kept from the base', () => {
@@ -52,7 +52,18 @@ describe('normalizeSettings', () => {
     const on = normalizeSettings({ interface: { showAutomated: true } });
     expect(normalizeSettings({ interface: { showAutomated: 1 } }, on).interface.showAutomated).toBe(true);
     // A settings row saved by 0.2.0 (no such key) gets the default.
-    expect(normalizeSettings({ interface: { lang: 'uk', autoTour: false, reduceMotion: false } }).interface).toEqual({ lang: 'uk', autoTour: false, reduceMotion: false, showAutomated: false });
+    expect(normalizeSettings({ interface: { lang: 'uk', autoTour: false, reduceMotion: false } }).interface).toEqual({ lang: 'uk', autoTour: false, reduceMotion: false, showAutomated: false, showCowork: true });
+  });
+
+  it('showCowork: on by default, boolean only, kept from the base', () => {
+    expect(DEFAULT_SETTINGS.interface.showCowork).toBe(true);
+    const off = normalizeSettings({ interface: { showCowork: false } });
+    expect(off.interface.showCowork).toBe(false);
+    expect(normalizeSettings({ interface: { showCowork: 'no' } }, off).interface.showCowork).toBe(false);
+    expect(normalizeSettings({ interface: { showCowork: true } }, off).interface.showCowork).toBe(true);
+    // A base saved before 0.7 (no such key) gets the default.
+    const old = { ...DEFAULT_SETTINGS, interface: { lang: 'en', autoTour: false, reduceMotion: false, showAutomated: false } } as any;
+    expect(normalizeSettings({}, old).interface.showCowork).toBe(true);
   });
 
   it('clamps numbers and validates times', () => {

@@ -4,7 +4,7 @@
 
 Clorbit is a local, read-only dashboard for your [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions. Every session is a star, every subagent a planet, and every tool call a flash of light. Next to the galaxy there is a set of analytics pages that show where your tokens go: projects, models, skills, plugins, MCP servers, tools, subagents and the startup context that gets loaded before you type a word.
 
-It runs on your machine, reads the transcripts Claude Code already writes to `~/.claude`, and never sends anything anywhere.
+It runs on your machine, reads the transcripts Claude Code already writes to `~/.claude` (and the Claude desktop app's Cowork sessions, which use the same format), and never sends anything anywhere.
 
 ![Clorbit demo: the galaxy of live sessions, zooming into a session, following one of its subagents, and a "waiting for you" card](docs/media/demo.gif)
 
@@ -54,6 +54,7 @@ It runs on your machine, reads the transcripts Claude Code already writes to `~/
 - **What did this agent change?** The session and agent panels have **Changes** — the files the agent edited or wrote, with +/− lines, edit counts, "new" / "rewritten" and an inline mini-diff per file (failed calls are not counted) — and **Steps**, its recent tool calls and texts with done / error / running, live while it works. The Session page lists the files changed by the whole session.
 - **Status bar:** tokens over 24 h with a burn-rate sparkline, tokens per minute, your plan badge and the subscription limits as two gauge bars with a forecast (optional, see below), live sessions, working subagents and cache hit rate. On narrower screens the less important metrics (cache, then speed) give way instead of overlapping.
 - An automatic **tour** cycles through the most active systems when you are not interacting (opt-in).
+- **Cowork sessions** of the Claude desktop app show up too: each Cowork session runs Claude Code with a config folder of its own, so its tokens, tools and subagents count like any other session's. The star carries the title the app shows and a "Cowork" tag; its project is the folder you gave the session, or *Cowork*. There is no process to watch, so a Cowork session counts as running while it was active in the last 15 minutes (and not archived). The **Cowork** button in the top bar (or Settings → Interface) hides them from the galaxy; analytics keeps counting them. Plain Chat conversations are stored on Anthropic's servers, not on your machine, so they are not shown (they still use the same subscription limits).
 - **Event console** in the bottom-left corner: tool calls, spawns, results, waits, prompts and compactions as they happen. Project names take their star's color and agent names their planet's; click either to fly there. Expand it into a docked drawer (resizable, with the last ~500 events from the server, filters by project and event kind, search, pause and "clear view"), or pop it out into its own window (`#/console`) whose clicks drive the galaxy in your main tab.
 
 ### Analytics
@@ -215,7 +216,7 @@ Both only touch `statusLine.command` in `~/.claude/settings.json` (or add `statu
 - **Localhost only.** The server binds to `127.0.0.1`; nothing is exposed to your network and nothing is sent to the internet. The only external request the web page makes is for Google Fonts. Settings can only be changed from a local page (other origins get 403).
 - **Open in terminal** runs only when you click it, and only for a live Claude Code session: Clorbit reads a few variables of that process's environment (`TERM_PROGRAM`, `WARP_FOCUS_URL`, `TMUX`, …) and its tty, validates them, and runs `open`, `osascript`, `tmux`, `wezterm` or `kitten` with an argument list (no shell). It never types into a terminal.
 - **System notifications** are shown with `osascript` (macOS) or `notify-send` (Linux), started with an argument list (no shell), rate-limited, and only for the events you switch on.
-- **Read-only over `~/.claude`.** Clorbit never writes to `~/.claude`. The only exception is the status-line capture (`/clorbit statusline`, or `scripts/install-hooks.mjs`), and only when you run it with `--apply` yourself.
+- **Read-only over `~/.claude`.** Clorbit never writes to `~/.claude`. The Claude desktop app's Cowork folder is read-only too: besides the transcripts, only the title, the first chosen folder and the archived flag are read from each session's metadata file (which also holds your e-mail and the system prompt). The only exception is the status-line capture (`/clorbit statusline`, or `scripts/install-hooks.mjs`), and only when you run it with `--apply` yourself.
 - **Your data stays in `~/.clorbit`.** That folder holds the SQLite database (`clorbit.db`, including your settings), the server's log and pid file when it was started by the plugin or the CLI, and the optional status-line capture. Delete it at any time; it will be rebuilt from your transcripts (except history of transcripts Claude Code has already deleted).
 - **Archived history.** Claude Code deletes transcripts older than 30 days by default. Clorbit keeps their summaries and marks them as archived, so analytics and insights still include that history. An archived session keeps its summary, agent tree, startup context and tools, but has no timeline or context chart.
 - **Demo mode** (`?demo=1`) uses invented data only — safe for screenshots and screen sharing. Clorbit never switches to it by itself: when the server is down you see an "isn't running" screen, not made-up numbers.
@@ -234,6 +235,7 @@ All settings are environment variables. The old `FLEET_*` names are still read a
 | `CLORBIT_AUTOSTART` | — | Set to `0` to stop the plugin from starting the server when a session starts. |
 | `CLORBIT_CLAUDE_DIR` | `~/.claude` | Claude Code's data folder to read (and where `clorbit statusline` finds `settings.json`). |
 | `CLORBIT_CLAUDE_JSON` | `~/.claude.json` | Claude Code's account file; only the plan fields and the names of configured MCP servers are read. With `CLORBIT_CLAUDE_DIR` set, a `.claude.json` inside it or next to it. |
+| `CLORBIT_COWORK_DIR` | `~/Library/Application Support/Claude/local-agent-mode-sessions` (macOS), `~/.config/Claude/local-agent-mode-sessions` (Linux) | The Claude desktop app's Cowork sessions. `off` stops reading them. |
 | `CLORBIT_STATUSLINE_FILE` | `~/.clorbit/statusline.json` | Status-line capture file. |
 | `CLORBIT_SERVE_WEB` | on in the built server | Serve the web app from the API server. The built server (`plugin/app/server.mjs`) does by default; under `pnpm dev`/`pnpm server` set it to `1` after `pnpm build`. |
 
@@ -259,6 +261,7 @@ Upgrading from a pre-release that stored its database in `<repo>/data/fleet.db`:
 - The "24 h" preset in analytics means yesterday + today, because the analytics API works with dates.
 - Live updates rely on `fs.watch` with a polling fallback; on unusual file systems updates may lag by a few seconds.
 - Clorbit reads the transcript format of current Claude Code versions; a future format change may need an update.
+- The Cowork folder layout is not documented by Anthropic; if the desktop app changes it, Cowork sessions simply stop showing up until Clorbit is updated. Their status comes from the transcript alone (there is no process or hook to ask), so "waiting for you" is not detected for them.
 
 ## Roadmap
 

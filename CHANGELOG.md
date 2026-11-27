@@ -2,6 +2,12 @@
 
 All notable changes to Clorbit are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Cowork sessions of the Claude desktop app.** Each Cowork session runs Claude Code with a config folder of its own (`~/Library/Application Support/Claude/local-agent-mode-sessions/…/local_<id>/.claude`), and Clorbit now scans those transcripts next to `~/.claude/projects`: they appear in the galaxy, the console, analytics, insights and replays. A Cowork session carries the title the desktop app shows (renames there are picked up), a "Cowork" tag in its panel, and the folder it was given as its project (or *Cowork*). Without a process to watch it counts as running while it was active in the last 15 minutes and not archived. The **Cowork** button in the galaxy's top bar (also Settings → Interface → "Show Cowork sessions in the galaxy") hides them from the galaxy; analytics keeps counting them. `CLORBIT_COWORK_DIR` points elsewhere or (`off`) turns them off. `/api/live` sessions carry `source: 'cowork'` and the snapshot a `cowork` flag (additive). Only the title, the first folder and the archived flag are read from the desktop's metadata files.
+
 ## 0.6.0
 
 ### Added

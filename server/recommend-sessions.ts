@@ -19,6 +19,7 @@ import { stableId, type RecommendEnv } from './recommend';
 import { Store } from './store';
 import type { DayBucket, FileSummary } from './types';
 import { contextLimitFor, estTokens, localDate, sumT4 } from './util';
+import { sessionTitle } from './titles';
 
 /** Effort levels above Claude Code's usual default ("high" is the default for the top models, so it is not flagged). */
 export const RAISED_EFFORT = new Set(['xhigh', 'max']);
@@ -81,9 +82,9 @@ export function sessionRecommendations(store: Store, range: Range, lang: Lang, e
   const mains: FileSummary[] = [];
   for (const s of store.files.values()) if (s.agentId === null && Object.keys(s.days).some((d) => inRange(d, range))) mains.push(s);
   if (!mains.length) return [];
-  const name = (s: FileSummary) => (s.title ? TT.quote(s.title) : s.sessionId.slice(0, 8));
+  const name = (s: FileSummary) => { const t = sessionTitle(s); return t ? TT.quote(t) : s.sessionId.slice(0, 8); };
   const where = (s: FileSummary) => `${name(s)} (${ctx.project(s)})`;
-  const sessionTarget = (s: FileSummary, note: string): InsightTarget => ({ key: s.sessionId, label: s.title ?? s.sessionId.slice(0, 8), kind: 'session', note });
+  const sessionTarget = (s: FileSummary, note: string): InsightTarget => ({ key: s.sessionId, label: sessionTitle(s) ?? s.sessionId.slice(0, 8), kind: 'session', note });
   const out: Insight[] = [];
 
   // ---------- A. Frequent auto-compactions ----------

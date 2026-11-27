@@ -5,7 +5,7 @@ import path from 'node:path';
 import { attribution, overview, parseRange, sessions } from './analytics';
 import { INSIGHT_PAGES, type AboutInfo, type InsightPage } from '../shared/api';
 import { RECOMMEND_DAYS } from '../shared/settings';
-import { CACHE_DIR, DATA_DIR, DB_FILE, DIST_DIR, HOST, PORT, PROJECTS_DIR, SERVE_WEB, VERSION, env, hookPluginEnabled, knownPlugins, migrateLegacyDb } from './config';
+import { CACHE_DIR, COWORK_DIR, DATA_DIR, DB_FILE, DIST_DIR, HOST, PORT, PROJECTS_DIR, SERVE_WEB, VERSION, env, hookPluginEnabled, knownPlugins, migrateLegacyDb } from './config';
 import { ClorbitDb } from './db';
 import { HookLog } from './hook-log';
 import { Hooks } from './hooks';
@@ -32,7 +32,7 @@ let db: ClorbitDb | null = null;
 try { db = ClorbitDb.open(DB_FILE); } catch (e) {
   console.error(`[clorbit] could not open ${DB_FILE}, running without persistence:`, (e as Error).message);
 }
-const store = new Store(PROJECTS_DIR, db, { knownPlugins: knownPlugins() });
+const store = new Store(PROJECTS_DIR, db, { knownPlugins: knownPlugins() }, COWORK_DIR);
 store.loadCache(CACHE_DIR);
 if (store.persist.imported) console.log(`[clorbit] imported ${store.persist.imported.count} summaries from ${store.persist.imported.file}`);
 const hooks = new Hooks();

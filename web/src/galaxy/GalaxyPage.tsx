@@ -18,7 +18,7 @@ import { consoleStore, loadRecent, projectColor, setColorProvider, setColorSourc
 import { GalaxyEngine, prettyModel, short, type Focus } from './engine';
 import { MockFeed } from './mock';
 import { ChangesSection } from './AgentChanges';
-import type { ClusterInfo } from './plan';
+import { galaxyView, isCowork, type ClusterInfo } from './plan';
 import { clusterPinKey, prunePins, starPinKey, withoutPin } from './gravity';
 import { fmtAgo, fmtDur, fmtPct, fmtTok, tSum } from './format';
 import './galaxy.css';
@@ -53,6 +53,7 @@ export default function GalaxyPage() {
   const setTour = (v: boolean) => updateSettings({ interface: { autoTour: v } });
   const reduceMotion = useSetting((s) => s.interface.reduceMotion);
   const showAutomated = useSetting((s) => s.interface.showAutomated);
+  const showCowork = useSetting((s) => s.interface.showCowork);
   const gravity = useSetting((s) => s.layout.gravity);
   const pins = useSetting((s) => s.layout.pins);
   const lang = useLang();
@@ -61,7 +62,7 @@ export default function GalaxyPage() {
   function focusOn(f: FocusRequest) {
     const eng = engineRef.current;
     const s = snapRef.current?.sessions.find((x) => x.sessionId === f.sessionId);
-    if (!eng || !s) return;
+    if (!eng || !s || (isCowork(s) && !getSettings().interface.showCowork)) return;
     // A session folded into a cluster is taken out of it as a star first.
     eng.reveal(f.sessionId, f.agentId && f.agentId !== 'main' && findAgent(s.root, f.agentId) ? f.agentId : undefined);
   }
@@ -105,6 +106,15 @@ export default function GalaxyPage() {
 
   useEffect(() => { if (engineRef.current) engineRef.current.tourOn = tour; }, [tour]);
   useEffect(() => { engineRef.current?.setShowAutomated(showAutomated); }, [showAutomated]);
+  useEffect(() => {
+    const raw = snapRef.current;
+    if (!raw) return;
+    const eng = engineRef.current;
+    // Hiding Cowork while one of its sessions is focused goes back to the whole galaxy.
+    const f = eng?.getFocus();
+    if (!showCowork && f && (f.t === 'sys' || f.t === 'agent') && raw.sessions.some((x) => x.sessionId === f.sessionId && isCowork(x))) eng!.setFocus({ t: 'none' }, true);
+    eng?.sync(galaxyView(raw, showCowork));
+  }, [showCowork]);
   useEffect(() => { engineRef.current?.setGravity(gravity); }, [gravity]);
   useEffect(() => { engineRef.current?.setPins(pins); }, [pins]);
   useEffect(() => onLayoutReset(() => engineRef.current?.resetLayout()), []);
@@ -129,7 +139,7 @@ export default function GalaxyPage() {
     // The notification center listens to what this page receives (no second connection).
     const detach = feed.attachSource();
     const onSnap = (s: LiveSnapshot) => {
-      snapRef.current = s; setSnap(s); engineRef.current?.sync(s);
+      snapRef.current = s; setSnap(s); engineRef.current?.sync(galaxyView(s, getSettings().interface.showCowork));
       // Pins of sessions that are gone are dropped lazily (never while the history scan may still be incomplete).
       if (s.scan.done) {
         const pruned = prunePins(getSettings().layout.pins, s.sessions);
@@ -207,7 +217,8 @@ export default function GalaxyPage() {
     if (!demo) void loadRecent();
   };
   const eng = engineRef.current;
-  const fSession: LiveSession | undefined = focus.t === 'sys' || focus.t === 'agent' ? snap?.sessions.find((s) => s.sessionId === focus.sessionId) : undefined;
+  const fSession: LiveSession | undefined = focus.t === 'sys' || focus.t === 'agent'
+    ? snap?.sessions.find((s) => s.sessionId === focus.sessionId && (showCowork || !isCowork(s))) : undefined;
   // Read on every render (snapshots re-render the page), so the list follows the cluster.
   const fCluster: ClusterInfo | null = focus.t === 'cluster' ? eng?.cluster(focus.project) ?? null : null;
   const fAgent = focus.t === 'agent' && fSession ? findAgent(fSession.root, focus.agentId) : null;
@@ -229,6 +240,14 @@ export default function GalaxyPage() {
           <a className="gx-btn" href={href('/analytics/context')}>{t('gx.nav.context')}</a>
           <a className="gx-btn" href={href('/insights')}>{t('gx.nav.insights')}</a>
           <button className={`gx-btn ${tour ? 'on' : ''}`} onClick={() => setTour(!tour)} title={t('gx.nav.tourTitle')}>{t('gx.nav.tour')}</button>
+          {shown && (shown.cowork || shown.sessions.some(isCowork)) && (
+            <button
+              className={`gx-btn ${showCowork ? 'on' : ''}`}
+              onClick={() => updateSettings({ interface: { showCowork: !showCowork } })}
+              title={t(showCowork ? 'gx.nav.coworkOnTitle' : 'gx.nav.coworkOffTitle')}
+              aria-pressed={showCowork}
+            >{t('gx.nav.cowork')}</button>
+          )}
           <button className="gx-btn" onClick={() => setLegend(!legend)} title={t('gx.nav.legendTitle')}>?</button>
           <LangSwitch className="gx-lang" btnClass="gx-btn" />
           <ProfileButton className="prof--gx" />
@@ -526,11 +545,11 @@ export function SessionPanel({ s, eng, onAgent, pin, now, replay = false, change
         <span className={`gx-status-chip ${s.status}`}>{statusWord(s.status)}</span>
         <h3>{s.project}</h3>
         <p>{s.title ?? s.name ?? s.sessionId.slice(0, 8)}</p>
-        <div className="gx-meta">{prettyModel(s.model)}{s.effort && <> · {t('gx.panel.effort')} <b>{s.effort}</b></>}{s.gitBranch && <> · {s.gitBranch}</>}{s.kind === 'automated' && <> · <span className="gx-kind">{t('gx.panel.automatedRun')}</span></>}</div>
+        <div className="gx-meta">{prettyModel(s.model)}{s.effort && <> · {t('gx.panel.effort')} <b>{s.effort}</b></>}{s.gitBranch && <> · {s.gitBranch}</>}{s.kind === 'automated' && <> · <span className="gx-kind">{t('gx.panel.automatedRun')}</span></>}{isCowork(s) && <> · <span className="gx-kind" title={t('gx.panel.coworkTitle')}>Cowork</span></>}</div>
       </div>
       {pin && <PinRow onUnpin={pin} />}
       {s.statusReason && <div className={`gx-reason ${s.status}`}>{s.statusReason}</div>}
-      {!replay && s.alive && <TerminalButton sessionId={s.sessionId} info={s.terminal} className={s.status === 'waiting' ? 'gx-btn primary' : 'gx-btn'} />}
+      {!replay && s.alive && !isCowork(s) && <TerminalButton sessionId={s.sessionId} info={s.terminal} className={s.status === 'waiting' ? 'gx-btn primary' : 'gx-btn'} />}
       {s.root.lastText && <blockquote className="gx-quote">{quote(s.root.lastText, 220)}</blockquote>}
       <div className="gx-grid">
         <div><label>{t('gx.panel.sessionTokens')}</label><b>{fmtTok(tSum(s.tokens))}</b></div>

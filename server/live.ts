@@ -8,7 +8,9 @@ import { LEGACY_STATUSLINE_FILE, PROJECTS_DIR, SESSIONS_DIR, STATUSLINE_FILE, ho
 import type { Hooks } from './hooks';
 import { readPlan } from './plan';
 import { reasonCode, reasonText, type Lang, type Reason, type ServerEvent } from './i18n';
-import { listTranscripts, type Store } from './store';
+import { COWORK_LIVE_MS, coworkMetaOf, coworkProject } from './cowork';
+import { sessionTitle } from './titles';
+import type { Store } from './store';
 import { buildTree, sessionStatus, subagentDone } from './tree';
 import type { FileSummary, ScanEvent } from './types';
 import { addT4, contextLimitFor, localDate, projectOf, sumT4, toTokens, zeroT4, type T4 } from './util';
@@ -189,6 +191,20 @@ export class Live extends EventEmitter {
       });
       this.watchers.push(w);
     } catch (e) { console.warn('[clorbit] fs.watch on projects is unavailable:', (e as Error).message); }
+    // Cowork sessions of the desktop app: only their transcripts and the desktop's metadata files matter.
+    if (this.store.coworkDir && fs.existsSync(this.store.coworkDir)) {
+      try {
+        const dir = this.store.coworkDir;
+        const w = fs.watch(dir, { recursive: true }, (_ev, name) => {
+          if (!name) return;
+          const f = String(name);
+          if (!f.includes(`${path.sep}.claude${path.sep}projects${path.sep}`)) { if (/local_[\w-]+\.json$/.test(f)) this.cache = null; return; }
+          if (f.endsWith('.jsonl')) this.schedule(path.join(dir, f));
+          else if (f.endsWith('.meta.json')) this.schedule(path.join(dir, f.replace(/\.meta\.json$/, '.jsonl')));
+        });
+        this.watchers.push(w);
+      } catch (e) { console.warn('[clorbit] fs.watch on Cowork sessions is unavailable:', (e as Error).message); }
+    }
     try {
       const w = fs.watch(SESSIONS_DIR, () => this.schedule('__sessions__'));
       this.watchers.push(w);
@@ -232,10 +248,12 @@ export class Live extends EventEmitter {
     }
     // Subagents of live sessions that appeared but are not known yet.
     if (this.store.scanDone) {
-      for (const p of this.pids.values()) {
-        if (!p.alive) continue;
-        const main = this.store.mainOf(p.sessionId);
-        const dir = main ? path.join(path.dirname(main.path), p.sessionId, 'subagents') : null;
+      const liveIds = [...this.pids.values()].filter((p) => p.alive).map((p) => p.sessionId);
+      // Cowork sessions have no pid file: a recently active one is treated as live.
+      for (const s of this.store.files.values()) if (s.agentId === null && now - s.lastTs < COWORK_LIVE_MS && this.store.isCowork(s.path)) liveIds.push(s.sessionId);
+      for (const sid of liveIds) {
+        const main = this.store.mainOf(sid);
+        const dir = main ? path.join(path.dirname(main.path), sid, 'subagents') : null;
         if (!dir) continue;
         try {
           for (const f of fs.readdirSync(dir)) {
@@ -251,7 +269,7 @@ export class Live extends EventEmitter {
 
   private relist() {
     if (!this.store.scanDone) return;
-    for (const f of listTranscripts(PROJECTS_DIR)) if (!this.store.files.has(f)) void this.store.refresh(f);
+    for (const f of this.store.listAll()) if (!this.store.files.has(f)) void this.store.refresh(f);
   }
 
   /** Compares statuses with the previous tick and broadcasts changes. */
@@ -288,6 +306,17 @@ export class Live extends EventEmitter {
       if (this.listenerCount('snapshot')) this.emit('snapshot', this.snapshot('en'));
     }
   }
+
+  /** Are there any Cowork transcripts at all (for the galaxy's Cowork switch)? */
+  private hasCowork(): boolean {
+    if (!this.store.coworkDir) return false;
+    if (this.coworkMemo.v === this.store.version) return this.coworkMemo.has;
+    let has = false;
+    for (const f of this.store.files.keys()) if (this.store.isCowork(f)) { has = true; break; }
+    this.coworkMemo = { v: this.store.version, has };
+    return has;
+  }
+  private coworkMemo = { v: -1, has: false };
 
   /** Interactive or automated (see shared/automation.ts), with the entrypoint it was decided by. */
   kindOf(sessionId: string, main: FileSummary | null = this.store.mainOf(sessionId) ?? null, pid: PidInfo | null = this.pids.get(sessionId) ?? null): { kind: SessionKind; entrypoint: string | null } {
@@ -375,12 +404,17 @@ export class Live extends EventEmitter {
     }
     const sessions: LiveSession[] = [];
     let working = 0, waiting = 0, workingSubs = 0, alive = 0;
+    let coworkSeen = false;
     for (const sid of sessionIds) {
       const files = this.store.sessionFiles(sid);
       const main = files.find((f) => f.agentId === null) ?? null;
       const subs = files.filter((f) => f.agentId !== null);
       const pid = this.pids.get(sid) ?? null;
-      const isAlive = !!pid?.alive;
+      const cowork = !!main && this.store.isCowork(main.path);
+      const cmeta = cowork ? coworkMetaOf(main!.path, this.store.coworkDir) : null;
+      // A Cowork session runs inside the desktop app, with no process Clorbit can see: it is live while it is
+      // recently active and not archived, and its status comes from the transcript alone.
+      const isAlive = cowork ? !cmeta?.archived && now - Math.max(main!.lastTs, ...subs.map((s) => s.lastTs)) < COWORK_LIVE_MS : !!pid?.alive;
       const pidStatus = pid?.status ?? null;
       const tree = buildTree(main, subs, now, isAlive, false, pidStatus);
       let st = sessionStatus(main, subs, tree, now, isAlive, pidStatus, pid?.waitingFor ?? null);
@@ -402,7 +436,7 @@ export class Live extends EventEmitter {
       const s24 = zeroT4();
       for (const f of files) { addT4(total, f.total); tokensSince(f, cutoff, s24); }
       const cwd = pid?.cwd ?? main?.cwd ?? subs[0]?.cwd ?? '';
-      const project = projectOf(cwd, main?.projectDir ?? subs[0]?.projectDir);
+      const project = (cowork && coworkProject(main!.path, this.store.coworkDir)) || projectOf(cwd, main?.projectDir ?? subs[0]?.projectDir);
       if (sumT4(s24) > 0) projects.add(project);
       for (const f of subs) if (f.lastTs >= cutoff && subagentDone(f, now, isAlive)) finished24++;
       const k = this.kindOf(sid, main, pid);
@@ -414,7 +448,7 @@ export class Live extends EventEmitter {
         sessionId: sid,
         pid: pid?.pid ?? null,
         alive: isAlive,
-        title: main?.title ?? null,
+        title: sessionTitle(main, this.store.coworkDir),
         name: pid?.name ?? null,
         cwd,
         project,
@@ -438,7 +472,9 @@ export class Live extends EventEmitter {
         kind: k.kind,
         terminal: isAlive && pid && this.terminalOf ? this.terminalOf(pid) : null,
         entrypoint: k.entrypoint,
+        ...(cowork ? { source: 'cowork' as const } : {}),
       });
+      if (cowork) coworkSeen = true;
     }
     const order: Record<SessionStatus, number> = { waiting: 0, working: 1, idle: 2, stopped: 3 };
     sessions.sort((a, b) => order[a.status] - order[b.status] || b.lastActivity - a.lastActivity);
@@ -471,6 +507,7 @@ export class Live extends EventEmitter {
       // Hooks count as installed when the clorbit plugin (or legacy fleet-hooks) is enabled, or events already arrived.
       hooksInstalled: hookPluginEnabled() || this.hooks.installed,
       statuslineCapture: lim.capture,
+      cowork: coworkSeen || this.hasCowork(),
       scan: { done: this.store.scanDone, filesTotal: this.store.stats.filesTotal, filesDone: this.store.stats.filesDone },
     };
     this.cache = { at: now, v, reasons };

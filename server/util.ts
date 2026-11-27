@@ -1,6 +1,7 @@
 // Small helpers: dates, tokens, tool labels.
 import path from 'node:path';
 import type { Tokens } from '../shared/api.ts';
+import { coworkProject } from './cowork';
 
 /** Compact tokens: [input, output, cacheRead, cacheWrite]. */
 export type T4 = [number, number, number, number];
@@ -124,7 +125,7 @@ export function resultChars(content: unknown): number {
 }
 
 export function projectOf(cwd: string | null | undefined, fallbackDir?: string): string {
-  if (cwd) return path.basename(cwd) || cwd;
+  if (cwd) return coworkProject(cwd) ?? (path.basename(cwd) || cwd);
   if (fallbackDir) {
     const parts = fallbackDir.split('-').filter(Boolean);
     return parts[parts.length - 1] ?? fallbackDir;

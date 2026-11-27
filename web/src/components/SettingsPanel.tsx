@@ -429,6 +429,9 @@ function Interface() {
       <Row title={t('ui.automated')} desc={t('ui.automated.d')}>
         <Orbit on={s.interface.showAutomated} onChange={(v) => updateSettings({ interface: { showAutomated: v } })} label={t('ui.automated')} />
       </Row>
+      <Row title={t('ui.cowork')} desc={t('ui.cowork.d')}>
+        <Orbit on={s.interface.showCowork} onChange={(v) => updateSettings({ interface: { showCowork: v } })} label={t('ui.cowork')} />
+      </Row>
       <Row title={t('ui.gravity')} desc={t('ui.gravity.d')}>
         <Orbit on={s.layout.gravity} onChange={(v) => updateSettings({ layout: { gravity: v } })} label={t('ui.gravity')} />
       </Row>

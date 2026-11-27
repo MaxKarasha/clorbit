@@ -18,6 +18,7 @@ import { homeDisplay, stableId, type RecommendEnv } from './recommend';
 import type { Store } from './store';
 import type { FileSummary } from './types';
 import { localDate, mcpSplit } from './util';
+import { sessionTitle } from './titles';
 
 // ---------- A. permission prompts → allow rules ----------
 
@@ -335,7 +336,7 @@ export function toolRecommendations(store: Store, range: Range, lang: Lang, env:
       const tokens = Math.round(list.reduce((n, a) => n + a.tokens, 0));
       const extra = list.reduce((n, a) => n + a.extra, 0);
       const sessions = new Set(list.flatMap((a) => [...a.sessions])).size;
-      const where = (sid: string) => { const m = store.mainOf(sid); return m?.title ? TT.quote(m.title) : ctx.projectOfSession.get(sid) ?? sid.slice(0, 8); };
+      const where = (sid: string) => { const t = sessionTitle(store.mainOf(sid)); return t ? TT.quote(t) : ctx.projectOfSession.get(sid) ?? sid.slice(0, 8); };
       const items: PromptItem[] = [];
       for (const a of list.slice(0, REREAD_MAX_ITEMS)) {
         const show = homeDisplay(a.file);

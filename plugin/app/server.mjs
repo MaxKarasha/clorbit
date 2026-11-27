@@ -276,8 +276,194 @@ var init_i18n = __esm({
   }
 });
 
-// server/util.ts
+// server/config.ts
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+function env(name) {
+  return process.env[`CLORBIT_${name}`] || process.env[`FLEET_${name}`] || void 0;
+}
+function coworkDir(v, platform = process.platform, home = os.homedir()) {
+  if (v) return v === "off" || v === "0" ? "" : path.resolve(v);
+  if (platform === "darwin") return path.join(home, "Library", "Application Support", "Claude", "local-agent-mode-sessions");
+  if (platform === "linux") return path.join(home, ".config", "Claude", "local-agent-mode-sessions");
+  return "";
+}
+function devVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, "package.json"), "utf8")).version ?? "dev";
+  } catch {
+    return "dev";
+  }
+}
+function migrateLegacyDb({ dbFile = DB_FILE, legacy = LEGACY_DB_FILE, explicitDataDir = DATA_DIR_EXPLICIT } = {}) {
+  if (explicitDataDir) return null;
+  try {
+    if (fs.existsSync(dbFile) || !fs.existsSync(legacy)) return null;
+    fs.mkdirSync(path.dirname(dbFile), { recursive: true });
+    fs.copyFileSync(legacy, dbFile);
+    for (const ext of ["-wal", "-shm"]) {
+      if (fs.existsSync(legacy + ext)) fs.copyFileSync(legacy + ext, dbFile + ext);
+    }
+    return legacy;
+  } catch (e) {
+    console.error(`[clorbit] could not migrate ${legacy}:`, e.message);
+    return null;
+  }
+}
+function readSettings() {
+  try {
+    const st = fs.statSync(SETTINGS_FILE);
+    if (settingsCache && settingsCache.mtime === st.mtimeMs) return settingsCache.v;
+    const j = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
+    const v = { enabledPlugins: j.enabledPlugins ?? {}, env: j.env ?? {} };
+    settingsCache = { mtime: st.mtimeMs, v };
+    return v;
+  } catch {
+    return { enabledPlugins: {}, env: {} };
+  }
+}
+function hookPluginEnabled(settings2 = readSettings()) {
+  return Object.entries(settings2.enabledPlugins).some(([k, on]) => on && (k.startsWith("clorbit@") || k.startsWith("fleet-hooks@")));
+}
+function knownPlugins() {
+  const names2 = /* @__PURE__ */ new Set();
+  for (const k of Object.keys(readSettings().enabledPlugins)) names2.add(k.split("@")[0]);
+  try {
+    const cache5 = path.join(CLAUDE_DIR, "plugins", "cache");
+    for (const mkt of fs.readdirSync(cache5)) {
+      try {
+        for (const p of fs.readdirSync(path.join(cache5, mkt))) names2.add(p);
+      } catch {
+      }
+    }
+  } catch {
+  }
+  return [...names2].filter((n) => n.length >= 4).sort((a, b) => b.length - a.length);
+}
+var BUNDLED, HERE, PROJECT_ROOT, CLAUDE_DIR, PROJECTS_DIR, SESSIONS_DIR, SETTINGS_FILE, CLAUDE_JSON_FILES, COWORK_DIR, HOME_DATA_DIR, STATUSLINE_FILE, LEGACY_STATUSLINE_FILE, DATA_DIR, DATA_DIR_EXPLICIT, DB_FILE, CACHE_DIR, DIST_DIR, SERVE_WEB, PORT, HOST, VERSION, LEGACY_DB_FILE, settingsCache;
+var init_config = __esm({
+  "server/config.ts"() {
+    "use strict";
+    BUNDLED = true;
+    HERE = path.dirname(fileURLToPath(import.meta.url));
+    PROJECT_ROOT = path.resolve(HERE, "..");
+    CLAUDE_DIR = env("CLAUDE_DIR") || path.join(os.homedir(), ".claude");
+    PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
+    SESSIONS_DIR = path.join(CLAUDE_DIR, "sessions");
+    SETTINGS_FILE = path.join(CLAUDE_DIR, "settings.json");
+    CLAUDE_JSON_FILES = env("CLAUDE_JSON") ? [env("CLAUDE_JSON")] : env("CLAUDE_DIR") ? [path.join(CLAUDE_DIR, ".claude.json"), path.join(path.dirname(CLAUDE_DIR), ".claude.json")] : [path.join(os.homedir(), ".claude.json")];
+    COWORK_DIR = coworkDir(env("COWORK_DIR"));
+    HOME_DATA_DIR = path.join(os.homedir(), ".clorbit");
+    STATUSLINE_FILE = env("STATUSLINE_FILE") || path.join(HOME_DATA_DIR, "statusline.json");
+    LEGACY_STATUSLINE_FILE = path.join(os.homedir(), ".fleet", "statusline.json");
+    DATA_DIR = env("DATA_DIR") || HOME_DATA_DIR;
+    DATA_DIR_EXPLICIT = !!env("DATA_DIR");
+    DB_FILE = path.join(DATA_DIR, "clorbit.db");
+    CACHE_DIR = env("CACHE_DIR") || path.join(DATA_DIR, "cache");
+    DIST_DIR = BUNDLED ? path.join(HERE, "web") : path.join(PROJECT_ROOT, "plugin", "app", "web");
+    SERVE_WEB = env("SERVE_WEB") ? env("SERVE_WEB") === "1" : BUNDLED;
+    PORT = Number(env("PORT")) || 4980;
+    HOST = "127.0.0.1";
+    VERSION = BUNDLED && true ? "0.6.0" : devVersion();
+    LEGACY_DB_FILE = path.join(PROJECT_ROOT, "data", "fleet.db");
+    settingsCache = null;
+  }
+});
+
+// server/cowork.ts
+import fs2 from "node:fs";
+import path2 from "node:path";
+function isCoworkPath(p, dir = COWORK_DIR) {
+  return !!p && inside(dir, p);
+}
+function coworkProjectRoots(dir = COWORK_DIR) {
+  const out = [];
+  if (!dir) return out;
+  const ls = (p) => {
+    try {
+      return fs2.readdirSync(p, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+  };
+  for (const account of ls(dir)) {
+    if (!account.isDirectory() || account.name === "skills-plugin") continue;
+    for (const org of ls(path2.join(dir, account.name))) {
+      if (!org.isDirectory()) continue;
+      for (const s of ls(path2.join(dir, account.name, org.name))) {
+        if (!s.isDirectory() || !SESSION_DIR.test(s.name)) continue;
+        const root = path2.join(dir, account.name, org.name, s.name, ".claude", "projects");
+        if (fs2.existsSync(root)) out.push(root);
+      }
+    }
+  }
+  return out;
+}
+function coworkSessionDir(p, dir = COWORK_DIR) {
+  if (!p || !inside(dir, p)) return null;
+  const rel = p.slice(dir.length + 1).split(SEP);
+  if (rel.length < 3 || !SESSION_DIR.test(rel[2])) return null;
+  return path2.join(dir, rel[0], rel[1], rel[2]);
+}
+function readCoworkMeta(sessionDir, now = Date.now()) {
+  const file = `${sessionDir}.json`;
+  const hit = metaCache.get(file);
+  if (hit && now - hit.at < META_TTL_MS) return hit.v;
+  let mtime = -1;
+  try {
+    mtime = fs2.statSync(file).mtimeMs;
+  } catch {
+  }
+  if (hit && hit.mtime === mtime) {
+    hit.at = now;
+    return hit.v;
+  }
+  let v = null;
+  if (mtime >= 0) {
+    try {
+      const j = JSON.parse(fs2.readFileSync(file, "utf8"));
+      const folders = Array.isArray(j?.userSelectedFolders) ? j.userSelectedFolders.filter((x) => typeof x === "string" && x) : [];
+      v = {
+        title: typeof j?.title === "string" && j.title.trim() ? j.title.trim().slice(0, 200) : null,
+        folder: folders.length ? String(folders[0]) : null,
+        archived: j?.isArchived === true
+      };
+    } catch {
+    }
+  }
+  if (metaCache.size > 2e3) metaCache.clear();
+  metaCache.set(file, { at: now, mtime, v });
+  return v;
+}
+function coworkMetaOf(p, dir = COWORK_DIR) {
+  const sd = coworkSessionDir(p, dir);
+  return sd ? readCoworkMeta(sd) : null;
+}
+function coworkProject(cwd, dir = COWORK_DIR) {
+  const sd = coworkSessionDir(cwd, dir);
+  if (!sd) return null;
+  const folder = readCoworkMeta(sd)?.folder;
+  return folder && path2.basename(folder) || COWORK_PROJECT;
+}
+var COWORK_PROJECT, COWORK_LIVE_MS, SEP, SESSION_DIR, inside, META_TTL_MS, metaCache;
+var init_cowork = __esm({
+  "server/cowork.ts"() {
+    "use strict";
+    init_config();
+    COWORK_PROJECT = "Cowork";
+    COWORK_LIVE_MS = 15 * 6e4;
+    SEP = path2.sep;
+    SESSION_DIR = /^local_[\w-]+$/;
+    inside = (dir, p) => !!dir && p.startsWith(dir + SEP);
+    META_TTL_MS = 5e3;
+    metaCache = /* @__PURE__ */ new Map();
+  }
+});
+
+// server/util.ts
+import path3 from "node:path";
 function addT4(into, t) {
   into[0] += t[0];
   into[1] += t[1];
@@ -332,7 +518,7 @@ function mcpSplit(name) {
 }
 function toolLabel(name, input) {
   const inp = input && typeof input === "object" ? input : {};
-  const base = (p) => typeof p === "string" && p ? path.basename(p) : "";
+  const base = (p) => typeof p === "string" && p ? path3.basename(p) : "";
   const short = (s, n = 40) => typeof s === "string" ? trimText(s.split("\n")[0], n) : "";
   switch (name) {
     case "Read":
@@ -386,7 +572,7 @@ function resultChars(content) {
   return n;
 }
 function projectOf(cwd, fallbackDir) {
-  if (cwd) return path.basename(cwd) || cwd;
+  if (cwd) return coworkProject(cwd) ?? (path3.basename(cwd) || cwd);
   if (fallbackDir) {
     const parts = fallbackDir.split("-").filter(Boolean);
     return parts[parts.length - 1] ?? fallbackDir;
@@ -402,6 +588,7 @@ var zeroT4, sumT4, toTokens, estTokens, hourCache, localDate, mcpKey;
 var init_util = __esm({
   "server/util.ts"() {
     "use strict";
+    init_cowork();
     zeroT4 = () => [0, 0, 0, 0];
     sumT4 = (t) => t[0] + t[1] + t[2] + t[3];
     toTokens = (t) => ({ input: t[0], output: t[1], cacheRead: t[2], cacheWrite: t[3] });
@@ -409,6 +596,19 @@ var init_util = __esm({
     hourCache = /* @__PURE__ */ new Map();
     localDate = (ts) => localDateHour(ts).date;
     mcpKey = (display) => display.replace(/[^a-zA-Z0-9_-]/g, "_");
+  }
+});
+
+// server/titles.ts
+function sessionTitle(main, coworkDir2 = COWORK_DIR) {
+  if (!main) return null;
+  return coworkMetaOf(main.path, coworkDir2)?.title ?? main.title ?? null;
+}
+var init_titles = __esm({
+  "server/titles.ts"() {
+    "use strict";
+    init_config();
+    init_cowork();
   }
 });
 
@@ -684,7 +884,7 @@ function summarizeSession(store2, sessionId, ctx) {
     sessionId,
     project: ctx ? ctx.project(any) : projectOf(any.cwd, any.projectDir),
     cwd: main?.cwd ?? any.cwd ?? "",
-    title: main?.title ?? null,
+    title: sessionTitle(main),
     startedAt: start,
     endedAt: end,
     model: main?.model ?? null,
@@ -719,6 +919,7 @@ var init_analytics = __esm({
     "use strict";
     init_i18n();
     init_util();
+    init_titles();
     Rows = class {
       m = /* @__PURE__ */ new Map();
       get(key) {
@@ -816,7 +1017,7 @@ var init_api = __esm({
       },
       sound: { enabled: true, volume: 0.6, theme: "orbit" },
       dnd: { enabled: false, quietHours: { enabled: false, from: "22:00", to: "08:00" }, mutedUntil: null },
-      interface: { lang: "en", autoTour: false, reduceMotion: false, showAutomated: false },
+      interface: { lang: "en", autoTour: false, reduceMotion: false, showAutomated: false, showCowork: true },
       layout: { gravity: true, pins: {} },
       recommendations: { unusedDays: 30, dismissed: [] },
       terminal: { app: "auto" }
@@ -854,6 +1055,7 @@ function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
   const out = cloneSettings(base);
   if (!isObj(out.recommendations)) out.recommendations = cloneSettings(DEFAULT_SETTINGS).recommendations;
   if (!isObj(out.terminal)) out.terminal = cloneSettings(DEFAULT_SETTINGS).terminal;
+  if (typeof out.interface.showCowork !== "boolean") out.interface.showCowork = DEFAULT_SETTINGS.interface.showCowork;
   if (!isObj(patch)) return out;
   const n = patch.notifications;
   if (isObj(n)) {
@@ -894,6 +1096,7 @@ function normalizeSettings(patch, base = DEFAULT_SETTINGS, now = Date.now()) {
     out.interface.autoTour = bool(i.autoTour, out.interface.autoTour);
     out.interface.reduceMotion = bool(i.reduceMotion, out.interface.reduceMotion);
     out.interface.showAutomated = bool(i.showAutomated, out.interface.showAutomated);
+    out.interface.showCowork = bool(i.showCowork, out.interface.showCowork ?? true);
   }
   const l = patch.layout;
   if (isObj(l)) {
@@ -949,95 +1152,6 @@ var init_settings = __esm({
   }
 });
 
-// server/config.ts
-import fs from "node:fs";
-import os from "node:os";
-import path2 from "node:path";
-import { fileURLToPath } from "node:url";
-function env(name) {
-  return process.env[`CLORBIT_${name}`] || process.env[`FLEET_${name}`] || void 0;
-}
-function devVersion() {
-  try {
-    return JSON.parse(fs.readFileSync(path2.join(PROJECT_ROOT, "package.json"), "utf8")).version ?? "dev";
-  } catch {
-    return "dev";
-  }
-}
-function migrateLegacyDb({ dbFile = DB_FILE, legacy = LEGACY_DB_FILE, explicitDataDir = DATA_DIR_EXPLICIT } = {}) {
-  if (explicitDataDir) return null;
-  try {
-    if (fs.existsSync(dbFile) || !fs.existsSync(legacy)) return null;
-    fs.mkdirSync(path2.dirname(dbFile), { recursive: true });
-    fs.copyFileSync(legacy, dbFile);
-    for (const ext of ["-wal", "-shm"]) {
-      if (fs.existsSync(legacy + ext)) fs.copyFileSync(legacy + ext, dbFile + ext);
-    }
-    return legacy;
-  } catch (e) {
-    console.error(`[clorbit] could not migrate ${legacy}:`, e.message);
-    return null;
-  }
-}
-function readSettings() {
-  try {
-    const st = fs.statSync(SETTINGS_FILE);
-    if (settingsCache && settingsCache.mtime === st.mtimeMs) return settingsCache.v;
-    const j = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
-    const v = { enabledPlugins: j.enabledPlugins ?? {}, env: j.env ?? {} };
-    settingsCache = { mtime: st.mtimeMs, v };
-    return v;
-  } catch {
-    return { enabledPlugins: {}, env: {} };
-  }
-}
-function hookPluginEnabled(settings2 = readSettings()) {
-  return Object.entries(settings2.enabledPlugins).some(([k, on]) => on && (k.startsWith("clorbit@") || k.startsWith("fleet-hooks@")));
-}
-function knownPlugins() {
-  const names2 = /* @__PURE__ */ new Set();
-  for (const k of Object.keys(readSettings().enabledPlugins)) names2.add(k.split("@")[0]);
-  try {
-    const cache5 = path2.join(CLAUDE_DIR, "plugins", "cache");
-    for (const mkt of fs.readdirSync(cache5)) {
-      try {
-        for (const p of fs.readdirSync(path2.join(cache5, mkt))) names2.add(p);
-      } catch {
-      }
-    }
-  } catch {
-  }
-  return [...names2].filter((n) => n.length >= 4).sort((a, b) => b.length - a.length);
-}
-var BUNDLED, HERE, PROJECT_ROOT, CLAUDE_DIR, PROJECTS_DIR, SESSIONS_DIR, SETTINGS_FILE, CLAUDE_JSON_FILES, HOME_DATA_DIR, STATUSLINE_FILE, LEGACY_STATUSLINE_FILE, DATA_DIR, DATA_DIR_EXPLICIT, DB_FILE, CACHE_DIR, DIST_DIR, SERVE_WEB, PORT, HOST, VERSION, LEGACY_DB_FILE, settingsCache;
-var init_config = __esm({
-  "server/config.ts"() {
-    "use strict";
-    BUNDLED = true;
-    HERE = path2.dirname(fileURLToPath(import.meta.url));
-    PROJECT_ROOT = path2.resolve(HERE, "..");
-    CLAUDE_DIR = env("CLAUDE_DIR") || path2.join(os.homedir(), ".claude");
-    PROJECTS_DIR = path2.join(CLAUDE_DIR, "projects");
-    SESSIONS_DIR = path2.join(CLAUDE_DIR, "sessions");
-    SETTINGS_FILE = path2.join(CLAUDE_DIR, "settings.json");
-    CLAUDE_JSON_FILES = env("CLAUDE_JSON") ? [env("CLAUDE_JSON")] : env("CLAUDE_DIR") ? [path2.join(CLAUDE_DIR, ".claude.json"), path2.join(path2.dirname(CLAUDE_DIR), ".claude.json")] : [path2.join(os.homedir(), ".claude.json")];
-    HOME_DATA_DIR = path2.join(os.homedir(), ".clorbit");
-    STATUSLINE_FILE = env("STATUSLINE_FILE") || path2.join(HOME_DATA_DIR, "statusline.json");
-    LEGACY_STATUSLINE_FILE = path2.join(os.homedir(), ".fleet", "statusline.json");
-    DATA_DIR = env("DATA_DIR") || HOME_DATA_DIR;
-    DATA_DIR_EXPLICIT = !!env("DATA_DIR");
-    DB_FILE = path2.join(DATA_DIR, "clorbit.db");
-    CACHE_DIR = env("CACHE_DIR") || path2.join(DATA_DIR, "cache");
-    DIST_DIR = BUNDLED ? path2.join(HERE, "web") : path2.join(PROJECT_ROOT, "plugin", "app", "web");
-    SERVE_WEB = env("SERVE_WEB") ? env("SERVE_WEB") === "1" : BUNDLED;
-    PORT = Number(env("PORT")) || 4980;
-    HOST = "127.0.0.1";
-    VERSION = BUNDLED && true ? "0.6.0" : devVersion();
-    LEGACY_DB_FILE = path2.join(PROJECT_ROOT, "data", "fleet.db");
-    settingsCache = null;
-  }
-});
-
 // server/types.ts
 var SUMMARY_VERSION, MIN_SUMMARY_VERSION;
 var init_types = __esm({
@@ -1049,9 +1163,9 @@ var init_types = __esm({
 });
 
 // server/db.ts
-import fs2 from "node:fs";
+import fs3 from "node:fs";
 import { createRequire } from "node:module";
-import path3 from "node:path";
+import path4 from "node:path";
 function loadSqlite() {
   if (sqliteMod) return sqliteMod;
   const orig = process.emitWarning;
@@ -1129,7 +1243,7 @@ var init_db = __esm({
       constructor(file) {
         this.file = file;
         const { DatabaseSync } = loadSqlite();
-        if (file !== ":memory:") fs2.mkdirSync(path3.dirname(file), { recursive: true });
+        if (file !== ":memory:") fs3.mkdirSync(path4.dirname(file), { recursive: true });
         this.db = new DatabaseSync(file);
         this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;");
         this.migrate();
@@ -1240,7 +1354,7 @@ var init_db = __esm({
         const n = this.stmt("SELECT COUNT(*) AS n FROM file_summaries").get().n;
         let names2 = [];
         try {
-          names2 = fs2.readdirSync(cacheDir).filter((f) => /^summaries-v\d+\.json$/.test(f));
+          names2 = fs3.readdirSync(cacheDir).filter((f) => /^summaries-v\d+\.json$/.test(f));
         } catch {
         }
         const want = `summaries-v${SUMMARY_VERSION}.json`;
@@ -1249,10 +1363,10 @@ var init_db = __esm({
           this.setMeta("json_import", JSON.stringify({ at: Date.now(), file: null, count: 0, skipped, reason: n > 0 ? "db-not-empty" : "no-current-cache" }));
           return null;
         }
-        const file = path3.join(cacheDir, want);
+        const file = path4.join(cacheDir, want);
         let files = [];
         try {
-          const j = JSON.parse(fs2.readFileSync(file, "utf8"));
+          const j = JSON.parse(fs3.readFileSync(file, "utf8"));
           if (j.version === SUMMARY_VERSION && Array.isArray(j.files)) files = j.files.filter((s) => s && typeof s.path === "string" && s.v === SUMMARY_VERSION);
         } catch (e) {
           console.warn("[clorbit] legacy JSON cache is unreadable, skipping import:", e.message);
@@ -1265,7 +1379,7 @@ var init_db = __esm({
         const one = (sql) => this.stmt(sql).get().n;
         const size = (f) => {
           try {
-            return fs2.statSync(f).size;
+            return fs3.statSync(f).size;
           } catch {
             return 0;
           }
@@ -2534,15 +2648,15 @@ var init_insights_text = __esm({
 });
 
 // server/mcp-config.ts
-import fs3 from "node:fs";
-import path4 from "node:path";
+import fs4 from "node:fs";
+import path5 from "node:path";
 function mcpNamesFrom(j) {
   const o = j && typeof j === "object" ? j : {};
   const local = {};
   const projects = o.projects && typeof o.projects === "object" ? o.projects : {};
   for (const [dir, p] of Object.entries(projects)) {
     const n = names(p?.mcpServers);
-    if (n.length && path4.isAbsolute(dir)) local[dir] = n;
+    if (n.length && path5.isAbsolute(dir)) local[dir] = n;
   }
   return { user: names(o.mcpServers), local };
 }
@@ -2550,13 +2664,13 @@ function readClaudeJson(files) {
   for (const file of files) {
     let st;
     try {
-      st = fs3.statSync(file);
+      st = fs4.statSync(file);
     } catch {
       continue;
     }
     if (cache2 && cache2.file === file && cache2.mtime === st.mtimeMs && cache2.size === st.size) return cache2.v;
     try {
-      const v = mcpNamesFrom(JSON.parse(fs3.readFileSync(file, "utf8")));
+      const v = mcpNamesFrom(JSON.parse(fs4.readFileSync(file, "utf8")));
       cache2 = { file, mtime: st.mtimeMs, size: st.size, v };
       return v;
     } catch {
@@ -2567,10 +2681,10 @@ function readClaudeJson(files) {
   return { user: [], local: {} };
 }
 function mcpJsonServers(dir) {
-  const file = path4.join(dir, ".mcp.json");
+  const file = path5.join(dir, ".mcp.json");
   let st;
   try {
-    st = fs3.statSync(file);
+    st = fs4.statSync(file);
   } catch {
     return [];
   }
@@ -2578,7 +2692,7 @@ function mcpJsonServers(dir) {
   if (hit && hit.mtime === st.mtimeMs) return hit.v;
   let v = [];
   try {
-    v = names(JSON.parse(fs3.readFileSync(file, "utf8"))?.mcpServers);
+    v = names(JSON.parse(fs4.readFileSync(file, "utf8"))?.mcpServers);
   } catch {
   }
   projectCache.set(file, { mtime: st.mtimeMs, v });
@@ -2600,12 +2714,12 @@ var init_mcp_config = __esm({
 });
 
 // server/recommend.ts
-import fs4 from "node:fs";
+import fs5 from "node:fs";
 import os2 from "node:os";
-import path5 from "node:path";
+import path6 from "node:path";
 function frontmatterName(file) {
   try {
-    const head = fs4.readFileSync(file, "utf8").slice(0, 2e3);
+    const head = fs5.readFileSync(file, "utf8").slice(0, 2e3);
     const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(head);
     const n = m && /^name:\s*["']?([^"'\r\n]+?)["']?\s*$/m.exec(m[1]);
     return n ? n[1].trim() : null;
@@ -2616,24 +2730,24 @@ function frontmatterName(file) {
 function findAgentFile(name, folders) {
   if (!/^[\w.-]+$/.test(name)) return null;
   for (const dir of folders) {
-    const direct = path5.join(dir, `${name}.md`);
-    if (fs4.existsSync(direct)) return direct;
+    const direct = path6.join(dir, `${name}.md`);
+    if (fs5.existsSync(direct)) return direct;
     let list = [];
     try {
-      list = fs4.readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+      list = fs5.readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
     } catch {
       continue;
     }
-    for (const f of list) if (frontmatterName(path5.join(dir, f)) === name) return path5.join(dir, f);
+    for (const f of list) if (frontmatterName(path6.join(dir, f)) === name) return path6.join(dir, f);
   }
   return null;
 }
 function homeDisplay(p) {
   const home = os2.homedir();
-  return p === home ? "~" : p.startsWith(home + path5.sep) ? `~/${p.slice(home.length + 1).split(path5.sep).join("/")}` : p;
+  return p === home ? "~" : p.startsWith(home + path6.sep) ? `~/${p.slice(home.length + 1).split(path6.sep).join("/")}` : p;
 }
 function defaultEnv(o) {
-  const skills = path5.join(CLAUDE_DIR, "skills");
+  const skills = path6.join(CLAUDE_DIR, "skills");
   const settings2 = readSettings();
   return {
     now: o.now ?? Date.now(),
@@ -2642,12 +2756,12 @@ function defaultEnv(o) {
     autoCompactPct: settings2.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE,
     settingsFile: homeDisplay(SETTINGS_FILE),
     skillsDir: homeDisplay(skills),
-    ownSkillExists: (name) => /^[\w.-]+$/.test(name) && fs4.existsSync(path5.join(skills, name)),
+    ownSkillExists: (name) => /^[\w.-]+$/.test(name) && fs5.existsSync(path6.join(skills, name)),
     mcp: readMcpConfig(),
     claudeJsonFile: homeDisplay(CLAUDE_JSON_FILES[0]),
-    userClaudeMd: homeDisplay(path5.join(CLAUDE_DIR, "CLAUDE.md")),
+    userClaudeMd: homeDisplay(path6.join(CLAUDE_DIR, "CLAUDE.md")),
     agentFile: (name, dirs) => {
-      const f = findAgentFile(name, [...dirs.map((d) => path5.join(d, ".claude", "agents")), path5.join(CLAUDE_DIR, "agents")]);
+      const f = findAgentFile(name, [...dirs.map((d) => path6.join(d, ".claude", "agents")), path6.join(CLAUDE_DIR, "agents")]);
       return f ? homeDisplay(f) : null;
     }
   };
@@ -3100,7 +3214,7 @@ var init_prompts = __esm({
 
 // server/recommend-tools.ts
 import os3 from "node:os";
-import path6 from "node:path";
+import path7 from "node:path";
 function isSafeAllowRule(rule2) {
   if (rule2 === "WebSearch") return true;
   const bash = /^Bash\((.+)\)$/.exec(rule2);
@@ -3154,14 +3268,14 @@ function bashRule(segment) {
   return null;
 }
 function readRule(p, home = os3.homedir()) {
-  if (!p || p.includes("\u2026") || !path6.isAbsolute(p)) return null;
-  const dir = /\.[\w-]{1,8}$/.test(path6.basename(p)) ? path6.dirname(p) : p;
+  if (!p || p.includes("\u2026") || !path7.isAbsolute(p)) return null;
+  const dir = /\.[\w-]{1,8}$/.test(path7.basename(p)) ? path7.dirname(p) : p;
   let rule2;
-  if (dir.startsWith(home + path6.sep)) {
-    const parts = dir.slice(home.length + 1).split(path6.sep).slice(0, 3);
+  if (dir.startsWith(home + path7.sep)) {
+    const parts = dir.slice(home.length + 1).split(path7.sep).slice(0, 3);
     rule2 = `Read(~/${parts.join("/")}/**)`;
   } else {
-    const parts = dir.split(path6.sep).filter(Boolean).slice(0, 3);
+    const parts = dir.split(path7.sep).filter(Boolean).slice(0, 3);
     rule2 = `Read(//${parts.join("/")}/**)`;
   }
   return isSafeAllowRule(rule2) ? rule2 : null;
@@ -3246,7 +3360,7 @@ function permissionRecommendation(events, range, lang, env2, win, home = os3.hom
   const saving = { waitMs, days: rangeDays(range), basis: "range" };
   const scopeOf = (g) => {
     const ps = placements.filter((p) => p.g === g);
-    return ps.some((p) => !p.dir) ? T.allow.user : T.allow.local(ps.map((p) => path6.basename(p.dir)).join(", "));
+    return ps.some((p) => !p.dir) ? T.allow.user : T.allow.local(ps.map((p) => path7.basename(p.dir)).join(", "));
   };
   const skippedTop = [...skipped.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
   const min = waitMs / 6e4;
@@ -3331,14 +3445,14 @@ function toolRecommendations(store2, range, lang, env2) {
       const extra = list.reduce((n, a) => n + a.extra, 0);
       const sessions2 = new Set(list.flatMap((a) => [...a.sessions])).size;
       const where = (sid) => {
-        const m = store2.mainOf(sid);
-        return m?.title ? TT.quote(m.title) : ctx.projectOfSession.get(sid) ?? sid.slice(0, 8);
+        const t = sessionTitle(store2.mainOf(sid));
+        return t ? TT.quote(t) : ctx.projectOfSession.get(sid) ?? sid.slice(0, 8);
       };
       const items = [];
       for (const a of list.slice(0, REREAD_MAX_ITEMS)) {
         const show = homeDisplay(a.file);
         const [cwd, inSessions] = [...a.cwds.entries()].map(([d, set]) => [d, set.size]).sort((x, y) => y[1] - x[1])[0] ?? [null, 0];
-        if (cwd && inSessions >= REREAD_NOTE_SESSIONS && a.file.startsWith(cwd + path6.sep)) {
+        if (cwd && inSessions >= REREAD_NOTE_SESSIONS && a.file.startsWith(cwd + path7.sep)) {
           const rel = a.file.slice(cwd.length + 1);
           items.push(instructionNoteItem(lang, { name: show, file: `${homeDisplay(cwd)}/CLAUDE.md`, section: T.reread.section, text: T.reread.noteText(rel), why: T.reread.whyNote(a.sessions.size, a.extra) }));
         } else {
@@ -3350,7 +3464,7 @@ function toolRecommendations(store2, range, lang, env2) {
         severity: tokens >= 2e6 ? "warn" : "info",
         title: T.reread.title(list.length, sessions2),
         detail: T.reread.detail(extra, Math.round(tokens / Math.max(1, extra))),
-        evidence: list.slice(0, 6).map((a) => T.reread.evidence(path6.basename(a.file), a.top.n, where(a.top.sid), a.sessions.size)),
+        evidence: list.slice(0, 6).map((a) => T.reread.evidence(path7.basename(a.file), a.top.n, where(a.top.sid), a.sessions.size)),
         estSavingTokens: tokens,
         pages: ["tools"],
         scope: "range",
@@ -3466,6 +3580,7 @@ var init_recommend_tools = __esm({
     init_insights_text();
     init_recommend();
     init_util();
+    init_titles();
     ALLOW_MIN_PROMPTS = 2;
     ALLOW_MAX_RULES = 12;
     READ_ONLY_CMDS = /* @__PURE__ */ new Set([
@@ -3725,8 +3840,8 @@ function agentRecommendations(store2, range, lang, env2) {
       flagged.sort((a, b) => b.burst - a.burst || b.depth - a.depth || a.sid.localeCompare(b.sid));
       const top = flagged.slice(0, NEST_MAX);
       const name = (sid) => {
-        const m = store2.mainOf(sid);
-        return m?.title ? TT.quote(m.title) : sid.slice(0, 8);
+        const t = sessionTitle(store2.mainOf(sid));
+        return t ? TT.quote(t) : sid.slice(0, 8);
       };
       const facts = (f) => T.nest.facts(f.total, f.burst, f.depth, ctx.projectOfSession.get(f.sid) ?? "", localDate(f.at));
       out.push({
@@ -3737,7 +3852,7 @@ function agentRecommendations(store2, range, lang, env2) {
         evidence: top.map((f) => `${name(f.sid)}: ${facts(f)}`),
         pages: ["subagents"],
         scope: "range",
-        targets: top.map((f) => ({ key: f.sid, label: store2.mainOf(f.sid)?.title ?? f.sid.slice(0, 8), kind: "session", note: facts(f) })),
+        targets: top.map((f) => ({ key: f.sid, label: sessionTitle(store2.mainOf(f.sid)) ?? f.sid.slice(0, 8), kind: "session", note: facts(f) })),
         prompts: buildPrompts({
           lang,
           summary: T.nest.summary(flagged.length),
@@ -3799,6 +3914,7 @@ var init_recommend_agents = __esm({
     init_recommend();
     init_recommend_tools();
     init_util();
+    init_titles();
     SONNET_PRICE = 2;
     isTopTier = (model) => /opus|fable|mythos/i.test(model) && (modelPrice(model) ?? 0) > SONNET_PRICE;
     MODEL_MIN_RUNS = 3;
@@ -3828,7 +3944,7 @@ var init_recommend_agents = __esm({
 });
 
 // server/recommend-mcp.ts
-import path7 from "node:path";
+import path8 from "node:path";
 function mcpParts(s) {
   let m = partsMemo.get(s);
   if (m) return m;
@@ -3848,7 +3964,7 @@ function upwards(dir) {
   const out = [];
   for (let d = dir, i = 0; i < 12; i++) {
     out.push(d);
-    const up = path7.dirname(d);
+    const up = path8.dirname(d);
     if (up === d) break;
     d = up;
   }
@@ -5057,7 +5173,7 @@ var init_automation = __esm({
 });
 
 // server/lines.ts
-import fs5 from "node:fs/promises";
+import fs6 from "node:fs/promises";
 function classifyPrefix(head) {
   if (head[0] !== 123 || head[1] !== 34) return null;
   const p = head.subarray(0, 24).toString("latin1");
@@ -5065,7 +5181,7 @@ function classifyPrefix(head) {
   return null;
 }
 async function readLines(file, start, sink, maxBytes = Infinity) {
-  const fh = await fs5.open(file, "r");
+  const fh = await fs6.open(file, "r");
   try {
     const buf = Buffer.allocUnsafe(CHUNK);
     let pos = start;
@@ -5166,8 +5282,8 @@ var init_lines = __esm({
 });
 
 // server/scanner.ts
-import fs6 from "node:fs";
-import path8 from "node:path";
+import fs7 from "node:fs";
+import path9 from "node:path";
 function emptyCarry() {
   return {
     recentReq: [],
@@ -5206,11 +5322,16 @@ function emptyDay() {
   };
 }
 function identify(projectsDir, file) {
-  const rel = path8.relative(projectsDir, file).split(path8.sep);
+  let rel = path9.relative(projectsDir, file).split(path9.sep);
+  if (rel[0] === "..") {
+    const i = file.lastIndexOf(PROJECTS_MARK);
+    if (i < 0) return null;
+    rel = file.slice(i + PROJECTS_MARK.length).split(path9.sep);
+  }
   if (rel.length < 2 || rel[0] === ".." || !file.endsWith(".jsonl")) return null;
   const projectDir = rel[0];
-  if (rel.length === 2) return { sessionId: path8.basename(rel[1], ".jsonl"), agentId: null, projectDir };
-  const base = path8.basename(file, ".jsonl");
+  if (rel.length === 2) return { sessionId: path9.basename(rel[1], ".jsonl"), agentId: null, projectDir };
+  const base = path9.basename(file, ".jsonl");
   if (rel[2] !== "subagents" || !base.startsWith("agent-")) return null;
   return { sessionId: rel[1], agentId: base.slice(6), projectDir };
 }
@@ -5259,8 +5380,8 @@ function newSummary(file, id) {
 function readMeta(file) {
   const metaPath = file.replace(/\.jsonl$/, ".meta.json");
   try {
-    const m = JSON.parse(fs6.readFileSync(metaPath, "utf8"));
-    const wf = path8.basename(path8.dirname(file));
+    const m = JSON.parse(fs7.readFileSync(metaPath, "utf8"));
+    const wf = path9.basename(path9.dirname(file));
     return {
       agentType: m.agentType || "general-purpose",
       description: m.description ?? null,
@@ -5332,7 +5453,7 @@ function taskNotification(text) {
 async function scanFile(projectsDir, file, prev, opts, onEvent) {
   let st;
   try {
-    st = fs6.statSync(file);
+    st = fs7.statSync(file);
   } catch {
     return null;
   }
@@ -5361,7 +5482,7 @@ async function scanFile(projectsDir, file, prev, opts, onEvent) {
   s.mtimeMs = st.mtimeMs;
   return { summary: s, changed: true, resumed, bytes: s.offset - start };
 }
-var RECENT_REQ, MAX_PENDING, MAX_TOOLNAMES, BIG_RESULT, MAX_BIG, REBUILD_MIN_CTX, REBUILD_SHARE, IDLE_GAP_MS, IDLE_LONG_MS, CTX_HI, SIMPLE_MAX_REQS, SIMPLE_MAX_OUT, LABELS, ENV_TYPES, textOf, ERROR_KINDS, MAX_TASK_ENDS, FileScanner;
+var RECENT_REQ, MAX_PENDING, MAX_TOOLNAMES, BIG_RESULT, MAX_BIG, REBUILD_MIN_CTX, REBUILD_SHARE, IDLE_GAP_MS, IDLE_LONG_MS, CTX_HI, SIMPLE_MAX_REQS, SIMPLE_MAX_OUT, LABELS, ENV_TYPES, PROJECTS_MARK, textOf, ERROR_KINDS, MAX_TASK_ENDS, FileScanner;
 var init_scanner = __esm({
   "server/scanner.ts"() {
     "use strict";
@@ -5396,6 +5517,7 @@ var init_scanner = __esm({
       "output_style",
       "todo_reminder"
     ]);
+    PROJECTS_MARK = `${path9.sep}.claude${path9.sep}projects${path9.sep}`;
     textOf = (content) => typeof content === "string" ? content : Array.isArray(content) ? content.map((b) => typeof b?.text === "string" ? b.text : "").join(" ") : "";
     ERROR_KINDS = [
       ["hook", /hook (?:error|blocked|denied)|blocked by (?:a |the )?hook|PreToolUse:|PostToolUse:/i],
@@ -5882,53 +6004,53 @@ var init_scanner = __esm({
 
 // server/store.ts
 import { EventEmitter } from "node:events";
-import fs7 from "node:fs";
+import fs8 from "node:fs";
 import os4 from "node:os";
-import path9 from "node:path";
+import path10 from "node:path";
 import { Worker } from "node:worker_threads";
 function listTranscripts(projectsDir) {
   const out = [];
   let dirs = [];
   try {
-    dirs = fs7.readdirSync(projectsDir);
+    dirs = fs8.readdirSync(projectsDir);
   } catch {
     return out;
   }
   for (const d of dirs) {
-    const pd = path9.join(projectsDir, d);
+    const pd = path10.join(projectsDir, d);
     let entries;
     try {
-      entries = fs7.readdirSync(pd, { withFileTypes: true });
+      entries = fs8.readdirSync(pd, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const e of entries) {
-      if (e.isFile() && e.name.endsWith(".jsonl")) out.push(path9.join(pd, e.name));
+      if (e.isFile() && e.name.endsWith(".jsonl")) out.push(path10.join(pd, e.name));
       else if (e.isDirectory()) {
-        const sub = path9.join(pd, e.name, "subagents");
+        const sub = path10.join(pd, e.name, "subagents");
         let se;
         try {
-          se = fs7.readdirSync(sub, { withFileTypes: true });
+          se = fs8.readdirSync(sub, { withFileTypes: true });
         } catch {
           continue;
         }
         for (const x of se) {
-          if (x.isFile() && x.name.startsWith("agent-") && x.name.endsWith(".jsonl")) out.push(path9.join(sub, x.name));
+          if (x.isFile() && x.name.startsWith("agent-") && x.name.endsWith(".jsonl")) out.push(path10.join(sub, x.name));
           else if (x.isDirectory() && x.name === "workflows") {
             let wfs = [];
             try {
-              wfs = fs7.readdirSync(path9.join(sub, "workflows"));
+              wfs = fs8.readdirSync(path10.join(sub, "workflows"));
             } catch {
               continue;
             }
             for (const wf of wfs) {
               let af = [];
               try {
-                af = fs7.readdirSync(path9.join(sub, "workflows", wf));
+                af = fs8.readdirSync(path10.join(sub, "workflows", wf));
               } catch {
                 continue;
               }
-              for (const f of af) if (f.startsWith("agent-") && f.endsWith(".jsonl")) out.push(path9.join(sub, "workflows", wf, f));
+              for (const f of af) if (f.startsWith("agent-") && f.endsWith(".jsonl")) out.push(path10.join(sub, "workflows", wf, f));
             }
           }
         }
@@ -5942,6 +6064,7 @@ var init_store = __esm({
   "server/store.ts"() {
     "use strict";
     init_config();
+    init_cowork();
     init_scanner();
     init_types();
     init_i18n();
@@ -5997,15 +6120,21 @@ var init_store = __esm({
       }
     };
     Store = class extends EventEmitter {
-      constructor(projectsDir, db2, opts) {
+      /**
+       * @param coworkDir the Claude desktop's Cowork sessions folder whose transcripts are scanned too
+       *   (see cowork.ts); '' (the default) scans only `projectsDir`.
+       */
+      constructor(projectsDir, db2, opts, coworkDir2 = "") {
         super();
         this.projectsDir = projectsDir;
         this.db = db2;
         this.opts = opts;
+        this.coworkDir = coworkDir2;
       }
       projectsDir;
       db;
       opts;
+      coworkDir;
       files = /* @__PURE__ */ new Map();
       bySession = /* @__PURE__ */ new Map();
       /** Paths whose transcript is gone from disk → when it was first noticed missing. Their summaries stay in `files`. */
@@ -6019,6 +6148,16 @@ var init_store = __esm({
       saveTimer = null;
       dirtyPaths = /* @__PURE__ */ new Set();
       flushing = null;
+      /** Every transcript: the main projects dir and, when enabled, each Cowork session's own one. */
+      listAll() {
+        const out = listTranscripts(this.projectsDir);
+        if (this.coworkDir) for (const root of coworkProjectRoots(this.coworkDir)) out.push(...listTranscripts(root));
+        return out;
+      }
+      /** Is this transcript one of a Cowork session? */
+      isCowork(file) {
+        return isCoworkPath(file, this.coworkDir);
+      }
       /**
        * Warm start: optionally imports the legacy JSON cache once, then loads all
        * current-version summaries (including archived ones) from SQLite.
@@ -6085,10 +6224,10 @@ var init_store = __esm({
       async coldScan(threads = Math.max(2, Math.min(8, os4.cpus().length - 2))) {
         const st = this.stats;
         st.startedAt = Date.now();
-        const list = listTranscripts(this.projectsDir);
+        const list = this.listAll();
         const withM = list.map((f) => {
           try {
-            const s = fs7.statSync(f);
+            const s = fs8.statSync(f);
             return { f, m: s.mtimeMs, size: s.size };
           } catch {
             return null;
@@ -6153,7 +6292,7 @@ var init_store = __esm({
       refresh(file) {
         return this.enqueue(file, async () => {
           if (!identify(this.projectsDir, file)) return;
-          if (!fs7.existsSync(file)) {
+          if (!fs8.existsSync(file)) {
             this.markMissing(file);
             return;
           }
@@ -6275,9 +6414,12 @@ function sessionRecommendations(store2, range, lang, env2, o = {}) {
   const mains = [];
   for (const s of store2.files.values()) if (s.agentId === null && Object.keys(s.days).some((d) => inRange(d, range))) mains.push(s);
   if (!mains.length) return [];
-  const name = (s) => s.title ? TT.quote(s.title) : s.sessionId.slice(0, 8);
+  const name = (s) => {
+    const t = sessionTitle(s);
+    return t ? TT.quote(t) : s.sessionId.slice(0, 8);
+  };
   const where = (s) => `${name(s)} (${ctx.project(s)})`;
-  const sessionTarget = (s, note) => ({ key: s.sessionId, label: s.title ?? s.sessionId.slice(0, 8), kind: "session", note });
+  const sessionTarget = (s, note) => ({ key: s.sessionId, label: sessionTitle(s) ?? s.sessionId.slice(0, 8), kind: "session", note });
   const out = [];
   {
     const rows = [];
@@ -6531,6 +6673,7 @@ var init_recommend_sessions = __esm({
     init_recommend();
     init_store();
     init_util();
+    init_titles();
     RAISED_EFFORT = /* @__PURE__ */ new Set(["xhigh", "max"]);
     TH = {
       all: { compactTotal: 3, rebuildN: 3, rebuildSave: 2e5, hiTurns: 10, hiShare: 0.25, hiSessions: 2 },
@@ -6622,7 +6765,8 @@ function waitInsights(store2, hookLog2, range, lang = "en", env2) {
     const where = (sid) => {
       const main = store2.mainOf(sid);
       const project = ctx.projectOfSession.get(sid);
-      return main?.title ? `${T.quote(main.title)}${project ? ` (${project})` : ""}` : project ?? sid.slice(0, 8);
+      const title = sessionTitle(main);
+      return title ? `${T.quote(title)}${project ? ` (${project})` : ""}` : project ?? sid.slice(0, 8);
     };
     const UNKNOWN = "\0unknown";
     const byTool = /* @__PURE__ */ new Map();
@@ -6759,6 +6903,7 @@ var init_insights2 = __esm({
     init_recommend_tools();
     init_recommend_limits();
     init_recommend_sessions();
+    init_titles();
     sevRank = { high: 0, warn: 1, info: 2 };
     bySaving = (a, b) => (b.estSavingTokens ?? 0) - (a.estSavingTokens ?? 0) || sevRank[a.severity] - sevRank[b.severity];
     waitMemo = /* @__PURE__ */ new Map();
@@ -6911,7 +7056,7 @@ var init_limits_log = __esm({
 });
 
 // server/plan.ts
-import fs8 from "node:fs";
+import fs9 from "node:fs";
 function str2(v, max = 40) {
   if (typeof v !== "string") return null;
   const s = v.trim();
@@ -6936,14 +7081,14 @@ function readPlan(files = CLAUDE_JSON_FILES) {
   for (const file of files) {
     let st;
     try {
-      st = fs8.statSync(file);
+      st = fs9.statSync(file);
     } catch {
       continue;
     }
     if (cache3 && cache3.file === file && cache3.mtime === st.mtimeMs && cache3.size === st.size) return cache3.plan;
     let plan = null;
     try {
-      plan = planFrom(JSON.parse(fs8.readFileSync(file, "utf8"))?.oauthAccount);
+      plan = planFrom(JSON.parse(fs9.readFileSync(file, "utf8"))?.oauthAccount);
     } catch {
       if (cache3 && cache3.file === file) return cache3.plan;
     }
@@ -7109,8 +7254,8 @@ var init_tree = __esm({
 
 // server/live.ts
 import { EventEmitter as EventEmitter2 } from "node:events";
-import fs9 from "node:fs";
-import path10 from "node:path";
+import fs10 from "node:fs";
+import path11 from "node:path";
 function isAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -7123,14 +7268,14 @@ function readPidFiles(dir = SESSIONS_DIR) {
   const out = /* @__PURE__ */ new Map();
   let names2 = [];
   try {
-    names2 = fs9.readdirSync(dir);
+    names2 = fs10.readdirSync(dir);
   } catch {
     return out;
   }
   for (const n of names2) {
     if (!/^\d+\.json$/.test(n)) continue;
     try {
-      const j = JSON.parse(fs9.readFileSync(path10.join(dir, n), "utf8"));
+      const j = JSON.parse(fs10.readFileSync(path11.join(dir, n), "utf8"));
       const pid = Number(j.pid ?? n.split(".")[0]);
       if (!j.sessionId) continue;
       const info = {
@@ -7156,9 +7301,9 @@ function readHeadOrigin(file) {
   const out = { entrypoint: null, promptOrigin: null };
   let fd = null;
   try {
-    fd = fs9.openSync(file, "r");
+    fd = fs10.openSync(file, "r");
     const buf = Buffer.alloc(HEAD_BYTES);
-    const n = fs9.readSync(fd, buf, 0, HEAD_BYTES, 0);
+    const n = fs10.readSync(fd, buf, 0, HEAD_BYTES, 0);
     const lines = buf.subarray(0, n).toString("utf8").split("\n");
     if (n === HEAD_BYTES) lines.pop();
     for (const line of lines) {
@@ -7179,7 +7324,7 @@ function readHeadOrigin(file) {
   } catch {
   } finally {
     if (fd !== null) try {
-      fs9.closeSync(fd);
+      fs10.closeSync(fd);
     } catch {
     }
   }
@@ -7216,9 +7361,9 @@ function limitsFromStatusline(j, updatedAt) {
 }
 function readLimits() {
   try {
-    const file = fs9.existsSync(STATUSLINE_FILE) || !fs9.existsSync(LEGACY_STATUSLINE_FILE) ? STATUSLINE_FILE : LEGACY_STATUSLINE_FILE;
-    const st = fs9.statSync(file);
-    return { capture: true, limits: limitsFromStatusline(JSON.parse(fs9.readFileSync(file, "utf8")), Math.round(st.mtimeMs)) };
+    const file = fs10.existsSync(STATUSLINE_FILE) || !fs10.existsSync(LEGACY_STATUSLINE_FILE) ? STATUSLINE_FILE : LEGACY_STATUSLINE_FILE;
+    const st = fs10.statSync(file);
+    return { capture: true, limits: limitsFromStatusline(JSON.parse(fs10.readFileSync(file, "utf8")), Math.round(st.mtimeMs)) };
   } catch {
     return { limits: null, capture: false };
   }
@@ -7231,7 +7376,8 @@ var init_live = __esm({
     init_config();
     init_plan();
     init_i18n();
-    init_store();
+    init_cowork();
+    init_titles();
     init_tree();
     init_util();
     DAY_MS2 = 24 * 36e5;
@@ -7289,18 +7435,36 @@ var init_live = __esm({
       }
       start() {
         try {
-          const w = fs9.watch(PROJECTS_DIR, { recursive: true }, (_ev, name) => {
+          const w = fs10.watch(PROJECTS_DIR, { recursive: true }, (_ev, name) => {
             if (!name) return;
             const f = String(name);
-            if (f.endsWith(".jsonl")) this.schedule(path10.join(PROJECTS_DIR, f));
-            else if (f.endsWith(".meta.json")) this.schedule(path10.join(PROJECTS_DIR, f.replace(/\.meta\.json$/, ".jsonl")));
+            if (f.endsWith(".jsonl")) this.schedule(path11.join(PROJECTS_DIR, f));
+            else if (f.endsWith(".meta.json")) this.schedule(path11.join(PROJECTS_DIR, f.replace(/\.meta\.json$/, ".jsonl")));
           });
           this.watchers.push(w);
         } catch (e) {
           console.warn("[clorbit] fs.watch on projects is unavailable:", e.message);
         }
+        if (this.store.coworkDir && fs10.existsSync(this.store.coworkDir)) {
+          try {
+            const dir = this.store.coworkDir;
+            const w = fs10.watch(dir, { recursive: true }, (_ev, name) => {
+              if (!name) return;
+              const f = String(name);
+              if (!f.includes(`${path11.sep}.claude${path11.sep}projects${path11.sep}`)) {
+                if (/local_[\w-]+\.json$/.test(f)) this.cache = null;
+                return;
+              }
+              if (f.endsWith(".jsonl")) this.schedule(path11.join(dir, f));
+              else if (f.endsWith(".meta.json")) this.schedule(path11.join(dir, f.replace(/\.meta\.json$/, ".jsonl")));
+            });
+            this.watchers.push(w);
+          } catch (e) {
+            console.warn("[clorbit] fs.watch on Cowork sessions is unavailable:", e.message);
+          }
+        }
         try {
-          const w = fs9.watch(SESSIONS_DIR, () => this.schedule("__sessions__"));
+          const w = fs10.watch(SESSIONS_DIR, () => this.schedule("__sessions__"));
           this.watchers.push(w);
         } catch {
         }
@@ -7334,21 +7498,22 @@ var init_live = __esm({
           const live2 = this.pids.get(s.sessionId)?.alive || now - s.lastTs < 10 * 6e4;
           if (!live2) continue;
           try {
-            const st = fs9.statSync(s.path);
+            const st = fs10.statSync(s.path);
             if (st.size !== s.size || st.mtimeMs !== s.mtimeMs) void this.store.refresh(s.path);
           } catch {
           }
         }
         if (this.store.scanDone) {
-          for (const p of this.pids.values()) {
-            if (!p.alive) continue;
-            const main = this.store.mainOf(p.sessionId);
-            const dir = main ? path10.join(path10.dirname(main.path), p.sessionId, "subagents") : null;
+          const liveIds = [...this.pids.values()].filter((p) => p.alive).map((p) => p.sessionId);
+          for (const s of this.store.files.values()) if (s.agentId === null && now - s.lastTs < COWORK_LIVE_MS && this.store.isCowork(s.path)) liveIds.push(s.sessionId);
+          for (const sid of liveIds) {
+            const main = this.store.mainOf(sid);
+            const dir = main ? path11.join(path11.dirname(main.path), sid, "subagents") : null;
             if (!dir) continue;
             try {
-              for (const f of fs9.readdirSync(dir)) {
+              for (const f of fs10.readdirSync(dir)) {
                 if (f.startsWith("agent-") && f.endsWith(".jsonl")) {
-                  const full = path10.join(dir, f);
+                  const full = path11.join(dir, f);
                   if (!this.store.files.has(full)) void this.store.refresh(full);
                 }
               }
@@ -7359,7 +7524,7 @@ var init_live = __esm({
       }
       relist() {
         if (!this.store.scanDone) return;
-        for (const f of listTranscripts(PROJECTS_DIR)) if (!this.store.files.has(f)) void this.store.refresh(f);
+        for (const f of this.store.listAll()) if (!this.store.files.has(f)) void this.store.refresh(f);
       }
       /** Compares statuses with the previous tick and broadcasts changes. */
       tick() {
@@ -7393,6 +7558,19 @@ var init_live = __esm({
           if (this.listenerCount("snapshot")) this.emit("snapshot", this.snapshot("en"));
         }
       }
+      /** Are there any Cowork transcripts at all (for the galaxy's Cowork switch)? */
+      hasCowork() {
+        if (!this.store.coworkDir) return false;
+        if (this.coworkMemo.v === this.store.version) return this.coworkMemo.has;
+        let has = false;
+        for (const f of this.store.files.keys()) if (this.store.isCowork(f)) {
+          has = true;
+          break;
+        }
+        this.coworkMemo = { v: this.store.version, has };
+        return has;
+      }
+      coworkMemo = { v: -1, has: false };
       /** Interactive or automated (see shared/automation.ts), with the entrypoint it was decided by. */
       kindOf(sessionId, main = this.store.mainOf(sessionId) ?? null, pid = this.pids.get(sessionId) ?? null) {
         let entrypoint = main?.entrypoint ?? null;
@@ -7478,12 +7656,15 @@ var init_live = __esm({
         }
         const sessions2 = [];
         let working = 0, waiting = 0, workingSubs = 0, alive = 0;
+        let coworkSeen = false;
         for (const sid of sessionIds) {
           const files = this.store.sessionFiles(sid);
           const main = files.find((f) => f.agentId === null) ?? null;
           const subs = files.filter((f) => f.agentId !== null);
           const pid = this.pids.get(sid) ?? null;
-          const isAlive2 = !!pid?.alive;
+          const cowork = !!main && this.store.isCowork(main.path);
+          const cmeta = cowork ? coworkMetaOf(main.path, this.store.coworkDir) : null;
+          const isAlive2 = cowork ? !cmeta?.archived && now - Math.max(main.lastTs, ...subs.map((s) => s.lastTs)) < COWORK_LIVE_MS : !!pid?.alive;
           const pidStatus = pid?.status ?? null;
           const tree = buildTree(main, subs, now, isAlive2, false, pidStatus);
           let st = sessionStatus(main, subs, tree, now, isAlive2, pidStatus, pid?.waitingFor ?? null);
@@ -7506,7 +7687,7 @@ var init_live = __esm({
             tokensSince(f, cutoff, s24);
           }
           const cwd = pid?.cwd ?? main?.cwd ?? subs[0]?.cwd ?? "";
-          const project = projectOf(cwd, main?.projectDir ?? subs[0]?.projectDir);
+          const project = cowork && coworkProject(main.path, this.store.coworkDir) || projectOf(cwd, main?.projectDir ?? subs[0]?.projectDir);
           if (sumT4(s24) > 0) projects.add(project);
           for (const f of subs) if (f.lastTs >= cutoff && subagentDone(f, now, isAlive2)) finished24++;
           const k = this.kindOf(sid, main, pid);
@@ -7518,7 +7699,7 @@ var init_live = __esm({
             sessionId: sid,
             pid: pid?.pid ?? null,
             alive: isAlive2,
-            title: main?.title ?? null,
+            title: sessionTitle(main, this.store.coworkDir),
             name: pid?.name ?? null,
             cwd,
             project,
@@ -7541,8 +7722,10 @@ var init_live = __esm({
             root: tree.root,
             kind: k.kind,
             terminal: isAlive2 && pid && this.terminalOf ? this.terminalOf(pid) : null,
-            entrypoint: k.entrypoint
+            entrypoint: k.entrypoint,
+            ...cowork ? { source: "cowork" } : {}
           });
+          if (cowork) coworkSeen = true;
         }
         const order = { waiting: 0, working: 1, idle: 2, stopped: 3 };
         sessions2.sort((a, b) => order[a.status] - order[b.status] || b.lastActivity - a.lastActivity);
@@ -7577,6 +7760,7 @@ var init_live = __esm({
           // Hooks count as installed when the clorbit plugin (or legacy fleet-hooks) is enabled, or events already arrived.
           hooksInstalled: hookPluginEnabled() || this.hooks.installed,
           statuslineCapture: lim.capture,
+          cowork: coworkSeen || this.hasCowork(),
           scan: { done: this.store.scanDone, filesTotal: this.store.stats.filesTotal, filesDone: this.store.stats.filesDone }
         };
         this.cache = { at: now, v, reasons };
@@ -7826,8 +8010,8 @@ var init_notify = __esm({
 
 // server/notifier.ts
 import { execFile } from "node:child_process";
-import fs10 from "node:fs";
-import path11 from "node:path";
+import fs11 from "node:fs";
+import path12 from "node:path";
 function escapeAppleScript(s) {
   return s.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
@@ -7841,8 +8025,8 @@ function notifierCommand(tool, title, body) {
 }
 function executable(file) {
   try {
-    fs10.accessSync(file, fs10.constants.X_OK);
-    return fs10.statSync(file).isFile();
+    fs11.accessSync(file, fs11.constants.X_OK);
+    return fs11.statSync(file).isFile();
   } catch {
     return false;
   }
@@ -7850,7 +8034,7 @@ function executable(file) {
 function detectTool(platform = process.platform, pathEnv = process.env.PATH ?? "") {
   if (platform === "darwin") return executable("/usr/bin/osascript") ? "osascript" : null;
   if (platform === "linux") {
-    for (const dir of pathEnv.split(path11.delimiter)) if (dir && executable(path11.join(dir, "notify-send"))) return "notify-send";
+    for (const dir of pathEnv.split(path12.delimiter)) if (dir && executable(path12.join(dir, "notify-send"))) return "notify-send";
   }
   return null;
 }
@@ -8515,7 +8699,7 @@ async function sessionReplay(store2, sessionId, alive, lang = "en", now = Date.n
     sessionId,
     project: projectOf(any.cwd, any.projectDir),
     cwd: main?.cwd ?? any.cwd ?? "",
-    title: main?.title ?? null,
+    title: sessionTitle(main),
     model: main?.model ?? null,
     effort: main?.effort ?? null
   }, { alive, lang, now, isMissing: (p) => store2.isMissing(p) });
@@ -8532,6 +8716,7 @@ var init_replay2 = __esm({
     init_tree();
     init_util();
     init_i18n();
+    init_titles();
     TOOL_USE_ID = Buffer.from('"tool_use_id":"');
     READ_PARALLEL = 4;
     HEAD2 = 640;
@@ -8696,9 +8881,9 @@ var init_replay2 = __esm({
 });
 
 // server/changes.ts
-import fs11 from "node:fs/promises";
+import fs12 from "node:fs/promises";
 import os5 from "node:os";
-import path12 from "node:path";
+import path13 from "node:path";
 function stringAt2(buf, at) {
   const end = buf.indexOf(34, at);
   return end > at ? buf.toString("latin1", at, end) : null;
@@ -8786,11 +8971,11 @@ function changeOf(name, input, ts) {
   return { path: p, added, removed, hunks, write: false };
 }
 function relPath(abs, cwd, home = os5.homedir()) {
-  if (!path12.isAbsolute(abs)) return abs;
-  const norm = path12.normalize(abs);
+  if (!path13.isAbsolute(abs)) return abs;
+  const norm = path13.normalize(abs);
   if (cwd) {
-    const c = path12.normalize(cwd).replace(/\/+$/, "");
-    if (norm === c) return path12.basename(norm);
+    const c = path13.normalize(cwd).replace(/\/+$/, "");
+    if (norm === c) return path13.basename(norm);
     if (norm.startsWith(c + "/")) return norm.slice(c.length + 1);
   }
   if (home && norm.startsWith(home.replace(/\/+$/, "") + "/")) {
@@ -8842,7 +9027,7 @@ function buildChanges(files, steps, stepsTotal, meta) {
     if (f.edits || f.failed) {
       const c = {
         path: rel,
-        name: path12.basename(f.abs),
+        name: path13.basename(f.abs),
         added: f.added,
         removed: f.removed,
         edits: f.edits,
@@ -8864,7 +9049,7 @@ function buildChanges(files, steps, stepsTotal, meta) {
       }
     } else if (f.reads) {
       readsTotal++;
-      reads.push({ path: rel, name: path12.basename(f.abs), count: f.reads, lastTs: f.lastTs });
+      reads.push({ path: rel, name: path13.basename(f.abs), count: f.reads, lastTs: f.lastTs });
     }
   }
   changed.sort((a, b) => Number(b.edits > 0) - Number(a.edits > 0) || b.lastTs - a.lastTs || a.path.localeCompare(b.path));
@@ -8886,7 +9071,7 @@ function buildChanges(files, steps, stepsTotal, meta) {
 async function sinkFor(f) {
   let st;
   try {
-    st = await fs11.stat(f.path);
+    st = await fs12.stat(f.path);
   } catch {
     return null;
   }
@@ -9108,8 +9293,8 @@ var init_changes = __esm({
 
 // server/terminal.ts
 import { execFile as execFile2, execFileSync } from "node:child_process";
-import fs12 from "node:fs";
-import path13 from "node:path";
+import fs13 from "node:fs";
+import path14 from "node:path";
 function parsePsEnv(out) {
   const env2 = {};
   for (const tok of out.split(/\s+/)) {
@@ -9273,10 +9458,10 @@ function sh(file, args) {
   }
 }
 function findBin(name, extra = []) {
-  const dirs = [...(process.env.PATH ?? "").split(path13.delimiter), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
-  for (const f of [...extra, ...dirs.filter(Boolean).map((d) => path13.join(d, name))]) {
+  const dirs = [...(process.env.PATH ?? "").split(path14.delimiter), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+  for (const f of [...extra, ...dirs.filter(Boolean).map((d) => path14.join(d, name))]) {
     try {
-      fs12.accessSync(f, fs12.constants.X_OK);
+      fs13.accessSync(f, fs13.constants.X_OK);
       return f;
     } catch {
     }
@@ -9288,7 +9473,7 @@ function systemReader(platform = process.platform) {
     env(pid) {
       if (platform === "linux") {
         try {
-          return parseProcEnviron(fs12.readFileSync(`/proc/${pid}/environ`, "utf8"));
+          return parseProcEnviron(fs13.readFileSync(`/proc/${pid}/environ`, "utf8"));
         } catch {
           return {};
         }
@@ -9366,7 +9551,7 @@ var init_terminal = __esm({
       kittyTo: /^(unix:[@/][^\0\s]{1,300}|tcp:(localhost|127\.0\.0\.1):\d{1,5})$/,
       path: /^\/[^\0\n\r]{1,1000}$/
     };
-    appName = (p) => p ? path13.basename(p).replace(/\.app$/, "") : null;
+    appName = (p) => p ? path14.basename(p).replace(/\.app$/, "") : null;
     q = (s) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     defaultRunner2 = (c) => new Promise((resolve) => {
       execFile2(c.file, c.args, { timeout: 5e3, windowsHide: true, env: c.env ? { ...process.env, ...c.env } : process.env }, (err, stdout, stderr) => {
@@ -9458,9 +9643,9 @@ var init_terminal = __esm({
 
 // server/index.ts
 var index_exports = {};
-import fs13 from "node:fs";
+import fs14 from "node:fs";
 import http from "node:http";
-import path14 from "node:path";
+import path15 from "node:path";
 function about() {
   const st = db ? (hookLog.flush(), db.stats()) : null;
   const lim = readLimits();
@@ -9502,16 +9687,16 @@ function json(res, code, body) {
   res.end(s);
 }
 function serveStatic(res, urlPath) {
-  const safe = path14.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
-  let file = path14.join(DIST_DIR, safe);
-  if (!file.startsWith(DIST_DIR) || !fs13.existsSync(file) || fs13.statSync(file).isDirectory()) file = path14.join(DIST_DIR, "index.html");
-  if (!fs13.existsSync(file)) {
+  const safe = path15.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
+  let file = path15.join(DIST_DIR, safe);
+  if (!file.startsWith(DIST_DIR) || !fs14.existsSync(file) || fs14.statSync(file).isDirectory()) file = path15.join(DIST_DIR, "index.html");
+  if (!fs14.existsSync(file)) {
     res.writeHead(404);
     res.end("dist is not built: run pnpm build");
     return;
   }
-  res.writeHead(200, { "content-type": MIME[path14.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
-  fs13.createReadStream(file).pipe(res);
+  res.writeHead(200, { "content-type": MIME[path15.extname(file)] ?? "application/octet-stream", "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=3600" });
+  fs14.createReadStream(file).pipe(res);
 }
 function readBody(req, limit = 2e6) {
   return new Promise((resolve, reject) => {
@@ -9562,7 +9747,7 @@ var init_index = __esm({
     } catch (e) {
       console.error(`[clorbit] could not open ${DB_FILE}, running without persistence:`, e.message);
     }
-    store = new Store(PROJECTS_DIR, db, { knownPlugins: knownPlugins() });
+    store = new Store(PROJECTS_DIR, db, { knownPlugins: knownPlugins() }, COWORK_DIR);
     store.loadCache(CACHE_DIR);
     if (store.persist.imported) console.log(`[clorbit] imported ${store.persist.imported.count} summaries from ${store.persist.imported.file}`);
     hooks = new Hooks();
@@ -9725,7 +9910,7 @@ var init_index = __esm({
     PID_FILE = env("PID_FILE");
     ownsPidFile = () => {
       try {
-        return PID_FILE && JSON.parse(fs13.readFileSync(PID_FILE, "utf8")).pid === process.pid;
+        return PID_FILE && JSON.parse(fs14.readFileSync(PID_FILE, "utf8")).pid === process.pid;
       } catch {
         return false;
       }
@@ -9738,14 +9923,14 @@ var init_index = __esm({
     server.listen(PORT, HOST, () => {
       if (PID_FILE) {
         try {
-          fs13.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
+          fs14.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT, version: VERSION, startedAt: (/* @__PURE__ */ new Date()).toISOString() }) + "\n");
         } catch (e) {
           console.error(`[clorbit] could not write ${PID_FILE}:`, e.message);
         }
       }
       const lock = env("START_LOCK");
       if (lock) try {
-        fs13.rmSync(lock, { force: true });
+        fs14.rmSync(lock, { force: true });
       } catch {
       }
       console.log(`[clorbit] v${VERSION} http://${HOST}:${PORT} ready in ${Date.now() - t0} ms; ${store.files.size} files in the database, ${store.missing.size} archived (loaded in ${store.stats.loadMs} ms)`);
@@ -9768,7 +9953,7 @@ var init_index = __esm({
       }
       for (const c of clients.keys()) c.end();
       if (ownsPidFile()) try {
-        fs13.unlinkSync(PID_FILE);
+        fs14.unlinkSync(PID_FILE);
       } catch {
       }
       server.close();

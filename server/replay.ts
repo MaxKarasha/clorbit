@@ -9,6 +9,7 @@ import { buildTree, WAIT_MS } from './tree';
 import type { FileSummary } from './types';
 import { contextLimitFor, parseTs, projectOf, sumT4, toolLabel, trimText, type T4 } from './util';
 import { reasonText, type Lang, type Reason } from './i18n';
+import { sessionTitle } from './titles';
 
 const TOOL_USE_ID = Buffer.from('"tool_use_id":"');
 /** Transcripts read at the same time. */
@@ -337,7 +338,7 @@ export async function sessionReplay(store: Store, sessionId: string, alive: bool
   const main = files.find((f) => f.agentId === null) ?? null;
   const any = main ?? files[0];
   const v = await buildReplay(files, {
-    sessionId, project: projectOf(any.cwd, any.projectDir), cwd: main?.cwd ?? any.cwd ?? '', title: main?.title ?? null,
+    sessionId, project: projectOf(any.cwd, any.projectDir), cwd: main?.cwd ?? any.cwd ?? '', title: sessionTitle(main),
     model: main?.model ?? null, effort: main?.effort ?? null,
   }, { alive, lang, now, isMissing: (p) => store.isMissing(p) });
   lru.set(key, { sig, v });
