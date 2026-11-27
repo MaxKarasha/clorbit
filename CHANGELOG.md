@@ -7,6 +7,7 @@ All notable changes to Clorbit are listed here. The format follows [Keep a Chang
 ### Added
 
 - **Close a panel with ×.** The galaxy's side panels (a session, a subagent, a cluster; also in the time machine) have a small × in the top right corner that stays in view while the panel scrolls. It does what clicking the focused body again does: a session or cluster panel closes and the camera goes back to the whole galaxy, a subagent's panel goes up to its parent. Esc still works too.
+- **Pin back after an unpin.** Right after a star or cluster is unpinned (the panel's **Unpin**, a double-, right- or Alt-click), its panel shows "Unpinned · **Pin back**", which pins it again exactly where it was. Only the last unpin is remembered; "Reset layout" clears all pins without one.
 
 ## 0.7.0
 

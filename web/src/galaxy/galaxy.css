@@ -280,6 +280,8 @@
 
 /* A pinned body's panel: "Pinned here · Unpin". */
 .gx-pinrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0 2px; padding: 6px 6px 6px 10px; border-radius: 10px; border: 1px solid rgba(159, 227, 255, 0.22); background: rgba(40, 80, 120, 0.14); font: 500 12px var(--mono); color: #bfe9ff; }
+.gx-pinrow--off { border-style: dashed; border-color: rgba(159, 227, 255, 0.16); background: transparent; color: var(--mut); }
+.gx-pinrow--off .gx-pinrow__glyph { opacity: 0.5; }
 .gx-pinrow > span { display: inline-flex; align-items: center; gap: 8px; }
 .gx-pinrow__glyph { position: relative; width: 8px; height: 12px; transform: rotate(28deg); }
 .gx-pinrow__glyph::before { content: ''; position: absolute; left: 1px; top: 0; width: 6px; height: 6px; border-radius: 50%; background: #9fe3ff; }

@@ -20,7 +20,7 @@ import { GalaxyEngine, prettyModel, short, type Focus } from './engine';
 import { MockFeed } from './mock';
 import { ChangesSection } from './AgentChanges';
 import { galaxyView, isCowork, type ClusterInfo } from './plan';
-import { clusterPinKey, prunePins, starPinKey, withoutPin } from './gravity';
+import { clusterPinKey, prunePins, starPinKey, withoutPin, withPin, type Pins } from './gravity';
 import { fmtAgo, fmtDur, fmtPct, fmtTok, tSum } from './format';
 import './galaxy.css';
 
@@ -119,6 +119,17 @@ export default function GalaxyPage() {
   }, [showCowork, names]);
   useEffect(() => { engineRef.current?.setGravity(gravity); }, [gravity]);
   useEffect(() => { engineRef.current?.setPins(pins); }, [pins]);
+  // The last body that was unpinned (panel button, double-, right- or Alt-click), so its panel can pin it back.
+  const [unpinned, setUnpinned] = useState<{ key: string; at: Pins[string] } | null>(null);
+  const prevPins = useRef(pins);
+  useEffect(() => {
+    const prev = prevPins.current;
+    prevPins.current = pins;
+    const gone = Object.keys(prev).filter((k) => !(k in pins));
+    if (gone.length === 1) setUnpinned({ key: gone[0], at: prev[gone[0]] });
+    else if (gone.length > 1) setUnpinned(null); // "Reset layout": nothing single to bring back
+    else setUnpinned((u) => (u && u.key in pins ? null : u)); // pinned again (dragged or restored)
+  }, [pins]);
   useEffect(() => onLayoutReset(() => engineRef.current?.resetLayout()), []);
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -228,8 +239,12 @@ export default function GalaxyPage() {
   const go = (f: Focus) => engineRef.current?.setFocus(f, true);
   /** The panel's ×: the same as clicking the focused body again (an agent goes up to its parent, the rest closes). */
   const close = () => engineRef.current?.up(true);
-  /** The panel's "Pinned here · Unpin" row, when the focused body is pinned. */
-  const pinOf = (key: string) => (key in pins ? () => updateSettings({ layout: { pins: withoutPin(getSettings().layout.pins, key) } }) : null);
+  /** The panel's pin row: "Pinned here · Unpin" for a pinned body, "Unpinned · Pin back" right after it was unpinned. */
+  const pinOf = (key: string): PinState | null => {
+    if (key in pins) return { pinned: true, act: () => updateSettings({ layout: { pins: withoutPin(getSettings().layout.pins, key) } }) };
+    if (unpinned?.key === key) { const at = unpinned.at; return { pinned: false, act: () => updateSettings({ layout: { pins: withPin(getSettings().layout.pins, key, at) } }) }; }
+    return null;
+  };
 
   // Numbers are shown only while they are current: never stale ones under the offline screen.
   const shown = offline ? null : snap;
@@ -537,19 +552,22 @@ function PanelClose({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** "Pinned here · Unpin" under a pinned body's panel header. */
-function PinRow({ onUnpin }: { onUnpin: () => void }) {
+/** A pinned body (act unpins it) or one just unpinned (act pins it back where it was). */
+type PinState = { pinned: boolean; act: () => void };
+
+/** "Pinned here · Unpin" under a pinned body's panel header; "Unpinned · Pin back" right after an unpin. */
+function PinRow({ pin }: { pin: PinState }) {
   return (
-    <div className="gx-pinrow">
-      <span><i aria-hidden className="gx-pinrow__glyph" />{t('gx.panel.pinned')}</span>
-      <button type="button" className="gx-btn" onClick={onUnpin} title={t('gx.panel.unpinTitle')}>{t('gx.panel.unpin')}</button>
+    <div className={`gx-pinrow${pin.pinned ? '' : ' gx-pinrow--off'}`}>
+      <span><i aria-hidden className="gx-pinrow__glyph" />{t(pin.pinned ? 'gx.panel.pinned' : 'gx.panel.unpinned')}</span>
+      <button type="button" className="gx-btn" onClick={pin.act} title={t(pin.pinned ? 'gx.panel.unpinTitle' : 'gx.panel.repinTitle')}>{t(pin.pinned ? 'gx.panel.unpin' : 'gx.panel.repin')}</button>
     </div>
   );
 }
 
 /** `now`: the clock the panel measures against (a replay's current moment); `replay`: inside the time machine;
  *  `changes`: the live "Changes / Steps" section (not in replays). */
-export function SessionPanel({ s, eng, onAgent, pin, onClose, now, replay = false, changes }: { s: LiveSession; eng: GalaxyEngine | null; onAgent: (id: string) => void; pin: (() => void) | null; onClose?: () => void; now?: number; replay?: boolean; changes?: ReactNode }) {
+export function SessionPanel({ s, eng, onAgent, pin, onClose, now, replay = false, changes }: { s: LiveSession; eng: GalaxyEngine | null; onAgent: (id: string) => void; pin: PinState | null; onClose?: () => void; now?: number; replay?: boolean; changes?: ReactNode }) {
   const at = now ?? Date.now();
   const ctx = s.contextTokens && s.contextLimit ? s.contextTokens / s.contextLimit : null;
   const col = eng?.colorOf(s.sessionId, 'main');
@@ -562,7 +580,7 @@ export function SessionPanel({ s, eng, onAgent, pin, onClose, now, replay = fals
         <p>{replay ? (s.title ?? s.name ?? s.sessionId.slice(0, 8)) : <RenameTitle sessionId={s.sessionId} title={s.title} autoTitle={s.autoTitle} fallback={s.name ?? s.sessionId.slice(0, 8)} variant="gx" />}</p>
         <div className="gx-meta">{prettyModel(s.model)}{s.effort && <> · {t('gx.panel.effort')} <b>{s.effort}</b></>}{s.gitBranch && <> · {s.gitBranch}</>}{s.kind === 'automated' && <> · <span className="gx-kind">{t('gx.panel.automatedRun')}</span></>}{isCowork(s) && <> · <span className="gx-kind" title={t('gx.panel.coworkTitle')}>Cowork</span></>}</div>
       </div>
-      {pin && <PinRow onUnpin={pin} />}
+      {pin && <PinRow pin={pin} />}
       {s.statusReason && <div className={`gx-reason ${s.status}`}>{s.statusReason}</div>}
       {!replay && s.alive && !isCowork(s) && <TerminalButton sessionId={s.sessionId} info={s.terminal} className={s.status === 'waiting' ? 'gx-btn primary' : 'gx-btn'} />}
       {s.root.lastText && <blockquote className="gx-quote">{quote(s.root.lastText, 220)}</blockquote>}
@@ -636,7 +654,7 @@ const LEGEND_ITEMS: MsgKey[] = ['gx.legend.star', 'gx.legend.planets', 'gx.legen
 /** Rows shown in a cluster's list; the rest is one click away on the sessions page. */
 const CLUSTER_ROWS = 150;
 
-function ClusterPanel({ c, onReveal, pin, onClose }: { c: ClusterInfo; onReveal: (sessionId: string) => void; pin: (() => void) | null; onClose: () => void }) {
+function ClusterPanel({ c, onReveal, pin, onClose }: { c: ClusterInfo; onReveal: (sessionId: string) => void; pin: PinState | null; onClose: () => void }) {
   const col = projectColor(c.project);
   const rows = c.sessions.slice(0, CLUSTER_ROWS);
   const more = c.sessions.length - rows.length;
@@ -650,7 +668,7 @@ function ClusterPanel({ c, onReveal, pin, onClose }: { c: ClusterInfo; onReveal:
         <p>{tp('gx.cluster.count', c.sessions.length)}</p>
         <div className="gx-meta">{t('gx.cluster.sub')}</div>
       </div>
-      {pin && <PinRow onUnpin={pin} />}
+      {pin && <PinRow pin={pin} />}
       <div className="gx-grid">
         <div><label>{t('gx.cluster.tokens')}</label><b>{fmtTok(c.tokens24h)}</b></div>
         <div><label>{t('gx.cluster.sessions')}</label><b>{c.sessions.length}</b></div>
